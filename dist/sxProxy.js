@@ -845,7 +845,9 @@ function startInternalProxy() {
                 try {
                     const u = new URL('http://localhost' + url);
                     const convId = u.searchParams.get('convId') || '';
-                    const modelId = u.searchParams.get('modelId') || currentActiveModelId || '';
+                    const cleanConvId = (convId || '').replace(/^conv_/, '');
+                    const convKey = 'conv_' + cleanConvId;
+                    let modelId = u.searchParams.get('modelId') || (convKey && convModels[convKey]) || currentActiveModelId || '';
 
                     loadConfigFromDisk();
                     let targetModel = inMemoryConfig.models.find(m => m.id === modelId || m.modelId === modelId);
@@ -856,7 +858,6 @@ function startInternalProxy() {
 
                     const totalContext = targetModel?.contextLength ? Number(targetModel.contextLength) : 262144;
 
-                    const cleanConvId = (convId || '').replace(/^conv_/, '');
                     let msgChars = 0;
                     let toolChars = 0;
 
@@ -879,12 +880,27 @@ function startInternalProxy() {
                     // Strict per-conversation mode: NEVER fall back to subdirs[0]!
                     // If isNewOrEmpty or file does not exist, it's a new or fresh chat with 0 messages.
 
+                    let detectedModelId = null;
                     if (filePath && fs.existsSync(filePath)) {
                         const lines = fs.readFileSync(filePath, 'utf8').split('\n');
                         for (const l of lines) {
                             if (!l.trim()) continue;
                             try {
                                 const d = JSON.parse(l);
+                                if (d.content && typeof d.content === 'string') {
+                                    const mMatch = d.content.match(/The user changed setting `Model Selection` from .* to ([^.\n]+)/);
+                                    if (mMatch && mMatch[1]) {
+                                        const mName = mMatch[1].trim();
+                                        const found = inMemoryConfig.models.find(m => 
+                                            m.name.toLowerCase() === mName.toLowerCase() || 
+                                            m.name.toLowerCase().includes(mName.toLowerCase()) ||
+                                            mName.toLowerCase().includes(m.name.toLowerCase())
+                                        );
+                                        if (found) {
+                                            detectedModelId = found.id;
+                                        }
+                                    }
+                                }
                                 if (d.type === 'USER_INPUT' || (d.type === 'PLANNER_RESPONSE' && !d.tool_calls?.length)) {
                                     msgChars += (d.content || '').length;
                                 } else if (d.type === 'PLANNER_RESPONSE' && d.tool_calls?.length) {
@@ -893,6 +909,13 @@ function startInternalProxy() {
                                     toolChars += (d.content || '').length;
                                 }
                             } catch(e) {}
+                        }
+                    }
+
+                    if (detectedModelId && cleanConvId && cleanConvId !== 'new') {
+                        if (!convModels[convKey]) {
+                            convModels[convKey] = detectedModelId;
+                            saveConvModelsToDisk();
                         }
                     }
 
@@ -940,6 +963,7 @@ function startInternalProxy() {
                     res.end(JSON.stringify({
                         ok: true,
                         convId: cleanConvId,
+                        detectedModelId: detectedModelId || convModels[convKey] || null,
                         isFreshChat,
                         totalContext,
                         totalContextFormatted: fmt(totalContext),

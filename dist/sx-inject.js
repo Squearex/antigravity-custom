@@ -208,10 +208,10 @@
     getActiveModelId() {
       return this._activeModelId || localStorage.getItem("sx_active_model_id");
     }
-    setActiveModelId(modelId, convKey = null) {
+    setActiveModelId(modelId, convKey = null, persistConv = false) {
       this._activeModelId = modelId;
       localStorage.setItem("sx_active_model_id", modelId);
-      if (convKey) {
+      if (persistConv && convKey && convKey !== "conv_new" && convKey !== "conv_global") {
         localStorage.setItem("sx_active_model_" + convKey, modelId);
       }
       this.bus.emit("state:model-selected", { modelId, convKey });
@@ -329,9 +329,10 @@
         this.logger.warn("NetworkClient", "Failed to save theme to proxy", e.message);
       }
     }
-    async fetchContextDetails(convId) {
+    async fetchContextDetails(convId, modelId = "") {
       try {
-        return await this.get(`/get-chat-context-details?convId=${encodeURIComponent(convId)}`);
+        const query = `?convId=${encodeURIComponent(convId || "")}${modelId ? `&modelId=${encodeURIComponent(modelId)}` : ""}`;
+        return await this.get(`/get-chat-context-details${query}`);
       } catch (e) {
         return null;
       }
@@ -1062,10 +1063,36 @@
       }
       return "conv_new";
     }
-    notifyActiveModel(modelId, forceGlobal = false) {
+    getActiveModelForConversation(convKey = null) {
+      const key = convKey || this.getActiveConversationKey();
+      let modelId = null;
+      if (key && key !== "conv_new") {
+        modelId = localStorage.getItem("sx_active_model_" + key);
+      }
+      if (!modelId) {
+        modelId = localStorage.getItem("sx_last_used_model_id") || localStorage.getItem("sx_active_model_id");
+      }
+      const sxModels = this.state.getModels();
+      if (sxModels.length > 0) {
+        const found = sxModels.find((m) => m.id === modelId);
+        return found ? found.id : sxModels[0].id;
+      }
+      return modelId;
+    }
+    setActiveModelForConversation(modelId, convKey = null, explicitUserChoice = false) {
       if (!modelId) return;
-      const convKey = this.getActiveConversationKey();
-      this.state.setActiveModelId(modelId, forceGlobal ? null : convKey);
+      const key = convKey || this.getActiveConversationKey();
+      if (explicitUserChoice && key && key !== "conv_new") {
+        localStorage.setItem("sx_active_model_" + key, modelId);
+      }
+      localStorage.setItem("sx_last_used_model_id", modelId);
+      localStorage.setItem("sx_active_model_id", modelId);
+      this.notifyActiveModel(modelId, false, key, explicitUserChoice);
+    }
+    notifyActiveModel(modelId, forceGlobal = false, specificConvKey = null, persistConv = false) {
+      if (!modelId) return;
+      const convKey = specificConvKey || this.getActiveConversationKey();
+      this.state.setActiveModelId(modelId, forceGlobal ? null : convKey, persistConv);
       this.network.setActiveModel(modelId, forceGlobal ? "conv_global" : convKey);
     }
   };
@@ -1077,6 +1104,7 @@
       this.models = modelManager;
       this.logger = logger;
       this._contextDetailsCache = {};
+      this._inFlightFetches = /* @__PURE__ */ new Map();
     }
     init() {
       document.addEventListener("click", (e) => {
@@ -1132,9 +1160,9 @@
       const btn = document.getElementById("sx-context-btn");
       if (!btn) return;
       const sxModels = this.models.state.getModels();
-      const activeId = localStorage.getItem("sx_active_model_id");
-      const activeM = sxModels.find((m) => m.id === activeId) || sxModels[0];
       const activeConvKey = this.models.getActiveConversationKey();
+      const activeId = this.models.getActiveModelForConversation(activeConvKey);
+      const activeM = sxModels.find((m) => m.id === activeId) || sxModels[0];
       const cleanConvId = (activeConvKey || "").replace(/^conv_/, "");
       const metrics = this.calculateLiveContextMetrics(cleanConvId, activeM);
       this.updateContextRing(metrics);
@@ -1146,6 +1174,66 @@
           this.renderPopoverDetails(pop, currentData, metrics);
         }
       }
+      const isFresh = !cleanConvId || cleanConvId === "new" || cleanConvId === "draft";
+      if (!isFresh) {
+        const cacheKey = cleanConvId + "_" + (activeM?.id || "");
+        const cached = this._contextDetailsCache[cacheKey];
+        const isStale = !cached || Date.now() - (cached._time || 0) > 12e3;
+        if (isStale) {
+          this.refreshContextDetails(cleanConvId, activeM);
+        }
+      }
+    }
+    async refreshContextDetails(cleanConvId, targetModel) {
+      if (!cleanConvId || cleanConvId === "new" || cleanConvId === "draft") return null;
+      const cacheKey = cleanConvId + "_" + (targetModel?.id || "");
+      if (this._inFlightFetches.has(cacheKey)) {
+        return this._inFlightFetches.get(cacheKey);
+      }
+      const promise = (async () => {
+        try {
+          const data = await this.network.fetchContextDetails(cleanConvId, targetModel?.id);
+          if (data && data.ok) {
+            this._contextDetailsCache[cacheKey] = { data, _time: Date.now() };
+            if (data.detectedModelId && cleanConvId) {
+              const cKey = "conv_" + cleanConvId;
+              if (!localStorage.getItem("sx_active_model_" + cKey)) {
+                localStorage.setItem("sx_active_model_" + cKey, data.detectedModelId);
+              }
+            }
+            const curConvKey = this.models.getActiveConversationKey();
+            const curClean = (curConvKey || "").replace(/^conv_/, "");
+            if (curClean === cleanConvId) {
+              const updatedMetrics = this.calculateLiveContextMetrics(cleanConvId, targetModel);
+              this.updateContextRing(updatedMetrics);
+              const pop = document.getElementById("sx-context-popover");
+              if (pop && pop.isConnected) {
+                this.renderPopoverDetails(pop, data, updatedMetrics);
+              }
+            }
+            return data;
+          }
+        } catch (e) {
+          this.logger?.warn("QuotaMonitor", "Failed to refresh context details", e);
+        } finally {
+          this._inFlightFetches.delete(cacheKey);
+        }
+        return null;
+      })();
+      this._inFlightFetches.set(cacheKey, promise);
+      return promise;
+    }
+    invalidateCacheAndRefresh(convKey) {
+      const cleanConvId = (convKey || this.models.getActiveConversationKey() || "").replace(/^conv_/, "");
+      if (!cleanConvId || cleanConvId === "new") return;
+      Object.keys(this._contextDetailsCache).forEach((k) => {
+        if (k.startsWith(cleanConvId + "_")) {
+          delete this._contextDetailsCache[k];
+        }
+      });
+      const activeId = this.models.getActiveModelForConversation("conv_" + cleanConvId);
+      const targetModel = this.models.state.getModels().find((m) => m.id === activeId);
+      this.refreshContextDetails(cleanConvId, targetModel);
     }
     getDraftPromptText() {
       try {
@@ -1198,17 +1286,7 @@
       };
     }
     async fetchContextDetails(cleanConvId, targetModel) {
-      const cacheKey = (cleanConvId || "new") + "_" + (targetModel?.id || "");
-      const cached = this._contextDetailsCache[cacheKey];
-      if (cached && Date.now() - cached._time < 4e3) {
-        return cached.data;
-      }
-      const data = await this.network.fetchContextDetails(cleanConvId || "");
-      if (data && data.ok) {
-        this._contextDetailsCache[cacheKey] = { data, _time: Date.now() };
-        return data;
-      }
-      return cached ? cached.data : null;
+      return await this.refreshContextDetails(cleanConvId, targetModel);
     }
     toggleContextPopover(anchorEl) {
       let pop = document.getElementById("sx-context-popover");
@@ -1219,7 +1297,7 @@
       }
       const convKey = this.models.getActiveConversationKey();
       const cleanConvId = (convKey || "").replace(/^conv_/, "");
-      const activeModelId = localStorage.getItem("sx_active_model_id");
+      const activeModelId = this.models.getActiveModelForConversation(convKey);
       const targetModel = this.models.state.getModels().find((m) => m.id === activeModelId);
       if (anchorEl) anchorEl.classList.add("sx-active");
       pop = document.createElement("div");
@@ -1280,6 +1358,7 @@
         if (pop.isConnected && data) {
           const updatedLive = this.calculateLiveContextMetrics(cleanConvId, targetModel);
           this.renderPopoverDetails(pop, data, updatedLive);
+          this.updateContextRing(updatedLive);
         }
       });
     }
@@ -1958,9 +2037,13 @@
         let activeId = "";
         try {
           convKey = this.models.getActiveConversationKey();
-          const convModel = convKey ? localStorage.getItem("sx_active_model_" + convKey) : null;
-          activeId = convModel || localStorage.getItem("sx_active_model_id");
+          activeId = this.models.getActiveModelForConversation(convKey);
           if (activeId) {
+            if (convKey && convKey !== "conv_new") {
+              localStorage.setItem("sx_active_model_" + convKey, activeId);
+            }
+            localStorage.setItem("sx_last_used_model_id", activeId);
+            localStorage.setItem("sx_active_model_id", activeId);
             if (!args[1]) args[1] = {};
             if (!args[1].headers) args[1].headers = {};
             if (args[1].headers instanceof Headers) {
@@ -2002,6 +2085,9 @@
                       timestamp: (/* @__PURE__ */ new Date()).toISOString()
                     };
                     window.SX_SDK?.perf?.recordLiveMessagePerf(convKey, perfData);
+                    setTimeout(() => {
+                      window.SX_SDK?.quota?.invalidateCacheAndRefresh(convKey);
+                    }, 200);
                     return;
                   }
                   if (!firstTokenTime) {
@@ -2308,10 +2394,10 @@
           if (row) {
             const rId = row.getAttribute("data-cascade-id") || row.getAttribute("data-conversation-id") || row.getAttribute("href")?.match(/\/c\/([a-zA-Z0-9_-]+)/)?.[1];
             if (rId) {
-              const saved = localStorage.getItem("sx_active_model_conv_" + rId);
-              if (saved) {
-                localStorage.setItem("sx_active_model_id", saved);
-                this.models.notifyActiveModel(saved, true);
+              const targetKey = "conv_" + rId;
+              const targetModel = this.models.getActiveModelForConversation(targetKey);
+              if (targetModel) {
+                this.models.setActiveModelForConversation(targetModel, targetKey, false);
               }
             }
           }
@@ -2331,18 +2417,12 @@
       if (cur !== this._lastUrl) {
         this._lastUrl = cur;
         const newConvKey = this.models.getActiveConversationKey();
-        let saved = localStorage.getItem("sx_active_model_" + newConvKey);
-        if (!saved && newConvKey !== "conv_new") {
-          saved = localStorage.getItem("sx_active_model_conv_new") || localStorage.getItem("sx_active_model_id");
-          if (saved) {
-            localStorage.setItem("sx_active_model_" + newConvKey, saved);
-            this.models.notifyActiveModel(saved, false);
-          }
+        const activeModel = this.models.getActiveModelForConversation(newConvKey);
+        if (activeModel) {
+          this.models.setActiveModelForConversation(activeModel, newConvKey, false);
         }
-        if (saved) {
-          localStorage.setItem("sx_active_model_id", saved);
-          this.models.notifyActiveModel(saved, true);
-        }
+        this.quota?.updateContextButtonUI();
+        this.perf?.updatePerfButtonUI();
         this.hookDOM();
       }
     }
@@ -2804,7 +2884,7 @@
         const sxModels = this.state.getModels();
         if (sxModels.length > 0) {
           const curConv = this.models.getActiveConversationKey();
-          const activeId = (curConv ? localStorage.getItem("sx_active_model_" + curConv) : null) || localStorage.getItem("sx_active_model_id");
+          const activeId = this.models.getActiveModelForConversation(curConv);
           const activeM = sxModels.find((m) => m.id === activeId) || sxModels[0];
           if (activeM) {
             const pMeta = this.models.getProviderMeta(activeM.providerId);
@@ -2957,7 +3037,7 @@
           document.head.appendChild(st);
         }
         const curConvKey = this.models.getActiveConversationKey();
-        const activeId = (curConvKey ? localStorage.getItem("sx_active_model_" + curConvKey) : null) || localStorage.getItem("sx_active_model_id");
+        const activeId = this.models.getActiveModelForConversation(curConvKey);
         if (!listContainer.querySelector(".sx-custom-list-injected")) {
           const marker = document.createElement("div");
           marker.className = "sx-custom-list-injected";
@@ -3019,11 +3099,7 @@
                         `;
               item.addEventListener("click", () => {
                 const cKey = this.models.getActiveConversationKey();
-                if (cKey) {
-                  localStorage.setItem("sx_active_model_" + cKey, m.id);
-                }
-                localStorage.setItem("sx_active_model_id", m.id);
-                this.models.notifyActiveModel(m.id);
+                this.models.setActiveModelForConversation(m.id, cKey, true);
                 listContainer.querySelectorAll(".sx-custom-model-item").forEach((el) => {
                   el.classList.remove("is-selected");
                   const c2 = el.querySelector(".sx-item-check");
@@ -3032,6 +3108,7 @@
                 item.classList.add("is-selected");
                 const c = item.querySelector(".sx-item-check");
                 if (c) c.style.visibility = "visible";
+                this.quota?.updateContextButtonUI();
                 if (sampleNative) sampleNative.click();
                 setTimeout(() => this.hookDOM(), 30);
               });

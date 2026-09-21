@@ -79,9 +79,10 @@ export class NetworkClient {
         }
     }
 
-    async fetchContextDetails(convId) {
+    async fetchContextDetails(convId, modelId = '') {
         try {
-            return await this.get(`/get-chat-context-details?convId=${encodeURIComponent(convId)}`);
+            const query = `?convId=${encodeURIComponent(convId || '')}${modelId ? `&modelId=${encodeURIComponent(modelId)}` : ''}`;
+            return await this.get(`/get-chat-context-details${query}`);
         } catch(e) {
             return null;
         }

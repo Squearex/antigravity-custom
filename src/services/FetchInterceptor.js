@@ -89,9 +89,13 @@ export class FetchInterceptor {
             let activeId = '';
             try {
                 convKey = this.models.getActiveConversationKey();
-                const convModel = convKey ? localStorage.getItem('sx_active_model_' + convKey) : null;
-                activeId = convModel || localStorage.getItem('sx_active_model_id');
+                activeId = this.models.getActiveModelForConversation(convKey);
                 if (activeId) {
+                    if (convKey && convKey !== 'conv_new') {
+                        localStorage.setItem('sx_active_model_' + convKey, activeId);
+                    }
+                    localStorage.setItem('sx_last_used_model_id', activeId);
+                    localStorage.setItem('sx_active_model_id', activeId);
                     if (!args[1]) args[1] = {};
                     if (!args[1].headers) args[1].headers = {};
                     if (args[1].headers instanceof Headers) {
@@ -134,6 +138,9 @@ export class FetchInterceptor {
                                         timestamp: new Date().toISOString()
                                     };
                                     window.SX_SDK?.perf?.recordLiveMessagePerf(convKey, perfData);
+                                    setTimeout(() => {
+                                        window.SX_SDK?.quota?.invalidateCacheAndRefresh(convKey);
+                                    }, 200);
                                     return;
                                 }
                                 if (!firstTokenTime) {

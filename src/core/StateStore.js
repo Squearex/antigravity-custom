@@ -100,10 +100,10 @@ export class StateStore {
         return this._activeModelId || localStorage.getItem('sx_active_model_id');
     }
 
-    setActiveModelId(modelId, convKey = null) {
+    setActiveModelId(modelId, convKey = null, persistConv = false) {
         this._activeModelId = modelId;
         localStorage.setItem('sx_active_model_id', modelId);
-        if (convKey) {
+        if (persistConv && convKey && convKey !== 'conv_new' && convKey !== 'conv_global') {
             localStorage.setItem('sx_active_model_' + convKey, modelId);
         }
         this.bus.emit('state:model-selected', { modelId, convKey });

@@ -8,6 +8,7 @@ export class QuotaMonitor {
         this.models = modelManager;
         this.logger = logger;
         this._contextDetailsCache = {};
+        this._inFlightFetches = new Map();
     }
 
     init() {
@@ -72,9 +73,9 @@ export class QuotaMonitor {
         const btn = document.getElementById('sx-context-btn');
         if (!btn) return;
         const sxModels = this.models.state.getModels();
-        const activeId = localStorage.getItem('sx_active_model_id');
-        const activeM = sxModels.find(m => m.id === activeId) || sxModels[0];
         const activeConvKey = this.models.getActiveConversationKey();
+        const activeId = this.models.getActiveModelForConversation(activeConvKey);
+        const activeM = sxModels.find(m => m.id === activeId) || sxModels[0];
         const cleanConvId = (activeConvKey || '').replace(/^conv_/, '');
 
         const metrics = this.calculateLiveContextMetrics(cleanConvId, activeM);
@@ -88,6 +89,76 @@ export class QuotaMonitor {
                 this.renderPopoverDetails(pop, currentData, metrics);
             }
         }
+
+        // Proactive background fetch if not fresh chat and (cache missing or older than 12s)
+        const isFresh = (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft');
+        if (!isFresh) {
+            const cacheKey = cleanConvId + '_' + (activeM?.id || '');
+            const cached = this._contextDetailsCache[cacheKey];
+            const isStale = !cached || (Date.now() - (cached._time || 0) > 12000);
+            if (isStale) {
+                this.refreshContextDetails(cleanConvId, activeM);
+            }
+        }
+    }
+
+    async refreshContextDetails(cleanConvId, targetModel) {
+        if (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft') return null;
+        const cacheKey = cleanConvId + '_' + (targetModel?.id || '');
+        if (this._inFlightFetches.has(cacheKey)) {
+            return this._inFlightFetches.get(cacheKey);
+        }
+
+        const promise = (async () => {
+            try {
+                const data = await this.network.fetchContextDetails(cleanConvId, targetModel?.id);
+                if (data && data.ok) {
+                    this._contextDetailsCache[cacheKey] = { data, _time: Date.now() };
+
+                    // If model was detected from transcript, sync if conversation not explicitly set
+                    if (data.detectedModelId && cleanConvId) {
+                        const cKey = 'conv_' + cleanConvId;
+                        if (!localStorage.getItem('sx_active_model_' + cKey)) {
+                            localStorage.setItem('sx_active_model_' + cKey, data.detectedModelId);
+                        }
+                    }
+
+                    // Check if current view is still this conversation
+                    const curConvKey = this.models.getActiveConversationKey();
+                    const curClean = (curConvKey || '').replace(/^conv_/, '');
+                    if (curClean === cleanConvId) {
+                        const updatedMetrics = this.calculateLiveContextMetrics(cleanConvId, targetModel);
+                        this.updateContextRing(updatedMetrics);
+                        const pop = document.getElementById('sx-context-popover');
+                        if (pop && pop.isConnected) {
+                            this.renderPopoverDetails(pop, data, updatedMetrics);
+                        }
+                    }
+                    return data;
+                }
+            } catch(e) {
+                this.logger?.warn('QuotaMonitor', 'Failed to refresh context details', e);
+            } finally {
+                this._inFlightFetches.delete(cacheKey);
+            }
+            return null;
+        })();
+
+        this._inFlightFetches.set(cacheKey, promise);
+        return promise;
+    }
+
+    invalidateCacheAndRefresh(convKey) {
+        const cleanConvId = (convKey || this.models.getActiveConversationKey() || '').replace(/^conv_/, '');
+        if (!cleanConvId || cleanConvId === 'new') return;
+        Object.keys(this._contextDetailsCache).forEach(k => {
+            if (k.startsWith(cleanConvId + '_')) {
+                delete this._contextDetailsCache[k];
+            }
+        });
+        const activeId = this.models.getActiveModelForConversation('conv_' + cleanConvId);
+        const targetModel = this.models.state.getModels().find(m => m.id === activeId);
+        this.refreshContextDetails(cleanConvId, targetModel);
     }
 
     getDraftPromptText() {
@@ -148,18 +219,7 @@ export class QuotaMonitor {
     }
 
     async fetchContextDetails(cleanConvId, targetModel) {
-        const cacheKey = (cleanConvId || 'new') + '_' + (targetModel?.id || '');
-        const cached = this._contextDetailsCache[cacheKey];
-        if (cached && (Date.now() - cached._time) < 4000) {
-            return cached.data;
-        }
-
-        const data = await this.network.fetchContextDetails(cleanConvId || '');
-        if (data && data.ok) {
-            this._contextDetailsCache[cacheKey] = { data, _time: Date.now() };
-            return data;
-        }
-        return cached ? cached.data : null;
+        return await this.refreshContextDetails(cleanConvId, targetModel);
     }
 
     toggleContextPopover(anchorEl) {
@@ -172,7 +232,7 @@ export class QuotaMonitor {
 
         const convKey = this.models.getActiveConversationKey();
         const cleanConvId = (convKey || '').replace(/^conv_/, '');
-        const activeModelId = localStorage.getItem('sx_active_model_id');
+        const activeModelId = this.models.getActiveModelForConversation(convKey);
         const targetModel = this.models.state.getModels().find(m => m.id === activeModelId);
 
         if (anchorEl) anchorEl.classList.add('sx-active');
@@ -241,6 +301,7 @@ export class QuotaMonitor {
             if (pop.isConnected && data) {
                 const updatedLive = this.calculateLiveContextMetrics(cleanConvId, targetModel);
                 this.renderPopoverDetails(pop, data, updatedLive);
+                this.updateContextRing(updatedLive);
             }
         });
     }

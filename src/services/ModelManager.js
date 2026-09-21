@@ -205,10 +205,38 @@ export class ModelManager {
         return 'conv_new';
     }
 
-    notifyActiveModel(modelId, forceGlobal = false) {
+    getActiveModelForConversation(convKey = null) {
+        const key = convKey || this.getActiveConversationKey();
+        let modelId = null;
+        if (key && key !== 'conv_new') {
+            modelId = localStorage.getItem('sx_active_model_' + key);
+        }
+        if (!modelId) {
+            modelId = localStorage.getItem('sx_last_used_model_id') || localStorage.getItem('sx_active_model_id');
+        }
+        const sxModels = this.state.getModels();
+        if (sxModels.length > 0) {
+            const found = sxModels.find(m => m.id === modelId);
+            return found ? found.id : sxModels[0].id;
+        }
+        return modelId;
+    }
+
+    setActiveModelForConversation(modelId, convKey = null, explicitUserChoice = false) {
         if (!modelId) return;
-        const convKey = this.getActiveConversationKey();
-        this.state.setActiveModelId(modelId, forceGlobal ? null : convKey);
+        const key = convKey || this.getActiveConversationKey();
+        if (explicitUserChoice && key && key !== 'conv_new') {
+            localStorage.setItem('sx_active_model_' + key, modelId);
+        }
+        localStorage.setItem('sx_last_used_model_id', modelId);
+        localStorage.setItem('sx_active_model_id', modelId);
+        this.notifyActiveModel(modelId, false, key, explicitUserChoice);
+    }
+
+    notifyActiveModel(modelId, forceGlobal = false, specificConvKey = null, persistConv = false) {
+        if (!modelId) return;
+        const convKey = specificConvKey || this.getActiveConversationKey();
+        this.state.setActiveModelId(modelId, forceGlobal ? null : convKey, persistConv);
         this.network.setActiveModel(modelId, forceGlobal ? 'conv_global' : convKey);
     }
 }

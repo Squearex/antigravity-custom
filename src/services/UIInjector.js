@@ -57,10 +57,10 @@ export class UIInjector {
                 if (row) {
                     const rId = row.getAttribute('data-cascade-id') || row.getAttribute('data-conversation-id') || (row.getAttribute('href')?.match(/\/c\/([a-zA-Z0-9_-]+)/)?.[1]);
                     if (rId) {
-                        const saved = localStorage.getItem('sx_active_model_conv_' + rId);
-                        if (saved) {
-                            localStorage.setItem('sx_active_model_id', saved);
-                            this.models.notifyActiveModel(saved, true);
+                        const targetKey = 'conv_' + rId;
+                        const targetModel = this.models.getActiveModelForConversation(targetKey);
+                        if (targetModel) {
+                            this.models.setActiveModelForConversation(targetModel, targetKey, false);
                         }
                     }
                 }
@@ -84,18 +84,12 @@ export class UIInjector {
         if (cur !== this._lastUrl) {
             this._lastUrl = cur;
             const newConvKey = this.models.getActiveConversationKey();
-            let saved = localStorage.getItem('sx_active_model_' + newConvKey);
-            if (!saved && newConvKey !== 'conv_new') {
-                saved = localStorage.getItem('sx_active_model_conv_new') || localStorage.getItem('sx_active_model_id');
-                if (saved) {
-                    localStorage.setItem('sx_active_model_' + newConvKey, saved);
-                    this.models.notifyActiveModel(saved, false);
-                }
+            const activeModel = this.models.getActiveModelForConversation(newConvKey);
+            if (activeModel) {
+                this.models.setActiveModelForConversation(activeModel, newConvKey, false);
             }
-            if (saved) {
-                localStorage.setItem('sx_active_model_id', saved);
-                this.models.notifyActiveModel(saved, true);
-            }
+            this.quota?.updateContextButtonUI();
+            this.perf?.updatePerfButtonUI();
             this.hookDOM();
         }
     }
@@ -567,7 +561,7 @@ export class UIInjector {
             const sxModels = this.state.getModels();
             if (sxModels.length > 0) {
                 const curConv = this.models.getActiveConversationKey();
-                const activeId = (curConv ? localStorage.getItem('sx_active_model_' + curConv) : null) || localStorage.getItem('sx_active_model_id');
+                const activeId = this.models.getActiveModelForConversation(curConv);
                 const activeM = sxModels.find(m => m.id === activeId) || sxModels[0];
                 if (activeM) {
                     const pMeta = this.models.getProviderMeta(activeM.providerId);
@@ -734,7 +728,7 @@ export class UIInjector {
             }
 
             const curConvKey = this.models.getActiveConversationKey();
-            const activeId = (curConvKey ? localStorage.getItem('sx_active_model_' + curConvKey) : null) || localStorage.getItem('sx_active_model_id');
+            const activeId = this.models.getActiveModelForConversation(curConvKey);
 
             if (!listContainer.querySelector('.sx-custom-list-injected')) {
                 const marker = document.createElement('div');
@@ -806,11 +800,7 @@ export class UIInjector {
 
                         item.addEventListener('click', () => {
                             const cKey = this.models.getActiveConversationKey();
-                            if (cKey) {
-                                localStorage.setItem('sx_active_model_' + cKey, m.id);
-                            }
-                            localStorage.setItem('sx_active_model_id', m.id);
-                            this.models.notifyActiveModel(m.id);
+                            this.models.setActiveModelForConversation(m.id, cKey, true);
 
                             listContainer.querySelectorAll('.sx-custom-model-item').forEach(el => {
                                 el.classList.remove('is-selected');
@@ -820,6 +810,8 @@ export class UIInjector {
                             item.classList.add('is-selected');
                             const c = item.querySelector('.sx-item-check');
                             if (c) c.style.visibility = 'visible';
+
+                            this.quota?.updateContextButtonUI();
 
                             // Close popper
                             if (sampleNative) sampleNative.click();
