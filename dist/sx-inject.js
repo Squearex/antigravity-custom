@@ -748,13 +748,71 @@
                 background: var(--primary);
                 box-shadow: 0 0 10px var(--primary);
             }
+            body.sx-theme-active ::-webkit-scrollbar-button,
+            body.sx-theme-active ::-webkit-scrollbar-button:single-button,
+            body.sx-theme-active ::-webkit-scrollbar-button:start:decrement,
+            body.sx-theme-active ::-webkit-scrollbar-button:end:increment,
+            body.sx-theme-active ::-webkit-scrollbar-button:vertical:start:decrement,
+            body.sx-theme-active ::-webkit-scrollbar-button:vertical:end:increment {
+                display: block !important;
+                height: 0px !important;
+                width: 0px !important;
+                border-width: 0px !important;
+                border: none !important;
+                background: transparent !important;
+            }
+            body.sx-theme-active ::-webkit-scrollbar-corner {
+                background: transparent !important;
+            }
 
-            /* Developer Code Blocks Obsidian Glass */
-            body.sx-theme-active pre {
+            /* Developer Code Blocks Obsidian Glass (Only standalone markdown blocks, NOT terminal cards) */
+            body.sx-theme-active .prose pre,
+            body.sx-theme-active pre:not([class*="group/run-command"] pre):not(.group\\/run-command pre) {
                 border: 1px solid rgba(var(--sx-accent-rgb), 0.20) !important;
                 background: rgba(3, 7, 12, 0.65) !important;
                 box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4) !important;
                 border-radius: 8px !important;
+            }
+
+            /* Unified Run Command Terminal Card */
+            body.sx-theme-active [class*="group/run-command"],
+            body.sx-theme-active .group\\/run-command {
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                background: rgba(10, 13, 20, 0.88) !important;
+                backdrop-filter: blur(16px) !important;
+                border-radius: 8px !important;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5) !important;
+                overflow: hidden !important;
+                margin-top: 4px !important;
+                margin-bottom: 4px !important;
+            }
+
+            /* Command header */
+            body.sx-theme-active [class*="group/run-command"] > div:first-child,
+            body.sx-theme-active .group\\/run-command > div:first-child {
+                background: rgba(255, 255, 255, 0.02) !important;
+                padding: 2px 4px !important;
+            }
+
+            /* Reset inner pre inside command blocks */
+            body.sx-theme-active [class*="group/run-command"] pre,
+            body.sx-theme-active .group\\/run-command pre {
+                border: none !important;
+                background: transparent !important;
+                box-shadow: none !important;
+                border-radius: 0 !important;
+                margin: 0 !important;
+                padding: 6px 10px !important;
+                scrollbar-width: thin !important;
+                scrollbar-color: rgba(255, 255, 255, 0.18) transparent !important;
+            }
+
+            /* Clean divider line */
+            body.sx-theme-active [class*="group/run-command"] .border-t,
+            body.sx-theme-active .group\\/run-command .border-t {
+                border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+                padding-top: 0 !important;
+                margin-top: 0 !important;
             }
 
             /* Primary Buttons Glow */
