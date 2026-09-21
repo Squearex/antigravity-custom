@@ -662,22 +662,22 @@
             }
 
             /* SX Atmospheric Lighting Field (Top-Center Luminous Glow) */
-            body.sx-theme-active .flex-1.flex.min-h-0.relative::before {
+            body.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full {
+                position: relative;
+                overflow: hidden;
+                background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+                background-size: 28px 28px;
+            }
+            body.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full::before {
                 content: '';
                 position: absolute;
                 top: 0;
                 left: 0;
                 right: 0;
-                height: 460px;
-                background: radial-gradient(ellipse 80% 380px at 50% -10%, rgba(var(--sx-accent-rgb), 0.16), rgba(var(--sx-accent-rgb), 0.04) 55%, transparent 85%);
+                height: 420px;
+                background: radial-gradient(ellipse 80% 360px at 50% 0%, rgba(var(--sx-accent-rgb), 0.14), rgba(var(--sx-accent-rgb), 0.03) 50%, transparent 80%);
                 pointer-events: none;
                 z-index: 0;
-            }
-
-            /* SX Subtle Tech Matrix / Grid Atmosphere */
-            body.sx-theme-active .flex-1.flex.min-h-0.relative {
-                background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-                background-size: 28px 28px;
             }
 
             /* Floating Prompt Card Glassmorphism & Cyber Glow */
@@ -793,19 +793,19 @@
       let iconSvg = "";
       let color = "#38bdf8";
       if (finalLower.includes("openrouter")) {
-        color = "#3b82f6";
+        color = "#06b6d4";
         iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`;
       } else if (finalLower.includes("kilo") || finalLower.includes("kira")) {
-        color = "#8b5cf6";
+        color = "#f97316";
         iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 4h4v16H4zM16 4l-6 8 6 8h4.5l-6-8 6-8z"/></svg>`;
       } else if (finalLower.includes("anthropic") || finalLower.includes("claude")) {
-        color = "#d97706";
+        color = "#a855f7";
         iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M14.5 3h-5l-6 18h4.5l1.2-3.8h5.6l1.2 3.8h4.5L14.5 3zm-4.1 11.2l1.6-5.2 1.6 5.2h-3.2z"/></svg>`;
       } else if (finalLower.includes("openai") || finalLower.includes("gpt")) {
         color = "#10b981";
         iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>`;
       } else if (finalLower.includes("deepseek")) {
-        color = "#0284c7";
+        color = "#3b82f6";
         iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 14.5h-2v-2h2v2zm0-4h-2V7h2v5.5z"/></svg>`;
       } else {
         color = "#06b6d4";
@@ -953,6 +953,65 @@
           if (btn) btn.classList.remove("sx-active");
         }
       });
+      ["input", "keyup", "change", "paste"].forEach((evName) => {
+        document.addEventListener(evName, (e) => {
+          if (e.target && e.target.closest && e.target.closest('[contenteditable="true"], textarea, div.cursor-text')) {
+            this.updateContextButtonUI();
+          }
+        }, true);
+      });
+    }
+    updateContextRing(metrics) {
+      const btn = document.getElementById("sx-context-btn");
+      if (!btn || !metrics) return;
+      if (metrics.tooltip) btn.title = metrics.tooltip;
+      const circ = 40.84;
+      const totalUsed = metrics.totalUsed || 0;
+      const pctExact = metrics.percentExact || 0;
+      let dash = 0;
+      if (totalUsed > 0) {
+        dash = Math.min(circ, Math.max(0.85, pctExact / 100 * circ));
+      }
+      let color = "#38bdf8";
+      if (pctExact > 85) color = "#f43f5e";
+      else if (pctExact > 60) color = "#fbbf24";
+      let svg = btn.querySelector("svg.sx-ring-svg");
+      if (!svg) {
+        btn.innerHTML = `
+                <svg class="sx-ring-svg" width="18" height="18" viewBox="0 0 20 20" style="display:block;pointer-events:none;transform:rotate(-90deg);">
+                    <circle cx="10" cy="10" r="6.5" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="2" />
+                    <circle class="sx-ring-progress" cx="10" cy="10" r="6.5" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round"
+                        stroke-dasharray="${dash.toFixed(2)} ${circ.toFixed(2)}"
+                        stroke-dashoffset="0"
+                        style="transition: stroke-dasharray 0.12s ease-out, stroke 0.2s ease;" />
+                </svg>
+            `;
+      } else {
+        const prog = svg.querySelector(".sx-ring-progress");
+        if (prog) {
+          prog.setAttribute("stroke-dasharray", `${dash.toFixed(2)} ${circ.toFixed(2)}`);
+          prog.setAttribute("stroke", color);
+        }
+      }
+    }
+    updateContextButtonUI() {
+      const btn = document.getElementById("sx-context-btn");
+      if (!btn) return;
+      const sxModels = this.models.state.getModels();
+      const activeId = localStorage.getItem("sx_active_model_id");
+      const activeM = sxModels.find((m) => m.id === activeId) || sxModels[0];
+      const activeConvKey = this.models.getActiveConversationKey();
+      const cleanConvId = (activeConvKey || "").replace(/^conv_/, "");
+      const metrics = this.calculateLiveContextMetrics(cleanConvId, activeM);
+      this.updateContextRing(metrics);
+      const pop = document.getElementById("sx-context-popover");
+      if (pop && pop.isConnected) {
+        const cacheKey = (cleanConvId || "new") + "_" + (activeM?.id || "");
+        const currentData = this._contextDetailsCache[cacheKey]?.data;
+        if (currentData) {
+          this.renderPopoverDetails(pop, currentData, metrics);
+        }
+      }
     }
     getDraftPromptText() {
       try {
@@ -1653,7 +1712,153 @@
           this.logger.error("FetchInterceptor", "GetCascadeConfig hook error", e);
         }
       }
+      if (url.includes("StreamAudioTranscription") || url.includes("SendAudioChunk")) {
+        const emptyBytes = new TextEncoder().encode(JSON.stringify({}));
+        const frame0 = StreamAdapter.encodeFrame(0, emptyBytes);
+        return new Response(frame0, {
+          status: 200,
+          headers: { "content-type": "application/connect+json" }
+        });
+      }
       return resp;
+    }
+  };
+
+  // src/services/VoiceRecorder.js
+  var VoiceRecorder = class {
+    constructor(logger) {
+      this.logger = logger;
+      this.isRecording = false;
+      this.recognition = null;
+      this.activeBtn = null;
+      this.originalContent = "";
+    }
+    init() {
+      document.addEventListener("click", (e) => {
+        const btn = e.target.closest('button[aria-label*="Record voice" i], [data-tooltip-id*="record-tooltip"], button.sx-voice-btn');
+        if (btn) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          this.toggleRecording(btn);
+        }
+      }, true);
+      if (!document.getElementById("sx-voice-recorder-styles")) {
+        const st = document.createElement("style");
+        st.id = "sx-voice-recorder-styles";
+        st.textContent = `
+                @keyframes sx-mic-pulse {
+                    0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+                    70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+                    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+                }
+                button.sx-recording {
+                    background-color: #ef4444 !important;
+                    color: #ffffff !important;
+                    animation: sx-mic-pulse 1.4s infinite !important;
+                }
+                button.sx-recording svg {
+                    color: #ffffff !important;
+                    fill: #ffffff !important;
+                }
+            `;
+        (document.head || document.documentElement)?.appendChild(st);
+      }
+      this.logger.info("VoiceRecorder", "Voice recorder initialized with SpeechRecognition support.");
+    }
+    toggleRecording(btn) {
+      if (this.isRecording) {
+        this.stopRecording();
+      } else {
+        this.startRecording(btn);
+      }
+    }
+    startRecording(btn) {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        alert("Taray\u0131c\u0131n\u0131zda veya sisteminizde ses tan\u0131ma (SpeechRecognition) desteklenmiyor.");
+        return;
+      }
+      try {
+        this.recognition = new SR();
+        this.recognition.continuous = true;
+        this.recognition.interimResults = true;
+        this.recognition.lang = navigator.language || "tr-TR";
+        this.activeBtn = btn;
+        this.isRecording = true;
+        if (btn) {
+          btn.classList.add("sx-recording");
+          btn.setAttribute("aria-label", "Stop recording");
+          btn.title = "Kayd\u0131 durdurmak i\xE7in t\u0131klay\u0131n";
+        }
+        const editor = document.querySelector('[contenteditable="true"]');
+        if (editor) editor.focus();
+        let lastFinalText = "";
+        this.recognition.onresult = (event) => {
+          let interim = "";
+          let newFinal = "";
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              newFinal += event.results[i][0].transcript;
+            } else {
+              interim += event.results[i][0].transcript;
+            }
+          }
+          if (newFinal && newFinal !== lastFinalText) {
+            lastFinalText = newFinal;
+            this.insertTextIntoPrompt(newFinal.trim() + " ");
+          }
+        };
+        this.recognition.onerror = (event) => {
+          this.logger.error("VoiceRecorder", "Speech recognition error", event.error);
+          if (event.error !== "no-speech") {
+            this.stopRecording();
+          }
+        };
+        this.recognition.onend = () => {
+          if (this.isRecording) {
+            try {
+              this.recognition.start();
+            } catch (e) {
+              this.stopRecording();
+            }
+          } else {
+            this.stopRecording();
+          }
+        };
+        this.recognition.start();
+        this.logger.info("VoiceRecorder", "Speech recording started");
+      } catch (e) {
+        this.logger.error("VoiceRecorder", "Failed to start recording", e);
+        this.stopRecording();
+      }
+    }
+    stopRecording() {
+      this.isRecording = false;
+      if (this.recognition) {
+        try {
+          this.recognition.stop();
+        } catch (e) {
+        }
+        this.recognition = null;
+      }
+      if (this.activeBtn) {
+        this.activeBtn.classList.remove("sx-recording");
+        this.activeBtn.setAttribute("aria-label", "Record voice memo");
+        this.activeBtn.title = "Ses kayd\u0131 ba\u015Flat";
+        this.activeBtn = null;
+      }
+      this.logger.info("VoiceRecorder", "Speech recording stopped");
+    }
+    insertTextIntoPrompt(text) {
+      try {
+        const editor = document.querySelector('[contenteditable="true"]');
+        if (editor) {
+          editor.focus();
+          document.execCommand("insertText", false, text);
+        }
+      } catch (e) {
+        this.logger.error("VoiceRecorder", "Error inserting recognized text", e);
+      }
     }
   };
 
@@ -2154,12 +2359,6 @@
                     width: 28px !important; height: 28px !important; border-radius: 50% !important; background: transparent !important;
                     border: none !important; padding: 0 !important; cursor: pointer !important; user-select: none !important;
                 `;
-          ctxBtn.innerHTML = `
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#94a3b8;">
-                        <circle cx="12" cy="12" r="9"></circle>
-                        <path d="M12 2v20M2 12h20"></path>
-                    </svg>
-                `;
           ctxBtn.onclick = (e) => {
             e.stopPropagation();
             this.quota.toggleContextPopover(ctxBtn);
@@ -2195,8 +2394,10 @@
         if (ctxBtn.previousElementSibling !== perfBtn) {
           actionContainer.insertBefore(perfBtn, ctxBtn);
         }
+        this.quota.updateContextButtonUI();
         this.perf.updatePerfButtonUI();
       }
+      this.trySXModelSelectorPanelInject();
       const trigger = document.querySelector('[data-testid="model-selector-trigger"]');
       if (trigger) {
         const sxModels = this.state.getModels();
@@ -2224,6 +2425,228 @@
       this.trySXModelsSettingsInject();
       this.trySXAppearanceSettingsInject();
     }
+    trySXModelSelectorPanelInject() {
+      const modelPanel = document.querySelector('[data-testid="model-selector-panel"]');
+      if (!modelPanel || modelPanel.closest("[data-sx-usage-panel]")) return;
+      const sxModels = this.state.getModels();
+      if (!sxModels || sxModels.length === 0) return;
+      let searchWrap = modelPanel.querySelector("#sx-model-search-wrap");
+      if (!searchWrap) {
+        searchWrap = document.createElement("div");
+        searchWrap.id = "sx-model-search-wrap";
+        searchWrap.style.cssText = "padding: 8px 8px 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.06); background: inherit; position: sticky; top: 0; z-index: 10; box-sizing: border-box;";
+        searchWrap.innerHTML = `
+                <div style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 10px;gap:7px;height:32px;box-sizing:border-box;width:100%;transition:border-color 0.15s;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.3);flex-shrink:0;">
+                        <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input id="sx-model-search-input" type="text" placeholder="Search models..." style="background:transparent;border:none;outline:none;color:rgba(255,255,255,0.9);font-size:12.5px;width:100%;height:100%;font-family:inherit;line-height:normal;padding:0;margin:0;" autocomplete="off" spellcheck="false" />
+                </div>
+            `;
+        modelPanel.prepend(searchWrap);
+        const inputWrap = searchWrap.querySelector("div");
+        const input = searchWrap.querySelector("#sx-model-search-input");
+        input.addEventListener("focus", () => {
+          inputWrap.style.borderColor = "rgba(255,255,255,0.25)";
+          inputWrap.style.background = "rgba(255,255,255,0.07)";
+        });
+        input.addEventListener("blur", () => {
+          inputWrap.style.borderColor = "rgba(255,255,255,0.1)";
+          inputWrap.style.background = "rgba(255,255,255,0.05)";
+        });
+        ["keydown", "keyup", "keypress"].forEach((evt) => {
+          input.addEventListener(evt, (e) => e.stopPropagation());
+        });
+        input.addEventListener("input", () => {
+          const q = input.value.trim().toLowerCase();
+          const items = modelPanel.querySelectorAll(".sx-custom-model-item");
+          let visibleCount = 0;
+          items.forEach((item) => {
+            const lbl = (item.getAttribute("data-model-label") || item.innerText || "").toLowerCase();
+            const match = !q || lbl.includes(q);
+            item.classList.toggle("is-hidden", !match);
+            if (match) visibleCount++;
+          });
+          modelPanel.querySelectorAll(".sx-provider-header").forEach((hdr) => {
+            const pId = hdr.getAttribute("data-provider-id");
+            const hasVisible = Array.from(modelPanel.querySelectorAll(`.sx-custom-model-item[data-sx-provider="${pId}"]`)).some((it) => !it.classList.contains("is-hidden"));
+            hdr.style.display = hasVisible ? "flex" : "none";
+          });
+          let emptyMsg = modelPanel.querySelector("#sx-model-search-empty");
+          if (visibleCount === 0) {
+            if (!emptyMsg) {
+              emptyMsg = document.createElement("div");
+              emptyMsg.id = "sx-model-search-empty";
+              emptyMsg.style.cssText = "padding: 16px 10px; font-size: 11.5px; color: rgba(255,255,255,0.3); text-align: center;";
+              emptyMsg.innerText = "No matching models found";
+              modelPanel.querySelector(".overflow-y-auto")?.appendChild(emptyMsg);
+            }
+            emptyMsg.style.setProperty("display", "block", "important");
+          } else if (emptyMsg) {
+            emptyMsg.style.setProperty("display", "none", "important");
+          }
+        });
+        setTimeout(() => input.focus(), 50);
+      }
+      const defaultHeader = modelPanel.querySelector('[data-testid="model-selector-header"]');
+      if (defaultHeader) defaultHeader.style.display = "none";
+      const providers = this.state.getProviders();
+      const listContainer = modelPanel.querySelector(".flex.flex-col.gap-px") || modelPanel.querySelector(".overflow-y-auto");
+      if (listContainer) {
+        const nativeItems = Array.from(listContainer.querySelectorAll('[data-testid="model-selector-item"]:not(.sx-custom-model-item)'));
+        const sampleNative = nativeItems[0];
+        nativeItems.forEach((item) => item.style.display = "none");
+        if (!document.getElementById("sx-custom-model-style")) {
+          const st = document.createElement("style");
+          st.id = "sx-custom-model-style";
+          st.textContent = `
+                    .sx-custom-model-item {
+                        height: 27px !important;
+                        min-height: 27px !important;
+                        padding: 0 8px !important;
+                        margin: 1px 0 !important;
+                        border-radius: 5px !important;
+                        cursor: pointer !important;
+                        user-select: none !important;
+                        display: flex !important;
+                        align-items: center !important;
+                        transition: background-color 0.1s ease, color 0.1s ease !important;
+                    }
+                    .sx-custom-model-item.is-hidden {
+                        display: none !important;
+                    }
+                    .sx-custom-model-item:hover {
+                        background-color: rgba(255, 255, 255, 0.08) !important;
+                    }
+                    .sx-custom-model-item.is-selected {
+                        background-color: rgba(255, 255, 255, 0.05) !important;
+                        font-weight: 500 !important;
+                    }
+                    .sx-custom-model-item .sx-model-title {
+                        font-size: 12px !important;
+                        line-height: normal !important;
+                        color: rgba(255, 255, 255, 0.9) !important;
+                        overflow: hidden !important;
+                        text-overflow: ellipsis !important;
+                        white-space: nowrap !important;
+                        flex: 1 !important;
+                        min-width: 0 !important;
+                    }
+                    .sx-provider-header {
+                        padding: 8px 8px 3px 8px !important;
+                        display: flex !important;
+                        align-items: center !important;
+                        gap: 6px !important;
+                        margin-top: 4px !important;
+                        border-top: 1px solid rgba(255, 255, 255, 0.04) !important;
+                    }
+                    .sx-provider-header:first-child {
+                        margin-top: 0 !important;
+                        border-top: none !important;
+                    }
+                `;
+          document.head.appendChild(st);
+        }
+        const curConvKey = this.models.getActiveConversationKey();
+        const activeId = (curConvKey ? localStorage.getItem("sx_active_model_" + curConvKey) : null) || localStorage.getItem("sx_active_model_id");
+        if (!listContainer.querySelector(".sx-custom-list-injected")) {
+          const marker = document.createElement("div");
+          marker.className = "sx-custom-list-injected";
+          marker.style.display = "none";
+          listContainer.appendChild(marker);
+          const groups = {};
+          providers.forEach((p) => {
+            groups[p.id] = [];
+          });
+          groups["other"] = [];
+          sxModels.forEach((m) => {
+            const pId = m.providerId || "other";
+            if (!groups[pId]) groups[pId] = [];
+            groups[pId].push(m);
+          });
+          Object.keys(groups).forEach((pId) => {
+            const groupModels = groups[pId];
+            if (!groupModels || groupModels.length === 0) return;
+            const pMeta = this.models.getProviderMeta(pId);
+            const header = document.createElement("div");
+            header.className = "sx-provider-header";
+            header.setAttribute("data-provider-id", pId);
+            header.innerHTML = `
+                        <span style="width:6px;height:6px;border-radius:50%;background:${pMeta.color};display:inline-block;"></span>
+                        <span style="font-size:10px;font-weight:700;color:${pMeta.color};text-transform:uppercase;letter-spacing:0.5px;">${this.sxEsc(pMeta.name)}</span>
+                    `;
+            listContainer.appendChild(header);
+            groupModels.forEach((m) => {
+              const isSelected = m.id === activeId;
+              const isVision = this.models.isVisionModel(m);
+              const isReasoning = (m.modelId || m.name || "").toLowerCase().includes("reasoning") || (m.modelId || "").includes("omni") || (m.modelId || "").includes("r1");
+              const item = document.createElement("div");
+              item.className = "sx-custom-model-item" + (isSelected ? " is-selected" : "");
+              item.dataset.modelId = m.id;
+              item.dataset.modelLabel = m.name;
+              item.dataset.sxProvider = pId;
+              let rightBadges = "";
+              let ctxTag = this.models.formatContextSize(m.contextLength);
+              if (!ctxTag) {
+                const mLow = (m.modelId || m.name || "").toLowerCase();
+                if (mLow.includes("1m") || mLow.includes("ultra")) ctxTag = "1M";
+                else if (mLow.includes("256k") || mLow.includes("pro")) ctxTag = "256k";
+                else if (mLow.includes("128k")) ctxTag = "128k";
+                else ctxTag = "128k";
+              }
+              if (ctxTag) {
+                rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">${ctxTag}</span>`;
+              }
+              if (isReasoning) {
+                rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fbbf24;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">Reasoning</span>`;
+              }
+              if (isVision) {
+                rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">Vision</span>`;
+              }
+              const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);margin-left:4px;flex-shrink:0;${isSelected ? "" : "visibility:hidden;"}"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+              item.innerHTML = `
+                            <span class="sx-model-title">${this.sxEsc(m.name)}</span>
+                            <div style="display:flex;align-items:center;margin-left:auto;flex-shrink:0;">${rightBadges}${checkSvg}</div>
+                        `;
+              item.addEventListener("click", () => {
+                const cKey = this.models.getActiveConversationKey();
+                if (cKey) {
+                  localStorage.setItem("sx_active_model_" + cKey, m.id);
+                }
+                localStorage.setItem("sx_active_model_id", m.id);
+                this.models.notifyActiveModel(m.id);
+                listContainer.querySelectorAll(".sx-custom-model-item").forEach((el) => {
+                  el.classList.remove("is-selected");
+                  const c2 = el.querySelector(".sx-item-check");
+                  if (c2) c2.style.visibility = "hidden";
+                });
+                item.classList.add("is-selected");
+                const c = item.querySelector(".sx-item-check");
+                if (c) c.style.visibility = "visible";
+                if (sampleNative) sampleNative.click();
+                setTimeout(() => this.hookDOM(), 30);
+              });
+              listContainer.appendChild(item);
+            });
+          });
+        } else {
+          listContainer.querySelectorAll(".sx-custom-model-item").forEach((el) => {
+            const sel = el.dataset.modelId === activeId;
+            el.classList.toggle("is-selected", sel);
+            const c = el.querySelector(".sx-item-check");
+            if (c) c.style.visibility = sel ? "visible" : "hidden";
+          });
+        }
+      }
+      let fBadge = document.getElementById("sx-panel-footer-badge");
+      if (!fBadge) {
+        fBadge = document.createElement("div");
+        fBadge.id = "sx-panel-footer-badge";
+        fBadge.style.cssText = "margin-top:4px;padding:6px 10px;border-top:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:space-between;font-size:10.5px;user-select:none;";
+        modelPanel.appendChild(fBadge);
+      }
+      fBadge.innerHTML = '<span style="font-weight:700;"><span style="color:#38bdf8;text-shadow:0 0 10px rgba(56,189,248,0.35);">SX</span> <span style="color:#ffffff;">Development</span></span><span style="font-size:9.5px;color:rgba(255,255,255,0.35);font-weight:500;">Custom Engine</span>';
+    }
   };
 
   // src/index.js
@@ -2242,6 +2665,7 @@
     const quota = new QuotaMonitor(network, models, logger);
     const perf = new PerfMonitor(network, models, logger);
     const fetchInterceptor = new FetchInterceptor(models, logger);
+    const voice = new VoiceRecorder(logger);
     const ui = new UIInjector(bus, state, models, theme, quota, perf, network, logger);
     container.register("storage", storage);
     container.register("network", network);
@@ -2251,6 +2675,7 @@
     container.register("quota", quota);
     container.register("perf", perf);
     container.register("fetchInterceptor", fetchInterceptor);
+    container.register("voice", voice);
     container.register("ui", ui);
     storage.init();
     state.init();
@@ -2259,6 +2684,7 @@
     quota.init();
     perf.init();
     fetchInterceptor.init();
+    voice.init();
     ui.init();
     network.fetchPersistedConfig().then((cfg) => {
       if (cfg) {

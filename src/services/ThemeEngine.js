@@ -350,22 +350,22 @@ export class ThemeEngine {
             }
 
             /* SX Atmospheric Lighting Field (Top-Center Luminous Glow) */
-            body.sx-theme-active .flex-1.flex.min-h-0.relative::before {
+            body.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full {
+                position: relative;
+                overflow: hidden;
+                background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+                background-size: 28px 28px;
+            }
+            body.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full::before {
                 content: '';
                 position: absolute;
                 top: 0;
                 left: 0;
                 right: 0;
-                height: 460px;
-                background: radial-gradient(ellipse 80% 380px at 50% -10%, rgba(var(--sx-accent-rgb), 0.16), rgba(var(--sx-accent-rgb), 0.04) 55%, transparent 85%);
+                height: 420px;
+                background: radial-gradient(ellipse 80% 360px at 50% 0%, rgba(var(--sx-accent-rgb), 0.14), rgba(var(--sx-accent-rgb), 0.03) 50%, transparent 80%);
                 pointer-events: none;
                 z-index: 0;
-            }
-
-            /* SX Subtle Tech Matrix / Grid Atmosphere */
-            body.sx-theme-active .flex-1.flex.min-h-0.relative {
-                background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-                background-size: 28px 28px;
             }
 
             /* Floating Prompt Card Glassmorphism & Cyber Glow */

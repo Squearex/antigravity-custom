@@ -19,6 +19,75 @@ export class QuotaMonitor {
                 if (btn) btn.classList.remove('sx-active');
             }
         });
+
+        // Instant live typing listener on prompt box (0ms keystroke latency)
+        ['input', 'keyup', 'change', 'paste'].forEach(evName => {
+            document.addEventListener(evName, (e) => {
+                if (e.target && e.target.closest && e.target.closest('[contenteditable="true"], textarea, div.cursor-text')) {
+                    this.updateContextButtonUI();
+                }
+            }, true);
+        });
+    }
+
+    updateContextRing(metrics) {
+        const btn = document.getElementById('sx-context-btn');
+        if (!btn || !metrics) return;
+        if (metrics.tooltip) btn.title = metrics.tooltip;
+
+        const circ = 40.84; // 2 * Math.PI * 6.5
+        const totalUsed = metrics.totalUsed || 0;
+        const pctExact = metrics.percentExact || 0;
+
+        let dash = 0;
+        if (totalUsed > 0) {
+            dash = Math.min(circ, Math.max(0.85, (pctExact / 100) * circ));
+        }
+
+        let color = '#38bdf8';
+        if (pctExact > 85) color = '#f43f5e';
+        else if (pctExact > 60) color = '#fbbf24';
+
+        let svg = btn.querySelector('svg.sx-ring-svg');
+        if (!svg) {
+            btn.innerHTML = `
+                <svg class="sx-ring-svg" width="18" height="18" viewBox="0 0 20 20" style="display:block;pointer-events:none;transform:rotate(-90deg);">
+                    <circle cx="10" cy="10" r="6.5" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="2" />
+                    <circle class="sx-ring-progress" cx="10" cy="10" r="6.5" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round"
+                        stroke-dasharray="${dash.toFixed(2)} ${circ.toFixed(2)}"
+                        stroke-dashoffset="0"
+                        style="transition: stroke-dasharray 0.12s ease-out, stroke 0.2s ease;" />
+                </svg>
+            `;
+        } else {
+            const prog = svg.querySelector('.sx-ring-progress');
+            if (prog) {
+                prog.setAttribute('stroke-dasharray', `${dash.toFixed(2)} ${circ.toFixed(2)}`);
+                prog.setAttribute('stroke', color);
+            }
+        }
+    }
+
+    updateContextButtonUI() {
+        const btn = document.getElementById('sx-context-btn');
+        if (!btn) return;
+        const sxModels = this.models.state.getModels();
+        const activeId = localStorage.getItem('sx_active_model_id');
+        const activeM = sxModels.find(m => m.id === activeId) || sxModels[0];
+        const activeConvKey = this.models.getActiveConversationKey();
+        const cleanConvId = (activeConvKey || '').replace(/^conv_/, '');
+
+        const metrics = this.calculateLiveContextMetrics(cleanConvId, activeM);
+        this.updateContextRing(metrics);
+
+        const pop = document.getElementById('sx-context-popover');
+        if (pop && pop.isConnected) {
+            const cacheKey = (cleanConvId || 'new') + '_' + (activeM?.id || '');
+            const currentData = this._contextDetailsCache[cacheKey]?.data;
+            if (currentData) {
+                this.renderPopoverDetails(pop, currentData, metrics);
+            }
+        }
     }
 
     getDraftPromptText() {

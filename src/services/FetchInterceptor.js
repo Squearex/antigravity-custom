@@ -196,6 +196,16 @@ export class FetchInterceptor {
             }
         }
 
+        // 6. Handle StreamAudioTranscription & SendAudioChunk safely
+        if (url.includes('StreamAudioTranscription') || url.includes('SendAudioChunk')) {
+            const emptyBytes = new TextEncoder().encode(JSON.stringify({}));
+            const frame0 = StreamAdapter.encodeFrame(0, emptyBytes);
+            return new Response(frame0, {
+                status: 200,
+                headers: { 'content-type': 'application/connect+json' }
+            });
+        }
+
         return resp;
     }
 }

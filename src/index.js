@@ -13,6 +13,7 @@ import { ModelManager } from './services/ModelManager.js';
 import { QuotaMonitor } from './services/QuotaMonitor.js';
 import { PerfMonitor } from './services/PerfMonitor.js';
 import { FetchInterceptor } from './services/FetchInterceptor.js';
+import { VoiceRecorder } from './services/VoiceRecorder.js';
 import { UIInjector } from './services/UIInjector.js';
 
 (function bootstrapSX() {
@@ -35,6 +36,7 @@ import { UIInjector } from './services/UIInjector.js';
     const quota = new QuotaMonitor(network, models, logger);
     const perf = new PerfMonitor(network, models, logger);
     const fetchInterceptor = new FetchInterceptor(models, logger);
+    const voice = new VoiceRecorder(logger);
     const ui = new UIInjector(bus, state, models, theme, quota, perf, network, logger);
 
     container.register('storage', storage);
@@ -45,6 +47,7 @@ import { UIInjector } from './services/UIInjector.js';
     container.register('quota', quota);
     container.register('perf', perf);
     container.register('fetchInterceptor', fetchInterceptor);
+    container.register('voice', voice);
     container.register('ui', ui);
 
     // 3. Initialize in sequence
@@ -55,6 +58,7 @@ import { UIInjector } from './services/UIInjector.js';
     quota.init();
     perf.init();
     fetchInterceptor.init();
+    voice.init();
     ui.init();
 
     // 4. Initial config sync with proxy

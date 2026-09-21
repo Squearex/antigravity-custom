@@ -66,19 +66,19 @@ export class ModelManager {
         let color = '#38bdf8';
 
         if (finalLower.includes('openrouter')) {
-            color = '#3b82f6';
+            color = '#06b6d4'; // cyan
             iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>`;
         } else if (finalLower.includes('kilo') || finalLower.includes('kira')) {
-            color = '#8b5cf6';
+            color = '#f97316'; // warm orange
             iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 4h4v16H4zM16 4l-6 8 6 8h4.5l-6-8 6-8z"/></svg>`;
         } else if (finalLower.includes('anthropic') || finalLower.includes('claude')) {
-            color = '#d97706';
+            color = '#a855f7'; // violet
             iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M14.5 3h-5l-6 18h4.5l1.2-3.8h5.6l1.2 3.8h4.5L14.5 3zm-4.1 11.2l1.6-5.2 1.6 5.2h-3.2z"/></svg>`;
         } else if (finalLower.includes('openai') || finalLower.includes('gpt')) {
-            color = '#10b981';
+            color = '#10b981'; // emerald
             iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>`;
         } else if (finalLower.includes('deepseek')) {
-            color = '#0284c7';
+            color = '#3b82f6'; // deep blue
             iconSvg = `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 14.5h-2v-2h2v2zm0-4h-2V7h2v5.5z"/></svg>`;
         } else {
             color = '#06b6d4';
