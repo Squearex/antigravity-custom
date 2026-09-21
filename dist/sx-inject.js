@@ -158,6 +158,32 @@
         element.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
+    function getAntigravityCustomThemeSeedsProvider() {
+        try {
+            const all = Array.from(document.querySelectorAll('*'));
+            const elWithFiber = all.find(el => Object.keys(el).some(k => k.startsWith('__reactFiber')));
+            if (!elWithFiber) return null;
+            const fiberKey = Object.keys(elWithFiber).find(k => k.startsWith('__reactFiber'));
+            let rootFiber = elWithFiber[fiberKey];
+            while (rootFiber && rootFiber.return) rootFiber = rootFiber.return;
+            
+            let provider = null;
+            function walk(fiber) {
+                if (!fiber || provider) return;
+                if (fiber.memoizedProps?.value?.customThemeSeedsProvider) {
+                    provider = fiber.memoizedProps.value.customThemeSeedsProvider;
+                    return;
+                }
+                walk(fiber.child);
+                walk(fiber.sibling);
+            }
+            walk(rootFiber);
+            return provider;
+        } catch(e) {
+            return null;
+        }
+    }
+
     function sxApplyThemePreset(presetOrId, saveToServer = true) {
         try {
             const preset = typeof presetOrId === 'string'
@@ -166,22 +192,60 @@
             if (!preset) return;
 
             localStorage.setItem('sx_active_theme_preset', preset.id);
+            localStorage.setItem('theme-preset-dark', preset.name);
 
-            // 1. Live CSS variable application on document.documentElement
+            // 1. Push to Antigravity's NATIVE Jetbox Theme Provider
+            const provider = getAntigravityCustomThemeSeedsProvider();
+            if (provider && typeof provider.pushUpdate === 'function') {
+                const curState = provider.getState() || {};
+                provider.pushUpdate({
+                    ...curState,
+                    dark: {
+                        $typeName: 'jetbox_state_pb.CustomThemeSeeds',
+                        background: preset.background,
+                        foregroundOverride: preset.foreground,
+                        primary: preset.primary
+                    }
+                });
+            }
+
+            // 2. Direct CSS variable updates on document.documentElement
             const root = document.documentElement;
             root.style.setProperty('--background', preset.background);
             root.style.setProperty('--foreground', preset.foreground);
             root.style.setProperty('--primary', preset.primary);
             root.style.setProperty('--sidebar-background', preset.background);
 
-            // 2. If Settings > Appearance dialog is open, sync via Antigravity's native inputs
+            // 3. Syntax Highlighting CSS Variables (matching Antigravity's native i7b)
+            if (document.body) {
+                const bStyle = document.body.style;
+                bStyle.setProperty('--syntax-comment', '#64748B');
+                bStyle.setProperty('--syntax-punctuation', preset.foreground);
+                bStyle.setProperty('--syntax-property', preset.primary);
+                bStyle.setProperty('--syntax-tag', preset.tagColor || preset.primary);
+                bStyle.setProperty('--syntax-constant', '#F59E0B');
+                bStyle.setProperty('--syntax-number', '#F59E0B');
+                bStyle.setProperty('--syntax-string', '#10B981');
+                bStyle.setProperty('--syntax-attr-name', preset.primary);
+                bStyle.setProperty('--syntax-builtin', '#06B6D4');
+                bStyle.setProperty('--syntax-operator', preset.foreground);
+                bStyle.setProperty('--syntax-variable', preset.foreground);
+                bStyle.setProperty('--syntax-attr-value', '#10B981');
+                bStyle.setProperty('--syntax-keyword', preset.primary);
+                bStyle.setProperty('--syntax-function', '#38BDF8');
+                bStyle.setProperty('--syntax-class-name', '#F59E0B');
+                bStyle.setProperty('--syntax-regex', '#EC4899');
+                bStyle.setProperty('--syntax-default-fg', 'var(--foreground)');
+            }
+
+            // 4. If Settings > Appearance dialog is open, sync via Antigravity's native inputs
             const d = document.querySelector('[role="dialog"]');
             if (d) {
                 const darkThemeH3 = Array.from(d.querySelectorAll('*')).find(el => el.children.length === 0 && el.textContent.trim() === 'Dark Theme');
                 if (darkThemeH3) {
-                    const card = darkThemeH3.closest('.space-y-2');
+                    const card = darkThemeH3.closest('.border') || darkThemeH3.parentElement.parentElement;
                     if (card) {
-                        const inputs = Array.from(card.querySelectorAll('input.uppercase'));
+                        const inputs = Array.from(card.querySelectorAll('input.uppercase, input[type="text"]'));
                         if (inputs.length >= 3) {
                             const bgClean = preset.background.replace('#', '').toUpperCase();
                             const fgClean = preset.foreground.replace('#', '').toUpperCase();
@@ -190,16 +254,32 @@
                             setNativeValue(inputs[1], fgClean);
                             setNativeValue(inputs[2], prClean);
                         }
-                        const combo = card.querySelector('button[role="combobox"]');
-                        if (combo) {
-                            const span = combo.querySelector('.truncate') || combo.querySelector('span') || combo;
-                            span.innerText = preset.name;
+                        const btnSpan = card.querySelector('#sx-preset-combobox-btn .sx-preset-btn-name');
+                        if (btnSpan) btnSpan.innerText = preset.name;
+                        const btnDot = card.querySelector('#sx-preset-btn-dot');
+                        if (btnDot) {
+                            btnDot.style.background = preset.primary;
+                            btnDot.style.boxShadow = `0 0 5px ${preset.primary}`;
                         }
                     }
                 }
             }
 
-            // 2. Persist to config.json via sxProxy
+            // 5. Update Quick Pills active state
+            document.querySelectorAll('.sx-preset-pill').forEach(pill => {
+                const isMatch = pill.dataset.sxId === preset.id;
+                if (isMatch) {
+                    pill.style.borderColor = preset.primary;
+                    pill.style.background = 'rgba(255,255,255,0.14)';
+                    pill.style.color = '#ffffff';
+                } else {
+                    pill.style.borderColor = 'rgba(255,255,255,0.1)';
+                    pill.style.background = 'rgba(255,255,255,0.05)';
+                    pill.style.color = 'rgba(255,255,255,0.85)';
+                }
+            });
+
+            // 6. Persist to config.json via sxProxy
             if (saveToServer) {
                 const xhr = new XMLHttpRequest();
                 xhr.open('POST', 'http://127.0.0.1:15725/sx/save-theme', true);
@@ -1956,22 +2036,98 @@
     // Settings > Appearance Tab — Native Integration (Zero Conflict)
     // ────────────────────────────────────────────────────────────────────────
     function trySXAppearanceSettingsInject() {
-        // 1. Remove legacy bulky studio if present
         const bulky = document.getElementById('sx-theme-studio');
         if (bulky) bulky.remove();
 
         const dialog = document.querySelector('[role="dialog"]');
-        if (!dialog) return;
+        if (!dialog) {
+            const openPop = document.getElementById('sx-preset-dropdown-popover');
+            if (openPop) openPop.remove();
+            return;
+        }
 
         // Check if on Appearance tab: look for "Dark Theme"
         const all = Array.from(dialog.querySelectorAll('*'));
         const darkThemeH3 = all.find(el => el.children.length === 0 && el.textContent.trim() === 'Dark Theme');
         if (!darkThemeH3) return;
 
-        const card = darkThemeH3.closest('.space-y-2');
-        if (!card || !card.parentElement) return;
+        const card = darkThemeH3.closest('.border') || darkThemeH3.parentElement?.parentElement;
+        if (!card) return;
 
-        // 2. Inject sleek quick-preset pills bar directly inside the native Dark Theme card
+        // 1. Locate the native Preset row
+        const presetLabel = Array.from(card.querySelectorAll('*')).find(el => el.children.length === 0 && el.textContent.trim() === 'Preset');
+        const presetRow = presetLabel ? presetLabel.closest('.flex.items-center.justify-between') || presetLabel.parentElement?.parentElement : null;
+        if (!presetRow) return;
+
+        // 2. Hide native Base-UI Combobox to prevent conflict & hardcoded default resets
+        const nativeCombo = presetRow.querySelector('button[role="combobox"]');
+        if (nativeCombo) {
+            nativeCombo.style.setProperty('display', 'none', 'important');
+        }
+
+        // Also suppress native Base-UI listbox if it accidentally opens
+        const nativeListbox = document.querySelector('[role="listbox"]');
+        if (nativeListbox) {
+            nativeListbox.style.setProperty('display', 'none', 'important');
+        }
+
+        const activeThemeId = localStorage.getItem('sx_active_theme_preset') || 'sx-signature';
+        const curPreset = SX_THEME_PRESETS.find(x => x.id === activeThemeId) || SX_THEME_PRESETS[0];
+
+        // 3. Inject or update SX Preset Combobox Button
+        let sxBtn = presetRow.querySelector('#sx-preset-combobox-btn');
+        if (!sxBtn) {
+            sxBtn = document.createElement('button');
+            sxBtn.id = 'sx-preset-combobox-btn';
+            sxBtn.type = 'button';
+            sxBtn.className = 'appearance-none px-3 py-1.5 text-sm bg-secondary text-secondary-foreground hover:text-foreground rounded-md border-none cursor-pointer flex items-center gap-2 justify-between min-w-[170px] transition-all';
+            sxBtn.style.cssText = 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);outline:none;font-weight:500;position:relative;cursor:pointer;user-select:none;';
+            sxBtn.innerHTML = `
+                <div style="display:flex;align-items:center;gap:7px;min-width:0;">
+                    <span id="sx-preset-btn-dot" style="width:7px;height:7px;border-radius:50%;background:${curPreset.primary};box-shadow:0 0 5px ${curPreset.primary};flex-shrink:0;"></span>
+                    <span class="sx-preset-btn-name truncate" style="font-size:13px;font-weight:600;color:rgba(255,255,255,0.95);">${curPreset.name}</span>
+                </div>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.6;flex-shrink:0;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            `;
+
+            if (nativeCombo && nativeCombo.parentElement) {
+                nativeCombo.parentElement.appendChild(sxBtn);
+            } else {
+                presetRow.appendChild(sxBtn);
+            }
+        }
+
+        if (!sxBtn.dataset.sxBound) {
+            sxBtn.dataset.sxBound = 'true';
+            sxBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleSXThemePresetPopover(sxBtn);
+            });
+        }
+
+        // Keep button in sync with active preset
+        const nameEl = sxBtn.querySelector('.sx-preset-btn-name');
+        if (nameEl && nameEl.innerText !== curPreset.name) {
+            nameEl.innerText = curPreset.name;
+        }
+        const dotEl = sxBtn.querySelector('#sx-preset-btn-dot');
+        if (dotEl && dotEl.style.background !== curPreset.primary) {
+            dotEl.style.background = curPreset.primary;
+            dotEl.style.boxShadow = `0 0 5px ${curPreset.primary}`;
+        }
+
+        // 4. Hook native undo button in Preset row to reset to active SX preset
+        const undoBtn = presetRow.querySelector('button:not(#sx-preset-combobox-btn)');
+        if (undoBtn && !undoBtn.dataset.sxHooked) {
+            undoBtn.dataset.sxHooked = 'true';
+            undoBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                sxApplyThemePreset(curPreset, true);
+            }, true);
+        }
+
+        // 5. Inject sleek quick-preset pills bar directly below Preset row
         let pillBar = card.querySelector('#sx-quick-presets-bar');
         if (!pillBar) {
             pillBar = document.createElement('div');
@@ -1984,21 +2140,25 @@
             pillBar.appendChild(label);
 
             SX_THEME_PRESETS.forEach(p => {
+                const isMatch = (p.id === activeThemeId);
                 const pill = document.createElement('button');
                 pill.type = 'button';
                 pill.className = 'sx-preset-pill';
-                pill.style.cssText = 'display:inline-flex;align-items:center;gap:4.5px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);padding:3px 8px;border-radius:5px;cursor:pointer;font-size:11px;font-weight:500;color:rgba(255,255,255,0.85);transition:all 0.15s ease;flex-shrink:0;';
+                pill.dataset.sxId = p.id;
+                pill.style.cssText = `display:inline-flex;align-items:center;gap:4.5px;background:${isMatch ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)'};border:1px solid ${isMatch ? p.primary : 'rgba(255,255,255,0.1)'};padding:3px 8px;border-radius:5px;cursor:pointer;font-size:11px;font-weight:500;color:${isMatch ? '#ffffff' : 'rgba(255,255,255,0.85)'};transition:all 0.15s ease;flex-shrink:0;`;
                 pill.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:${p.primary};box-shadow:0 0 4px ${p.primary}88;"></span>${p.name.replace('SX ', '')}`;
                 
                 pill.addEventListener('mouseenter', () => {
-                    pill.style.background = 'rgba(255,255,255,0.1)';
+                    pill.style.background = 'rgba(255,255,255,0.12)';
                     pill.style.borderColor = p.primary;
                     pill.style.color = '#ffffff';
                 });
                 pill.addEventListener('mouseleave', () => {
-                    pill.style.background = 'rgba(255,255,255,0.05)';
-                    pill.style.borderColor = 'rgba(255,255,255,0.1)';
-                    pill.style.color = 'rgba(255,255,255,0.85)';
+                    const currentId = localStorage.getItem('sx_active_theme_preset') || 'sx-signature';
+                    const active = (p.id === currentId);
+                    pill.style.background = active ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+                    pill.style.borderColor = active ? p.primary : 'rgba(255,255,255,0.1)';
+                    pill.style.color = active ? '#ffffff' : 'rgba(255,255,255,0.85)';
                 });
                 pill.addEventListener('click', (e) => {
                     e.preventDefault();
@@ -2008,8 +2168,7 @@
                 pillBar.appendChild(pill);
             });
 
-            const presetRow = Array.from(card.querySelectorAll('*')).find(el => el.textContent.trim() === 'Preset')?.closest('.py-2');
-            if (presetRow && presetRow.parentElement) {
+            if (presetRow.parentElement) {
                 if (presetRow.nextElementSibling) {
                     presetRow.parentElement.insertBefore(pillBar, presetRow.nextElementSibling);
                 } else {
@@ -2017,59 +2176,102 @@
                 }
             }
         }
+    }
 
-        // 3. Transform native preset combobox listbox options into SX Presets (hide defaults completely)
-        const listbox = document.querySelector('[role="listbox"]');
-        if (listbox) {
-            // Remove old extra injected elements if any
-            listbox.querySelectorAll('.sx-preset-separator, .sx-preset-header, .sx-custom-preset-option').forEach(el => el.remove());
-
-            const options = Array.from(listbox.querySelectorAll('[role="option"]'));
-            if (options.length > 0) {
-                const activeThemeId = localStorage.getItem('sx_active_theme_preset') || 'sx-signature';
-
-                options.forEach((opt, idx) => {
-                    const p = SX_THEME_PRESETS[idx];
-                    if (!p) {
-                        opt.style.setProperty('display', 'none', 'important');
-                        return;
-                    }
-                    opt.style.setProperty('display', 'flex', 'important');
-
-                    const isMatch = (p.id === activeThemeId);
-                    if (opt.dataset.sxId !== p.id || opt.dataset.sxMatch !== String(isMatch)) {
-                        opt.dataset.sxId = p.id;
-                        opt.dataset.sxMatch = String(isMatch);
-                        opt.style.cssText = 'padding:6px 10px;display:flex;align-items:center;gap:7px;cursor:pointer;border-radius:6px;width:100%;box-sizing:border-box;';
-
-                        opt.innerHTML = `
-                            <span style="width:8px;height:8px;border-radius:50%;background:${p.primary};box-shadow:0 0 6px ${p.primary}99;flex-shrink:0;"></span>
-                            <span class="truncate" style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,0.92);flex:1;min-width:0;">${p.name}</span>
-                            <span style="font-size:9px;font-weight:700;color:${p.tagColor};background:${p.tagColor}1a;border:1px solid ${p.tagColor}33;padding:1px 5px;border-radius:4px;letter-spacing:0.2px;flex-shrink:0;">${p.badge}</span>
-                            ${isMatch ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + p.primary + '" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
-                        `;
-                    }
-
-                    if (!opt.dataset.sxHooked) {
-                        opt.dataset.sxHooked = 'true';
-                        opt.addEventListener('click', () => {
-                            sxApplyThemePreset(p, true);
-                        }, true);
-                    }
-                });
-            }
+    // Popover Dropdown Renderer for SX Presets
+    function toggleSXThemePresetPopover(triggerBtn) {
+        const existing = document.getElementById('sx-preset-dropdown-popover');
+        if (existing) {
+            existing.remove();
+            return;
         }
 
-        // 4. Update combobox button text to active SX preset name
-        const combo = card.querySelector('button[role="combobox"]');
-        if (combo) {
-            const activeThemeId = localStorage.getItem('sx_active_theme_preset') || 'sx-signature';
-            const curP = SX_THEME_PRESETS.find(x => x.id === activeThemeId) || SX_THEME_PRESETS[0];
-            const span = combo.querySelector('.truncate') || combo.querySelector('span') || combo;
-            if (span && curP && span.innerText !== curP.name) {
-                span.innerText = curP.name;
+        const rect = triggerBtn.getBoundingClientRect();
+        const popover = document.createElement('div');
+        popover.id = 'sx-preset-dropdown-popover';
+        popover.style.cssText = `
+            position: fixed;
+            top: ${rect.bottom + 5}px;
+            right: ${window.innerWidth - rect.right}px;
+            min-width: 260px;
+            background: #14171F;
+            border: 1px solid rgba(255,255,255,0.14);
+            border-radius: 8px;
+            padding: 6px;
+            box-shadow: 0 12px 30px -4px rgba(0,0,0,0.7), 0 6px 12px -4px rgba(0,0,0,0.5);
+            z-index: 999999;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            font-family: inherit;
+        `;
+
+        const hdr = document.createElement('div');
+        hdr.style.cssText = 'padding:6px 10px 4px 10px;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#38bdf8;display:flex;align-items:center;gap:5px;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:4px;user-select:none;';
+        hdr.innerHTML = '<span>⚡</span> <span>SX Theme Presets</span>';
+        popover.appendChild(hdr);
+
+        const activeId = localStorage.getItem('sx_active_theme_preset') || 'sx-signature';
+
+        SX_THEME_PRESETS.forEach(p => {
+            const isMatch = (p.id === activeId);
+            const item = document.createElement('div');
+            item.className = 'sx-popover-item';
+            item.style.cssText = `
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 6px 10px;
+                border-radius: 6px;
+                cursor: pointer;
+                transition: background 0.12s;
+                user-select: none;
+                ${isMatch ? 'background: rgba(56,189,248,0.1);' : ''}
+            `;
+
+            item.innerHTML = `
+                <span style="width:8px;height:8px;border-radius:50%;background:${p.primary};box-shadow:0 0 6px ${p.primary}aa;flex-shrink:0;"></span>
+                <span class="truncate" style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,0.92);flex:1;min-width:0;">${p.name}</span>
+                <span style="font-size:9px;font-weight:700;color:${p.tagColor};background:${p.tagColor}18;border:1px solid ${p.tagColor}33;padding:1px 5px;border-radius:4px;flex-shrink:0;">${p.badge}</span>
+                ${isMatch ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + p.primary + '" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
+            `;
+
+            item.addEventListener('mouseenter', () => {
+                if (!isMatch) item.style.background = 'rgba(255,255,255,0.07)';
+            });
+            item.addEventListener('mouseleave', () => {
+                if (!isMatch) item.style.background = 'transparent';
+            });
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                sxApplyThemePreset(p, true);
+                popover.remove();
+            });
+
+            popover.appendChild(item);
+        });
+
+        // Close on click outside or Escape
+        function dismissPopover(ev) {
+            if (!popover.contains(ev.target) && ev.target !== triggerBtn && !triggerBtn.contains(ev.target)) {
+                popover.remove();
+                document.removeEventListener('click', dismissPopover);
+                document.removeEventListener('keydown', dismissKey);
             }
         }
+        function dismissKey(ev) {
+            if (ev.key === 'Escape') {
+                popover.remove();
+                document.removeEventListener('click', dismissPopover);
+                document.removeEventListener('keydown', dismissKey);
+            }
+        }
+        setTimeout(() => {
+            document.addEventListener('click', dismissPopover);
+            document.addEventListener('keydown', dismissKey);
+        }, 10);
+
+        document.body.appendChild(popover);
     }
 
     // ────────────────────────────────────────────────────────────────────────
