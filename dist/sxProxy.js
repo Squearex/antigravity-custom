@@ -1,0 +1,1835 @@
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const { app } = require('electron');
+
+let inMemoryConfig = { providers: [], models: [] };
+let currentActiveModelId = null;
+let convModels = {}; // convKey -> modelId
+let convPerfStats = {}; // convKey -> { ttftMs, totalMs, completionTokens, tps, modelName, timestamp }
+let _dbgLastStats = null; // last request debug stats
+
+function getConvPerfFile() {
+    try {
+        return path.join(app.getPath('userData'), 'sx_conv_perf.json');
+    } catch(e) { return ''; }
+}
+
+function saveConvPerfToDisk() {
+    try {
+        const p = getConvPerfFile();
+        if (p) fs.writeFileSync(p, JSON.stringify(convPerfStats), 'utf8');
+    } catch(e) {}
+}
+
+function loadConvPerfFromDisk() {
+    try {
+        const p = getConvPerfFile();
+        if (p && fs.existsSync(p)) {
+            convPerfStats = JSON.parse(fs.readFileSync(p, 'utf8')) || {};
+        }
+    } catch(e) {}
+}
+
+function dbgLog(obj) {
+    try {
+        _dbgLastStats = { ...obj, ts: new Date().toISOString() };
+        const p = path.join(app.getPath('userData'), 'sx_debug_last.json');
+        fs.writeFileSync(p, JSON.stringify(_dbgLastStats, null, 2), 'utf8');
+    } catch(e) {}
+}
+
+function getConvModelsFile() {
+    try {
+        return path.join(app.getPath('userData'), 'sx_conv_models.json');
+    } catch(e) { return ''; }
+}
+
+function saveConvModelsToDisk() {
+    try {
+        const p = getConvModelsFile();
+        if (p) fs.writeFileSync(p, JSON.stringify(convModels), 'utf8');
+    } catch(e) { console.error('[SX Proxy] Error saving conv models:', e); }
+}
+
+function loadConvModelsFromDisk() {
+    try {
+        const p = getConvModelsFile();
+        if (p && fs.existsSync(p)) {
+            convModels = JSON.parse(fs.readFileSync(p, 'utf8')) || {};
+            console.log('[SX PROXY] Restored conv models from disk:', Object.keys(convModels).length, 'conversations');
+        }
+        loadConvPerfFromDisk();
+    } catch(e) { console.error('[SX Proxy] Error loading conv models:', e); }
+}
+
+function getConfigFile() {
+    try {
+        return path.join(app.getPath('userData'), 'sx_custom_models.json');
+    } catch(e) {
+        return '';
+    }
+}
+
+function getActiveModelFile() {
+    try {
+        return path.join(app.getPath('userData'), 'sx_active_model.json');
+    } catch(e) {
+        return '';
+    }
+}
+
+function loadActiveModelFromDisk() {
+    try {
+        const p = getActiveModelFile();
+        if (p && fs.existsSync(p)) {
+            const raw = fs.readFileSync(p, 'utf8');
+            const data = JSON.parse(raw);
+            if (data && data.activeModelId) {
+                currentActiveModelId = data.activeModelId;
+                console.log('[SX PROXY] Restored active model from disk:', currentActiveModelId);
+            }
+        }
+    } catch(e) {
+        console.error('[SX Proxy] Error reading active model:', e);
+    }
+}
+
+function saveActiveModelToDisk(modelId) {
+    try {
+        const p = getActiveModelFile();
+        if (p) {
+            fs.writeFileSync(p, JSON.stringify({ activeModelId: modelId }), 'utf8');
+        }
+    } catch(e) {
+        console.error('[SX Proxy] Error saving active model:', e);
+    }
+}
+
+function loadConfigFromDisk() {
+    try {
+        const p = getConfigFile();
+        if (p && fs.existsSync(p)) {
+            const raw = fs.readFileSync(p, 'utf8');
+            const data = JSON.parse(raw);
+            if (Array.isArray(data.providers)) inMemoryConfig.providers = data.providers;
+            if (Array.isArray(data.models)) inMemoryConfig.models = data.models;
+        }
+        loadActiveModelFromDisk();
+        loadConvModelsFromDisk();
+    } catch(e) {
+        console.error('[SX Proxy] Error reading saved config:', e);
+    }
+}
+
+function saveConfigToDisk() {
+    try {
+        const p = getConfigFile();
+        if (p) {
+            fs.writeFileSync(p, JSON.stringify(inMemoryConfig, null, 2), 'utf8');
+        }
+    } catch(e) {
+        console.error('[SX Proxy] Error writing saved config:', e);
+    }
+}
+
+function convertGeminiSchema(schema) {
+    if (!schema || typeof schema !== 'object') return schema;
+    const typeMap = {
+        'OBJECT': 'object',
+        'STRING': 'string',
+        'NUMBER': 'number',
+        'INTEGER': 'integer',
+        'BOOLEAN': 'boolean',
+        'ARRAY': 'array'
+    };
+    const res = Array.isArray(schema) ? [] : {};
+    for (const [k, v] of Object.entries(schema)) {
+        if (k === 'type' && typeof v === 'string') {
+            res[k] = typeMap[v.toUpperCase()] || v.toLowerCase();
+        } else if (v && typeof v === 'object') {
+            res[k] = convertGeminiSchema(v);
+        } else {
+            res[k] = v;
+        }
+    }
+    return res;
+}
+
+function convertGeminiToolsToOpenAI(tools) {
+    if (!tools || !Array.isArray(tools)) return undefined;
+    const otools = [];
+    for (const tg of tools) {
+        for (const decl of (tg.functionDeclarations || [])) {
+            otools.push({
+                type: 'function',
+                function: {
+                    name: decl.name,
+                    description: decl.description || '',
+                    parameters: convertGeminiSchema(decl.parameters || { type: 'object', properties: {} })
+                }
+            });
+        }
+    }
+    return otools.length ? otools : undefined;
+}
+
+function convertGeminiToolsToAnthropic(tools) {
+    if (!tools || !Array.isArray(tools)) return undefined;
+    const atools = [];
+    for (const tg of tools) {
+        for (const decl of (tg.functionDeclarations || [])) {
+            const params = convertGeminiSchema(decl.parameters || { type: 'object', properties: {} });
+            if (!params.type) params.type = 'object';
+            atools.push({
+                name: decl.name,
+                description: decl.description || '',
+                input_schema: params
+            });
+        }
+    }
+    return atools.length ? atools : undefined;
+}
+
+function estimateContentChars(contents) {
+    let chars = 0;
+    for (const c of contents) {
+        for (const p of (c.parts || [])) {
+            if (p.text) chars += p.text.length;
+            if (p.functionCall) chars += JSON.stringify(p.functionCall).length;
+            if (p.functionResponse) chars += JSON.stringify(p.functionResponse).length;
+        }
+    }
+    return chars;
+}
+
+// Post-conversion token trimmer for OpenAI messages.
+// maxTokens here is the HISTORY budget (model limit minus system/tools overhead).
+// We exclude the system message from the budget because it was already subtracted upstream.
+function trimOpenAIMessages(messages, maxTokens) {
+    if (!Array.isArray(messages) || messages.length === 0) return messages;
+
+    function msgChars(m) {
+        let c = 0;
+        if (typeof m.content === 'string') c += m.content.length;
+        else if (Array.isArray(m.content)) c += m.content.reduce((s, it) => s + (it.text || it.content || JSON.stringify(it) || '').length, 0);
+        if (m.tool_calls) c += JSON.stringify(m.tool_calls).length;
+        return c;
+    }
+
+    // Separate system message — its cost is already deducted in historyTokenBudget
+    const systemMsgs = messages.filter(m => m.role === 'system');
+    const nonSystem = messages.filter(m => m.role !== 'system');
+
+    // In code-heavy & tool-heavy conversations, OpenAI/Llama/Nex BPE tokenizers produce ~1 token per 1.5 - 1.6 chars!
+    // Using 3.5 chars/token causes 2.2x underestimation and HTTP 400 context_length_exceeded.
+    const CHARS_PER_TOKEN = 1.55;
+    const budgetChars = Math.max(10000, Math.floor((maxTokens - 8000) * CHARS_PER_TOKEN));
+
+    function totalNonSysChars(msgs) {
+        return msgs.reduce((s, m) => s + msgChars(m), 0);
+    }
+
+    const currentNonSysChars = totalNonSysChars(nonSystem);
+    console.log(`[SX PROXY TRIM] Checking history: ${currentNonSysChars} chars (~${Math.round(currentNonSysChars / CHARS_PER_TOKEN)} tok), budget: ${budgetChars} chars (~${maxTokens} tok)`);
+
+    if (currentNonSysChars <= budgetChars) return messages; // fits, nothing to do
+
+    console.log(`[SX PROXY TRIM] Trimming required! Current ${currentNonSysChars} chars exceeds budget ${budgetChars} chars.`);
+
+    // Pass 1: Aggressively prune tool results in older turns (not last 4)
+    const cloned = JSON.parse(JSON.stringify(nonSystem));
+    const recentStart = Math.max(0, cloned.length - 4);
+    for (let i = 0; i < cloned.length; i++) {
+        const m = cloned[i];
+        if (m.role === 'tool' && i < recentStart) {
+            const cap = 150;
+            const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
+            if (c.length > cap) {
+                cloned[i] = { ...m, content: c.slice(0, cap) + `…[${c.length - cap} ch pruned]` };
+            }
+        }
+    }
+
+    if (totalNonSysChars(cloned) <= budgetChars) {
+        console.log(`[SX PROXY TRIM] Pass 1 tool pruning sufficient: ${totalNonSysChars(cloned)} chars <= ${budgetChars}`);
+        return sanitizeOpenAIMessages([...systemMsgs, ...cloned]);
+    }
+
+    // Pass 2: Atomically remove oldest turns without breaking tool_call <-> tool pairs
+    let rest = [...cloned];
+    let dropped = 0;
+    while (rest.length > 3 && totalNonSysChars(rest) > budgetChars) {
+        // Find the oldest droppable turn
+        let removeIndices = [];
+        for (let i = 0; i < rest.length; i++) {
+            const m = rest[i];
+            if (m.role === 'user') {
+                removeIndices = [i];
+                break;
+            } else if (m.role === 'assistant') {
+                // If assistant has tool calls, gather all corresponding subsequent tool responses
+                if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+                    const callIds = new Set(m.tool_calls.map(tc => tc.id));
+                    removeIndices = [i];
+                    for (let j = i + 1; j < rest.length; j++) {
+                        if (rest[j].role === 'tool' && callIds.has(rest[j].tool_call_id)) {
+                            removeIndices.push(j);
+                        } else if (rest[j].role !== 'tool') {
+                            break;
+                        }
+                    }
+                } else {
+                    removeIndices = [i];
+                }
+                break;
+            } else if (m.role === 'tool') {
+                // Orphaned tool response at the beginning: drop it
+                removeIndices = [i];
+                break;
+            }
+        }
+
+        if (removeIndices.length === 0) break;
+        // Sort descending so splice indices remain stable
+        removeIndices.sort((a, b) => b - a);
+        for (const idx of removeIndices) {
+            rest.splice(idx, 1);
+            dropped++;
+        }
+    }
+
+    if (dropped > 0) {
+        console.log(`[SX PROXY TRIM] Pass 2 removed ${dropped} old msgs safely. Remaining: ${rest.length} (~${Math.round(totalNonSysChars(rest) / CHARS_PER_TOKEN)} tok est.)`);
+        rest.unshift({ role: 'user', content: `[Sistem: Context sınırı (${maxTokens} token) nedeniyle ${dropped} eski mesaj otomatik kaldırıldı. Son bağlam korundu.]` });
+    }
+
+    const combined = [...systemMsgs, ...rest];
+    // Final safety guarantee: ensure every tool_call has a response and no orphan tools remain
+    return sanitizeOpenAIMessages(combined);
+}
+
+function compactContentsForContext(contents, maxTokens = 131072) {
+    if (!contents || !Array.isArray(contents) || contents.length <= 4) return contents;
+    
+    // Reserve 6000 tokens for system prompt, generation budget, and tools
+    const maxChars = Math.max(30000, (maxTokens - 6000) * 3.5);
+    let currentChars = estimateContentChars(contents);
+    if (currentChars <= maxChars) {
+        return contents;
+    }
+
+    console.log(`[SX PROXY COMPACT] History (${currentChars} chars) exceeds budget (${Math.round(maxChars)} chars for ${maxTokens} tok). Starting auto-compaction...`);
+
+    const cloned = JSON.parse(JSON.stringify(contents));
+
+    // Pass 1: Aggressively prune tool outputs in historical turns (>400 chars) and even recent turns (>6000 chars)
+    const recentThreshold = Math.max(0, cloned.length - 4);
+    for (let i = 0; i < cloned.length; i++) {
+        const limit = (i < recentThreshold) ? 400 : 6000;
+        const c = cloned[i];
+        for (const p of (c.parts || [])) {
+            if (p.functionResponse) {
+                const fr = p.functionResponse;
+                let rawResp = typeof fr.response === 'string' ? fr.response : JSON.stringify(fr.response || '');
+                if (rawResp.length > limit) {
+                    const head = rawResp.slice(0, Math.floor(limit * 0.6));
+                    const tail = rawResp.slice(-Math.floor(limit * 0.3));
+                    const pruned = `${head}\n... [Önceki araç çıktısı context tasarrufu için özetlendi (${rawResp.length} karakter)] ...\n${tail}`;
+                    fr.response = typeof fr.response === 'string' ? pruned : { output: pruned };
+                }
+            }
+        }
+    }
+
+    currentChars = estimateContentChars(cloned);
+    if (currentChars <= maxChars) {
+        console.log(`[SX PROXY COMPACT] Pass 1 pruned tool outputs down to ${currentChars} chars. Fits within budget.`);
+        return cloned;
+    }
+
+    // Pass 2: Atomic sliding window - remove turns in pairs (user + assistant) to never orphan tool_calls
+    const keepHead = cloned.slice(0, 1);
+    let middleAndRecent = cloned.slice(1);
+    
+    while (middleAndRecent.length > 4 && estimateContentChars([...keepHead, ...middleAndRecent]) > maxChars) {
+        middleAndRecent.splice(0, 2);
+    }
+
+    const droppedCount = cloned.length - 1 - middleAndRecent.length;
+    let finalContents = [...keepHead];
+    if (droppedCount > 0) {
+        finalContents.push({
+            role: 'user',
+            parts: [{
+                text: `[Sistem Notu: Konuşma geçmişinin ara kısımları (${droppedCount} adım) context sınırını aşmamak için güvenle kaydırıldı. İlk hedef ve en son adımlar aşağıdadır.]`
+            }]
+        });
+    }
+    finalContents = finalContents.concat(middleAndRecent);
+    console.log(`[SX PROXY COMPACT] Pass 2 sliding window applied: ${finalContents.length} turns, ${estimateContentChars(finalContents)} chars.`);
+    return finalContents;
+}
+
+function sanitizeOpenAIMessages(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) return [{ role: 'user', content: 'Hello' }];
+
+    const cleaned = [];
+    let lastAssistantWithTools = null;
+    const answeredCalls = new Set();
+
+    for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+
+        if (msg.role === 'tool') {
+            const cid = msg.tool_call_id;
+            const validPreceding = lastAssistantWithTools && 
+                                   Array.isArray(lastAssistantWithTools.tool_calls) && 
+                                   lastAssistantWithTools.tool_calls.some(tc => tc.id === cid);
+
+            if (!validPreceding) {
+                // Orphaned tool response: convert to regular user message to avoid HTTP 400
+                const contentStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+                cleaned.push({
+                    role: 'user',
+                    content: `[Önceki Araç Yanıtı]: ${contentStr}`
+                });
+                continue;
+            }
+
+            answeredCalls.add(cid);
+            cleaned.push(msg);
+        } else {
+            // Before advancing to a non-tool message, ensure any preceding assistant tool_calls have responses
+            if (lastAssistantWithTools && Array.isArray(lastAssistantWithTools.tool_calls)) {
+                for (const tc of lastAssistantWithTools.tool_calls) {
+                    if (!answeredCalls.has(tc.id)) {
+                        cleaned.push({
+                            role: 'tool',
+                            tool_call_id: tc.id,
+                            content: '(araç yanıtı context optimizasyonu için özetlendi)'
+                        });
+                        answeredCalls.add(tc.id);
+                    }
+                }
+                lastAssistantWithTools = null;
+                answeredCalls.clear();
+            }
+
+            if (msg.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+                lastAssistantWithTools = msg;
+                answeredCalls.clear();
+            } else {
+                lastAssistantWithTools = null;
+            }
+
+            cleaned.push(msg);
+        }
+    }
+
+    // Trailing assistant tool_calls check
+    if (lastAssistantWithTools && Array.isArray(lastAssistantWithTools.tool_calls)) {
+        for (const tc of lastAssistantWithTools.tool_calls) {
+            if (!answeredCalls.has(tc.id)) {
+                cleaned.push({
+                    role: 'tool',
+                    tool_call_id: tc.id,
+                    content: '(araç yanıtı hazırlandı)'
+                });
+            }
+        }
+    }
+
+    // Guarantee at least one valid non-system message
+    const nonSystem = cleaned.filter(m => m.role !== 'system');
+    if (nonSystem.length === 0) {
+        cleaned.push({ role: 'user', content: 'Hello' });
+    }
+
+    return cleaned;
+}
+
+function sanitizeAnthropicMessages(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) return [{ role: 'user', content: 'Hello' }];
+    const cleaned = [];
+    const pendingUses = new Set();
+
+    for (const msg of messages) {
+        if (msg.role === 'assistant') {
+            if (Array.isArray(msg.content)) {
+                msg.content.forEach(it => {
+                    if (it.type === 'tool_use' && it.id) pendingUses.add(it.id);
+                });
+            }
+            cleaned.push(msg);
+        } else if (msg.role === 'user') {
+            if (Array.isArray(msg.content)) {
+                const safeItems = [];
+                msg.content.forEach(it => {
+                    if (it.type === 'tool_result') {
+                        if (pendingUses.has(it.tool_use_id)) {
+                            pendingUses.delete(it.tool_use_id);
+                            safeItems.push(it);
+                        } else {
+                            safeItems.push({ type: 'text', text: `[Araç Sonucu]: ${it.content || ''}` });
+                        }
+                    } else {
+                        safeItems.push(it);
+                    }
+                });
+                cleaned.push({ role: 'user', content: safeItems.length ? safeItems : [{ type: 'text', text: 'Ok' }] });
+            } else {
+                cleaned.push(msg);
+            }
+        } else {
+            cleaned.push(msg);
+        }
+    }
+    return cleaned;
+}
+
+function geminiContentsToOpenAI(contents, systemText) {
+    const messages = [];
+    if (systemText && systemText.trim()) {
+        messages.push({ role: 'system', content: systemText.trim() });
+    }
+    let callIdCounter = 0;
+    const pendingCallIds = {};
+
+    for (const c of contents) {
+        const parts = c.parts || [];
+        const textParts = [];
+        const toolCalls = [];
+        const toolResponses = [];
+
+        for (const p of parts) {
+            if (p.text) {
+                if (p.thought) continue;
+                textParts.push(p.text);
+            } else if (p.functionCall) {
+                const fc = p.functionCall;
+                const fname = fc.name || 'tool';
+                const fargs = fc.args || {};
+                callIdCounter++;
+                const cid = fc.id || `call_${callIdCounter}_${fname.slice(0, 10)}`;
+                pendingCallIds[fname] = cid;
+                toolCalls.push({
+                    id: cid,
+                    type: 'function',
+                    function: {
+                        name: fname,
+                        arguments: typeof fargs === 'string' ? fargs : JSON.stringify(fargs)
+                    }
+                });
+            } else if (p.functionResponse) {
+                const fr = p.functionResponse;
+                const fname = fr.name || 'tool';
+                const fresp = fr.response || {};
+                const cid = fr.id || pendingCallIds[fname] || `call_${fname}`;
+                toolResponses.push({
+                    role: 'tool',
+                    tool_call_id: cid,
+                    content: typeof fresp === 'string' ? fresp : JSON.stringify(fresp)
+                });
+            }
+        }
+
+        for (const tr of toolResponses) {
+            messages.push(tr);
+        }
+
+        const role = (c.role === 'model' || c.role === 'assistant') ? 'assistant' : 'user';
+        if (toolCalls.length > 0 || (textParts.length > 0 && role === 'assistant')) {
+            const msg = { role: 'assistant' };
+            if (textParts.length > 0) msg.content = textParts.join('');
+            if (toolCalls.length > 0) msg.tool_calls = toolCalls;
+            messages.push(msg);
+        } else if (textParts.length > 0) {
+            messages.push({ role: 'user', content: textParts.join('') });
+        }
+    }
+
+    if (messages.length === 0 || (messages.length === 1 && messages[0].role === 'system')) {
+        messages.push({ role: 'user', content: 'Hello' });
+    }
+    return messages;
+}
+
+function geminiContentsToAnthropic(contents) {
+    const messages = [];
+    let callIdCounter = 0;
+    const pendingCallIds = {};
+
+    for (const c of contents) {
+        const parts = c.parts || [];
+        const assistantItems = [];
+        const userItems = [];
+        const toolResults = [];
+
+        for (const p of parts) {
+            if (p.text) {
+                if (p.thought) continue;
+                if (c.role === 'model' || c.role === 'assistant') {
+                    assistantItems.push({ type: 'text', text: p.text });
+                } else {
+                    userItems.push({ type: 'text', text: p.text });
+                }
+            } else if (p.functionCall) {
+                const fc = p.functionCall;
+                const fname = fc.name || 'tool';
+                const fargs = fc.args || {};
+                callIdCounter++;
+                const cid = fc.id || `call_${callIdCounter}_${fname.slice(0, 10)}`;
+                pendingCallIds[fname] = cid;
+                assistantItems.push({
+                    type: 'tool_use',
+                    id: cid,
+                    name: fname,
+                    input: typeof fargs === 'object' && fargs !== null ? fargs : {}
+                });
+            } else if (p.functionResponse) {
+                const fr = p.functionResponse;
+                const fname = fr.name || 'tool';
+                const fresp = fr.response || {};
+                const cid = fr.id || pendingCallIds[fname] || `call_${fname}`;
+                toolResults.push({
+                    type: 'tool_result',
+                    tool_use_id: cid,
+                    content: typeof fresp === 'string' ? fresp : JSON.stringify(fresp)
+                });
+            }
+        }
+
+        if (assistantItems.length > 0) {
+            messages.push({ role: 'assistant', content: assistantItems });
+        }
+        if (toolResults.length > 0) {
+            messages.push({ role: 'user', content: toolResults });
+        }
+        if (userItems.length > 0) {
+            messages.push({ role: 'user', content: userItems });
+        }
+    }
+
+    if (messages.length === 0) {
+        messages.push({ role: 'user', content: 'Hello' });
+    }
+    return messages;
+}
+
+function loadTranscriptContents(convId) {
+    const homedir = require('os').homedir();
+    const candidates = [
+        path.join(homedir, '.gemini-custom', 'antigravity-custom', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl'),
+        path.join(homedir, '.gemini', 'antigravity', 'brain', convId, '.system_generated', 'logs', 'transcript.jsonl')
+    ];
+    let filePath = '';
+    for (const c of candidates) {
+        if (fs.existsSync(c)) { filePath = c; break; }
+    }
+    if (!filePath) return [];
+
+    try {
+        const lines = fs.readFileSync(filePath, 'utf8').split('\n');
+        const contents = [];
+        for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+                const d = JSON.parse(line);
+                const typ = d.type;
+                const content = d.content;
+                const tool_calls = d.tool_calls || [];
+                if (typ === 'USER_INPUT') {
+                    let text = content || '';
+                    if (text.includes('<USER_REQUEST>')) {
+                        try { text = text.split('<USER_REQUEST>')[1].split('</USER_REQUEST>')[0].trim(); } catch(e) {}
+                    }
+                    contents.push({ role: 'user', parts: [{ text }] });
+                } else if (typ === 'PLANNER_RESPONSE') {
+                    const parts = [];
+                    for (const tc of tool_calls) {
+                        parts.push({
+                            functionCall: {
+                                name: tc.name,
+                                args: tc.args || {}
+                            }
+                        });
+                    }
+                    if (content && !tool_calls.length) {
+                        parts.push({ text: content });
+                    }
+                    if (parts.length) {
+                        contents.push({ role: 'model', parts });
+                    }
+                } else if (typ === 'GENERIC') {
+                    let lastCallName = 'tool';
+                    if (contents.length && contents[contents.length - 1].role === 'model') {
+                        const lastParts = contents[contents.length - 1].parts || [];
+                        for (const p of lastParts) {
+                            if (p.functionCall) lastCallName = p.functionCall.name || 'tool';
+                        }
+                    }
+                    contents.push({
+                        role: 'user',
+                        parts: [{
+                            functionResponse: {
+                                name: lastCallName,
+                                response: { output: content || '' }
+                            }
+                        }]
+                    });
+                }
+            } catch(e) {}
+        }
+        return contents;
+    } catch(e) {
+        return [];
+    }
+}
+
+let internalProxyServer = null;
+
+function startInternalProxy() {
+    loadConfigFromDisk();
+
+    if (internalProxyServer && internalProxyServer.listening) {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        const server = http.createServer(async (req, res) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', '*');
+            res.setHeader('Access-Control-Allow-Headers', '*');
+            if (req.method === 'OPTIONS') {
+                res.writeHead(200);
+                res.end();
+                return;
+            }
+
+            const url = req.url || '';
+            console.log('[SX PROXY REQ]', req.method, url);
+
+            // Endpoint to get config from proxy / disk
+            if (url === '/sx/get-config' && req.method === 'GET') {
+                loadConfigFromDisk();
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end(JSON.stringify(inMemoryConfig));
+                return;
+            }
+
+            // Endpoint to receive config updates from renderer UI
+            if (url === '/sx/update-config' && req.method === 'POST') {
+                let body = '';
+                req.on('data', chunk => body += chunk);
+                req.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(body);
+                        // Guard: never accidentally wipe disk config with empty payload
+                        if ((!parsed.models || !parsed.models.length) && (!parsed.providers || !parsed.providers.length) && (inMemoryConfig.models.length > 0 || inMemoryConfig.providers.length > 0) && !parsed.forceClear) {
+                            console.warn('[SX PROXY] Ignored accidental empty config update from UI to protect saved models.');
+                            res.writeHead(200, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ ok: true, ignored: true }));
+                            return;
+                        }
+                        if (Array.isArray(parsed.providers)) inMemoryConfig.providers = parsed.providers;
+                        if (Array.isArray(parsed.models)) inMemoryConfig.models = parsed.models;
+                        saveConfigToDisk();
+                        console.log('[SX PROXY] Config updated from UI:', inMemoryConfig.models.length, 'models,', inMemoryConfig.providers.length, 'providers');
+                    } catch(e) {
+                        console.error('[SX PROXY] Failed to parse config update:', e);
+                    }
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ ok: true }));
+                });
+                return;
+            }
+
+            if (url === '/sx/set-active-model' && req.method === 'POST') {
+                let rawBody = '';
+                req.on('data', chunk => rawBody += chunk);
+                req.on('end', () => {
+                    try {
+                        const data = JSON.parse(rawBody);
+                        if (data.modelId) {
+                            currentActiveModelId = data.modelId;
+                            saveActiveModelToDisk(currentActiveModelId);
+                            // Also save per-conversation mapping if convKey provided
+                            if (data.convKey && data.convKey !== 'conv_global') {
+                                convModels[data.convKey] = data.modelId;
+                                saveConvModelsToDisk();
+                                console.log(`[SX PROXY] Conv model saved: ${data.convKey} -> ${data.modelId}`);
+                            }
+                            console.log('[SX PROXY] Active model updated:', currentActiveModelId);
+                        }
+                        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ ok: true, activeModelId: currentActiveModelId }));
+                    } catch(e) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: e.message }));
+                    }
+                });
+                return;
+            }
+
+            if (url === '/sx/get-conv-models' && req.method === 'GET') {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end(JSON.stringify({ ok: true, convModels, activeModelId: currentActiveModelId }));
+                return;
+            }
+
+            if (url === '/sx/debug-stats' && req.method === 'GET') {
+                // Also try reading from disk in case _dbgLastStats is stale
+                let stats = _dbgLastStats;
+                try {
+                    const p = path.join(app.getPath('userData'), 'sx_debug_last.json');
+                    if (fs.existsSync(p)) stats = JSON.parse(fs.readFileSync(p, 'utf8'));
+                } catch(e) {}
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end(JSON.stringify({ ok: true, stats }));
+                return;
+            }
+
+            if (url === '/sx/update-context-limit' && req.method === 'POST') {
+                let rawBody = '';
+                req.on('data', chunk => rawBody += chunk);
+                req.on('end', () => {
+                    try {
+                        const data = JSON.parse(rawBody);
+                        const { modelId, contextLength } = data;
+                        let found = false;
+                        if (modelId && Number(contextLength) > 0) {
+                            inMemoryConfig.models.forEach(m => {
+                                if (m.id === modelId || m.modelId === modelId) {
+                                    m.contextLength = Number(contextLength);
+                                    found = true;
+                                    console.log(`[SX PROXY] Set contextLength for ${m.name} -> ${m.contextLength}`);
+                                }
+                            });
+                            if (found) {
+                                saveConfigToDisk();
+                            }
+                        }
+                        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ ok: true, found, contextLength: Number(contextLength) }));
+                    } catch(e) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: e.message }));
+                    }
+                });
+                return;
+            }
+
+            if (url.startsWith('/sx/get-chat-tokens') && req.method === 'GET') {
+                try {
+                    const u = new URL('http://localhost' + url);
+                    const convId = u.searchParams.get('convId') || '';
+                    let charCount = 0;
+                    let turnCount = 0;
+                    if (convId) {
+                        const contents = loadTranscriptContents(convId);
+                        turnCount = contents.length;
+                        charCount = estimateContentChars(contents);
+                    }
+                    const estTokens = Math.round(charCount / 3.5);
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ ok: true, convId, charCount, turnCount, estTokens }));
+                } catch(e) {
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ ok: false, estTokens: 0 }));
+                }
+                return;
+            }
+
+            if (url.startsWith('/sx/get-chat-context-details') && req.method === 'GET') {
+                try {
+                    const u = new URL('http://localhost' + url);
+                    const convId = u.searchParams.get('convId') || '';
+                    const modelId = u.searchParams.get('modelId') || currentActiveModelId || '';
+
+                    loadConfigFromDisk();
+                    let targetModel = inMemoryConfig.models.find(m => m.id === modelId || m.modelId === modelId);
+                    if (!targetModel && currentActiveModelId) {
+                        targetModel = inMemoryConfig.models.find(m => m.id === currentActiveModelId || m.modelId === currentActiveModelId);
+                    }
+                    if (!targetModel) targetModel = inMemoryConfig.models[0];
+
+                    const totalContext = targetModel?.contextLength ? Number(targetModel.contextLength) : 262144;
+
+                    const cleanConvId = (convId || '').replace(/^conv_/, '');
+                    let msgChars = 0;
+                    let toolChars = 0;
+
+                    const homedir = require('os').homedir();
+                    const brainDirs = [
+                        path.join(homedir, '.gemini-custom', 'antigravity-custom', 'brain'),
+                        path.join(homedir, '.gemini', 'antigravity', 'brain')
+                    ];
+                    let filePath = '';
+
+                    const isNewOrEmpty = (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft' || cleanConvId === 'global');
+
+                    if (!isNewOrEmpty) {
+                        for (const bDir of brainDirs) {
+                            const p = path.join(bDir, cleanConvId, '.system_generated', 'logs', 'transcript.jsonl');
+                            if (fs.existsSync(p)) { filePath = p; break; }
+                        }
+                    }
+
+                    // Strict per-conversation mode: NEVER fall back to subdirs[0]!
+                    // If isNewOrEmpty or file does not exist, it's a new or fresh chat with 0 messages.
+
+                    if (filePath && fs.existsSync(filePath)) {
+                        const lines = fs.readFileSync(filePath, 'utf8').split('\n');
+                        for (const l of lines) {
+                            if (!l.trim()) continue;
+                            try {
+                                const d = JSON.parse(l);
+                                if (d.type === 'USER_INPUT' || (d.type === 'PLANNER_RESPONSE' && !d.tool_calls?.length)) {
+                                    msgChars += (d.content || '').length;
+                                } else if (d.type === 'PLANNER_RESPONSE' && d.tool_calls?.length) {
+                                    toolChars += JSON.stringify(d.tool_calls).length;
+                                } else if (d.type === 'GENERIC') {
+                                    toolChars += (d.content || '').length;
+                                }
+                            } catch(e) {}
+                        }
+                    }
+
+                    const msgTokens = msgChars > 0 ? Math.round(msgChars / 3.5) : 0;
+                    const toolTokens = toolChars > 0 ? Math.round(toolChars / 3.5) : 0;
+                    const sysToolsTokens = 11800;
+                    const sysPromptTokens = 6000;
+                    const skillsTokens = 682;
+                    const mcpToolsDeferred = 16100;
+                    const sysToolsDeferred = 10400;
+                    const autocompactBuffer = Math.min(33000, Math.round(totalContext * 0.033));
+
+                    const isFreshChat = isNewOrEmpty || (msgTokens === 0 && toolTokens === 0);
+                    const activeTokens = isFreshChat ? 0 : (msgTokens + toolTokens + sysToolsTokens + sysPromptTokens + skillsTokens);
+                    const freeTokens = Math.max(0, totalContext - activeTokens - autocompactBuffer);
+
+                    function fmt(n) {
+                        if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+                        if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+                        return String(Math.round(n));
+                    }
+
+                    function pct(n) {
+                        if (n === 0) return '0%';
+                        const p = (n / totalContext) * 100;
+                        if (p >= 10) return p.toFixed(1) + '%';
+                        if (p >= 0.1) return p.toFixed(1) + '%';
+                        return '<0.1%';
+                    }
+
+                    const overallPercent = isFreshChat ? 0 : Math.min(100, (activeTokens / totalContext) * 100);
+
+                    const items = [
+                        { label: 'Messages', color: '#3b82f6', tokens: fmt(msgTokens), percent: pct(msgTokens) },
+                        { label: 'System tools', color: '#60a5fa', tokens: fmt(isFreshChat ? 0 : (sysToolsTokens + toolTokens)), percent: pct(isFreshChat ? 0 : (sysToolsTokens + toolTokens)) },
+                        { label: 'System prompt', color: '#818cf8', tokens: fmt(isFreshChat ? 0 : sysPromptTokens), percent: pct(isFreshChat ? 0 : sysPromptTokens) },
+                        { label: 'Skills', color: '#a78bfa', tokens: fmt(isFreshChat ? 0 : skillsTokens), percent: pct(isFreshChat ? 0 : skillsTokens) },
+                        { label: 'MCP tools (deferred)', color: '#52525b', tokens: fmt(mcpToolsDeferred), percent: pct(mcpToolsDeferred) },
+                        { label: 'System tools (deferred)', color: '#52525b', tokens: fmt(sysToolsDeferred), percent: pct(sysToolsDeferred) },
+                        { label: 'Autocompact buffer', color: '#3f3f46', tokens: fmt(autocompactBuffer), percent: pct(autocompactBuffer) },
+                        { label: 'Free space', color: '#27272a', tokens: fmt(freeTokens), percent: pct(freeTokens) }
+                    ];
+
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({
+                        ok: true,
+                        convId: cleanConvId,
+                        isFreshChat,
+                        totalContext,
+                        totalContextFormatted: fmt(totalContext),
+                        usedTokens: activeTokens,
+                        usedTokensFormatted: isFreshChat ? '0' : fmt(activeTokens),
+                        percentNum: Math.round(overallPercent),
+                        percentFormatted: Math.round(overallPercent) + '%',
+                        items
+                    }));
+                } catch(e) {
+                    res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
+                return;
+            }
+
+            // GET /sx/get-chat-perf-stats?convId=...
+            if (url.startsWith('/sx/get-chat-perf-stats') && req.method === 'GET') {
+                try {
+                    const u = new URL('http://localhost' + url);
+                    const convId = u.searchParams.get('convId') || '';
+                    const cleanConvId = (convId || '').replace(/^conv_/, '');
+                    const convKey = 'conv_' + cleanConvId;
+
+                    let stats = convPerfStats[convKey] || convPerfStats['conv_new'] || convPerfStats['last'] || null;
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({
+                        ok: true,
+                        convId: cleanConvId,
+                        stats: stats || {
+                            ttftMs: null,
+                            totalMs: null,
+                            completionTokens: 0,
+                            tps: null,
+                            modelName: null,
+                            timestamp: null
+                        }
+                    }));
+                } catch(e) {
+                    res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
+                return;
+            }
+
+            // CORS proxy: lets the renderer make requests to external APIs without CORS errors
+            // POST /sx/proxy-fetch  body: { url, method, headers, body? }
+            if (url === '/sx/proxy-fetch' && req.method === 'POST') {
+                let rawBody = '';
+                req.on('data', chunk => rawBody += chunk);
+                req.on('end', async () => {
+                    try {
+                        const { url: targetUrl, method = 'GET', headers = {}, body: fetchBody } = JSON.parse(rawBody);
+                        if (!targetUrl || !targetUrl.startsWith('http')) throw new Error('Invalid URL');
+                        const fetchOpts = { method, headers };
+                        if (fetchBody) fetchOpts.body = fetchBody;
+                        const upstream = await fetch(targetUrl, fetchOpts);
+                        const upstreamText = await upstream.text();
+                        res.writeHead(upstream.status, {
+                            'Content-Type': upstream.headers.get('content-type') || 'application/json',
+                            'Access-Control-Allow-Origin': '*'
+                        });
+                        res.end(upstreamText);
+                    } catch(e) {
+                        res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ error: e.message }));
+                    }
+                });
+                return;
+            }
+
+            // Handle fetchAvailableModels for language_server.exe
+            if (url.includes('fetchAvailableModels')) {
+                loadConfigFromDisk();
+                const modelsMap = {};
+                const modelIds = [];
+                inMemoryConfig.models.forEach((m, idx) => {
+                    const key = m.id || ('model_' + idx);
+                    let maxTok = 131072;
+                    if (m.contextLength && Number(m.contextLength) > 0) {
+                        maxTok = Number(m.contextLength);
+                    } else {
+                        const mId = (m.modelId || m.id || '').toLowerCase();
+                        if (mId.includes('1m') || mId.includes('gemini-1.5') || mId.includes('gemini-2.0') || mId.includes('gemini-2.5')) {
+                            maxTok = 1048576;
+                        } else if (mId.includes('2m')) {
+                            maxTok = 2097152;
+                        } else if (mId.includes('256k') || mId.includes('nemotron') || mId.includes('qwen') || mId.includes('pro')) {
+                            maxTok = 262144;
+                        } else if (mId.includes('64k') || mId.includes('flash') || mId.includes('mini')) {
+                            maxTok = 65536;
+                        } else if (mId.includes('32k')) {
+                            maxTok = 32768;
+                        }
+                    }
+
+                    modelsMap[key] = {
+                        displayName: m.name,
+                        model: `MODEL_PLACEHOLDER_M${idx + 1}`,
+                        supportsImages: true,
+                        supportsThinking: true,
+                        supportsAdaptiveThinking: true,
+                        supportsRawThinking: true,
+                        thinkingBudget: 16384,
+                        minThinkingBudget: 2048,
+                        recommended: true,
+                        maxTokens: maxTok,
+                        maxOutputTokens: 16384,
+                        supportsCumulativeContext: true
+                    };
+                    modelIds.push(key);
+                });
+                const firstKey = modelIds[0] || 'custom_model_1';
+                if (!modelIds.length) {
+                    modelsMap[firstKey] = {
+                        displayName: 'Custom AI Model',
+                        model: 'MODEL_PLACEHOLDER_M1',
+                        supportsImages: true,
+                        supportsThinking: true,
+                        supportsAdaptiveThinking: true,
+                        supportsRawThinking: true,
+                        thinkingBudget: 16384,
+                        minThinkingBudget: 2048,
+                        recommended: true,
+                        maxTokens: 131072,
+                        maxOutputTokens: 16384,
+                        supportsCumulativeContext: true
+                    };
+                    modelIds.push(firstKey);
+                }
+
+                // Register all placeholders (M1 to M650) with 1M context to prevent context budget exhaustion
+                for (let i = 1; i <= 650; i++) {
+                    const ph = `MODEL_PLACEHOLDER_M${i}`;
+                    if (!modelsMap[ph]) {
+                        const fallbackModel = inMemoryConfig.models[i - 1] || inMemoryConfig.models[0];
+                        modelsMap[ph] = {
+                            displayName: fallbackModel ? fallbackModel.name : `Custom Model Slot ${i}`,
+                            model: ph,
+                            supportsImages: true,
+                            supportsThinking: true,
+                            supportsAdaptiveThinking: true,
+                            supportsRawThinking: true,
+                            recommended: false,
+                            maxTokens: 1048576,
+                            maxOutputTokens: 32768,
+                            supportsCumulativeContext: true
+                        };
+                    }
+                }
+
+                const providerGroups = [];
+                for (const prov of inMemoryConfig.providers) {
+                    const provModels = inMemoryConfig.models.filter(m => m.providerId === prov.id);
+                    if (provModels.length > 0) {
+                        providerGroups.push({
+                            displayName: prov.name,
+                            modelIds: provModels.map(m => m.id)
+                        });
+                    }
+                }
+                if (!providerGroups.length) {
+                    providerGroups.push({ displayName: 'Custom Models', modelIds });
+                }
+
+                const payload = {
+                    models: modelsMap,
+                    defaultAgentModelId: firstKey,
+                    agentModelSorts: [
+                        {
+                            displayName: 'Providers',
+                            groups: providerGroups
+                        }
+                    ]
+                };
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end(JSON.stringify(payload));
+                return;
+            }
+
+            // Handle retrieveUserQuotaSummary
+            if (url.includes('retrieveUserQuotaSummary')) {
+                const bucket = { remainingFraction: 1.0, disabled: false, resetTime: "2030-12-31T23:59:59Z" };
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end(JSON.stringify({
+                    buckets: [bucket],
+                    groups: [{ displayName: "Custom Quota", description: "Custom AI Engine", buckets: [bucket] }],
+                    description: "Custom Studio Enterprise Quota"
+                }));
+                return;
+            }
+
+            // Generation stream
+            const urlLower = url.toLowerCase();
+            if (urlLower.includes('generatecontent')) {
+                let bodyChunks = [];
+                req.on('data', chunk => bodyChunks.push(chunk));
+                req.on('end', async () => {
+                    try {
+                        const rawBody = Buffer.concat(bodyChunks).toString('utf8');
+                        let reqJson = {};
+                        try { reqJson = JSON.parse(rawBody); } catch(e) {}
+
+                        if (!inMemoryConfig.models.length) {
+                            loadConfigFromDisk();
+                        }
+
+                        const innerReq = reqJson.request || reqJson;
+
+                        // Prioritize the custom header injected by our frontend hook
+                        let requestedModel = req.headers['x-sx-model-id'] || innerReq.model || reqJson.model || '';
+                        let reqConvKey = req.headers['x-sx-conv-key'] || '';
+                        if (!reqConvKey) {
+                            let convId = '';
+                            const reqId = reqJson.requestId || innerReq.requestId || '';
+                            if (reqId.startsWith('agent/')) convId = reqId.split('/')[1] || '';
+                            if (!convId) convId = innerReq.labels?.trajectory_id || reqJson.labels?.trajectory_id || '';
+                            if (convId) reqConvKey = 'conv_' + convId;
+                        }
+
+                        let modelIdx = 0;
+                        let customModel = null;
+
+                        // 1. Explicit unique model ID from custom header (e.g. m_...)
+                        const headerModelId = req.headers['x-sx-model-id'];
+                        if (headerModelId) {
+                            customModel = inMemoryConfig.models.find(m => m.id === headerModelId);
+                        }
+
+                        // 2. Per-conversation saved model mapping by unique ID
+                        if (!customModel && reqConvKey && convModels[reqConvKey]) {
+                            const cModelId = convModels[reqConvKey];
+                            customModel = inMemoryConfig.models.find(m => m.id === cModelId);
+                            if (customModel) {
+                                console.log(`[SX PROXY] Using per-conversation model for ${reqConvKey}: ${customModel.name} (${customModel.id})`);
+                            }
+                        }
+
+                        // 3. Fallback to global active model by unique ID
+                        if (!customModel && currentActiveModelId) {
+                            customModel = inMemoryConfig.models.find(m => m.id === currentActiveModelId);
+                            if (customModel) {
+                                console.log(`[SX PROXY] Using global active model: ${customModel.name} (${customModel.id})`);
+                            }
+                        }
+
+                        // 4. Fallback: match by requestedModel string (e.g. innerReq.model)
+                        if (!customModel && requestedModel && !requestedModel.startsWith('MODEL_PLACEHOLDER_')) {
+                            customModel = inMemoryConfig.models.find(m => m.id === requestedModel || m.modelId === requestedModel);
+                        }
+                        
+                        // 3. Fallback to placeholder index
+                        if (!customModel) {
+                            const match = requestedModel.match(/MODEL_PLACEHOLDER_M(\d+)/i);
+                            if (match) {
+                                modelIdx = parseInt(match[1], 10) - 1;
+                            } else {
+                                const idx = [
+                                    'MODEL_PLACEHOLDER_M1', 'MODEL_PLACEHOLDER_M2', 'MODEL_PLACEHOLDER_M3', 'MODEL_PLACEHOLDER_M4', 'MODEL_PLACEHOLDER_M5', 'MODEL_PLACEHOLDER_M6', 'MODEL_PLACEHOLDER_M7', 'MODEL_PLACEHOLDER_M8', 'MODEL_PLACEHOLDER_M9', 'MODEL_PLACEHOLDER_M10',
+                                    'MODEL_PLACEHOLDER_M11', 'MODEL_PLACEHOLDER_M12', 'MODEL_PLACEHOLDER_M13', 'MODEL_PLACEHOLDER_M14', 'MODEL_PLACEHOLDER_M15', 'MODEL_PLACEHOLDER_M16', 'MODEL_PLACEHOLDER_M17', 'MODEL_PLACEHOLDER_M18'
+                                ].indexOf(requestedModel);
+                                if (idx !== -1) {
+                                    modelIdx = idx % inMemoryConfig.models.length;
+                                }
+                            }
+                            if (modelIdx >= 0 && modelIdx < inMemoryConfig.models.length) {
+                                customModel = inMemoryConfig.models[modelIdx];
+                            }
+                        }
+                        if (!customModel) {
+                            customModel = inMemoryConfig.models[0];
+                        }
+                        const provider = customModel ? inMemoryConfig.providers.find(p => p.id === customModel.providerId) : inMemoryConfig.providers[0];
+
+                        console.log(`[SX PROXY] Stream generation requested: model=${requestedModel} -> slotIdx=${modelIdx} -> customModel=${customModel?.name} (${customModel?.modelId})`);
+
+                        if (!provider || !customModel) {
+                            res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+                            const msg = JSON.stringify({
+                                response: {
+                                    candidates: [{
+                                        content: { role: 'model', parts: [{ text: "Lütfen Settings > Models sekmesinden bir Provider ve Model ekleyin." }] },
+                                        finishReason: 'STOP'
+                                    }]
+                                }
+                            });
+                            res.write(`data: ${msg}\n\n`);
+                            res.end();
+                            return;
+                        }
+
+                        let contents = innerReq.contents || reqJson.contents || [];
+                        if (!contents.length) {
+                            let convId = '';
+                            const reqId = reqJson.requestId || innerReq.requestId || '';
+                            if (reqId.startsWith('agent/')) {
+                                convId = reqId.split('/')[1] || '';
+                            }
+                            if (!convId) {
+                                convId = innerReq.labels?.trajectory_id || reqJson.labels?.trajectory_id || '';
+                            }
+                            if (convId) {
+                                const rescued = loadTranscriptContents(convId);
+                                if (rescued.length) {
+                                    contents = rescued;
+                                    console.log(`[SX PROXY] Rescued ${rescued.length} turns from transcript for ${convId}`);
+                                }
+                            }
+                        }
+
+                        // Determine model context limit
+                        let modelContextLimit = 131072; // default 128k
+                        if (customModel?.contextLength && Number(customModel.contextLength) > 0) {
+                            modelContextLimit = Number(customModel.contextLength);
+                        } else {
+                            const mId = (customModel?.modelId || '').toLowerCase();
+                            if (mId.includes('1m') || mId.includes('gemini') || mId.includes('lightning') || mId.includes('ultra')) {
+                                modelContextLimit = 1000000;
+                            } else if (mId.includes('256k') || mId.includes('pro') || mId.includes('nemotron') || mId.includes('qwen') || mId.includes('step')) {
+                                modelContextLimit = 262144;
+                            } else if (mId.includes('128k') || mId.includes('gpt-4o') || mId.includes('claude-3') || mId.includes('gemma')) {
+                                modelContextLimit = 128000;
+                            } else if (mId.includes('64k') || mId.includes('mini')) {
+                                modelContextLimit = 65536;
+                            } else if (mId.includes('32k')) {
+                                modelContextLimit = 32768;
+                            }
+                        }
+
+                        // Extract system prompt and tools FIRST so we can measure their token cost
+                        // before deciding how much space is left for conversation history.
+                        const systemInst = innerReq.systemInstruction || reqJson.systemInstruction;
+                        const systemParts = systemInst?.parts || [];
+                        let systemText = systemParts.map(p => p.text || '').filter(Boolean).join('\n');
+                        const rawTools = innerReq.tools || reqJson.tools || [];
+
+                        // Estimate chars consumed by system prompt + tool schemas
+                        // JSON tool schemas tokenize at ~2 chars/token (brackets, quotes are expensive)
+                        // Natural language system prompt at ~3.5 chars/token
+                        const systemChars = systemText.length;
+                        const toolsChars = rawTools.length ? JSON.stringify(rawTools).length : 0;
+                        const systemTokens = Math.ceil(systemChars / 3.0);
+                        const toolsTokens = Math.ceil(toolsChars / 2.0); // JSON is denser in tokens
+                        const overheadTokens = systemTokens + toolsTokens;
+                        console.log(`[SX PROXY] Overhead: system ~${systemTokens} tok (${systemChars} ch) + tools ~${toolsTokens} tok (${toolsChars} ch) = ${overheadTokens} tok. Model limit: ${modelContextLimit}`);
+
+                        // Reserve: overhead + 16k safety (generation budget + MCP overhead buffer)
+                        let historyTokenBudget = Math.max(4000, modelContextLimit - overheadTokens - 16000);
+                        const isFreeModel = (customModel?.modelId || '').toLowerCase().includes(':free') || (customModel?.name || '').toLowerCase().includes('free');
+                        if (isFreeModel && historyTokenBudget > 70000) {
+                            historyTokenBudget = 70000;
+                        }
+                        console.log(`[SX PROXY] History budget: ${historyTokenBudget} tokens (freeModel=${isFreeModel})`);
+
+                        // Auto-compact conversation history using real available budget
+                        const contentsBeforeCompact = contents.length;
+                        contents = compactContentsForContext(contents, historyTokenBudget);
+                        const historyCharsAfter = estimateContentChars(contents);
+                        const historyTokensAfter = Math.ceil(historyCharsAfter / 3.5);
+
+                        // Write debug stats to disk so we can diagnose issues
+                        dbgLog({
+                            model: customModel?.name || customModel?.modelId || '?',
+                            modelContextLimit,
+                            systemChars, systemTokens,
+                            toolsChars, toolsTokens,
+                            overheadTokens,
+                            historyTokenBudget,
+                            contentsTurns: contentsBeforeCompact,
+                            contentsTurnsAfterCompact: contents.length,
+                            historyCharsAfter,
+                            historyTokensAfter,
+                            estimatedTotal: overheadTokens + historyTokensAfter,
+                        });
+
+                        const proto = (provider.protocol || 'openai').toLowerCase();
+                        res.writeHead(200, {
+                            'Content-Type': 'text/event-stream; charset=utf-8',
+                            'Cache-Control': 'no-cache',
+                            'Connection': 'keep-alive',
+                            'Access-Control-Allow-Origin': '*'
+                        });
+
+                        if (proto === 'anthropic') {
+                            const anthropicMessages = sanitizeAnthropicMessages(geminiContentsToAnthropic(contents));
+                            const anthropicTools = convertGeminiToolsToAnthropic(rawTools);
+                            const apiUrl = (provider.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '') + '/v1/messages';
+                            const payload = {
+                                model: customModel.modelId,
+                                max_tokens: 16000,
+                                stream: true,
+                                messages: anthropicMessages
+                            };
+                            if (systemText) payload.system = systemText;
+                            if (anthropicTools) payload.tools = anthropicTools;
+
+                            const apiRes = await fetch(apiUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'x-api-key': provider.apiKey || '',
+                                    'anthropic-version': '2023-06-01'
+                                },
+                                body: JSON.stringify(payload)
+                            });
+
+                            if (!apiRes.ok) {
+                                const errTxt = await apiRes.text().catch(() => `HTTP ${apiRes.status}`);
+                                console.error(`[SX PROXY] Anthropic upstream error ${apiRes.status}:`, errTxt);
+                                const errChunk = JSON.stringify({
+                                    response: {
+                                        candidates: [{
+                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü (HTTP ${apiRes.status}): ${errTxt}` }] },
+                                            finishReason: 'STOP'
+                                        }]
+                                    }
+                                });
+                                res.write(`data: ${errChunk}\n\n`);
+                                res.end();
+                                return;
+                            }
+
+                            const reader = apiRes.body.getReader();
+                            const decoder = new TextDecoder();
+                            let buf = '';
+                            let currentToolCall = null;
+
+                            while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+                                buf += decoder.decode(value, { stream: true });
+                                const lines = buf.split('\n');
+                                buf = lines.pop();
+                                for (const line of lines) {
+                                    if (!line.startsWith('data: ')) continue;
+                                    const raw = line.slice(6).trim();
+                                    if (!raw || raw === '[DONE]') continue;
+                                    try {
+                                        const ev = JSON.parse(raw);
+                                        if (ev.type === 'content_block_delta') {
+                                            if (ev.delta?.type === 'text_delta') {
+                                                const chunk = JSON.stringify({
+                                                    response: {
+                                                        candidates: [{
+                                                            content: { role: 'model', parts: [{ text: ev.delta.text }] }
+                                                        }]
+                                                    }
+                                                });
+                                                res.write(`data: ${chunk}\n\n`);
+                                            } else if (ev.delta?.type === 'thinking_delta') {
+                                                const chunk = JSON.stringify({
+                                                    response: {
+                                                        candidates: [{
+                                                            content: { role: 'model', parts: [{ text: ev.delta.thinking, thought: true }] }
+                                                        }]
+                                                    }
+                                                });
+                                                res.write(`data: ${chunk}\n\n`);
+                                            } else if (ev.delta?.type === 'input_json_delta' && currentToolCall) {
+                                                currentToolCall.arguments += ev.delta.partial_json;
+                                            }
+                                        } else if (ev.type === 'content_block_start') {
+                                            if (ev.content_block?.type === 'tool_use') {
+                                                currentToolCall = {
+                                                    id: ev.content_block.id,
+                                                    name: ev.content_block.name,
+                                                    arguments: ''
+                                                };
+                                            }
+                                        } else if (ev.type === 'content_block_stop') {
+                                            if (currentToolCall) {
+                                                let argsObj = {};
+                                                try { argsObj = JSON.parse(currentToolCall.arguments || '{}'); } catch(e) {}
+                                                const chunk = JSON.stringify({
+                                                    response: {
+                                                        candidates: [{
+                                                            content: {
+                                                                role: 'model',
+                                                                parts: [{
+                                                                    functionCall: {
+                                                                        name: currentToolCall.name,
+                                                                        args: argsObj
+                                                                    }
+                                                                }]
+                                                            }
+                                                        }]
+                                                    }
+                                                });
+                                                res.write(`data: ${chunk}\n\n`);
+                                                currentToolCall = null;
+                                            }
+                                        }
+                                    } catch(e) {}
+                                }
+                            }
+                        } else {
+                            // OpenAI protocol (OpenRouter, OpenAI, Kilo, Kira, etc.)
+                            // Convert first so we can measure ACTUAL payload sizes (Gemini format estimates are 2-3x off)
+                            const oaTools = convertGeminiToolsToOpenAI(rawTools);
+
+                            // Measure actual system + tools chars in OpenAI wire format
+                            const sysMsgChars = systemText ? (systemText.length + 20) : 0; // +20 for role/wrapper JSON
+                            const oaToolsChars = oaTools ? JSON.stringify(oaTools).length : 0;
+                            // Real per-token char ratio for mixed content is ~1.55 for OpenAI JSON with code & tools
+                            const actualOverheadTokens = Math.ceil((sysMsgChars + oaToolsChars) / 1.55);
+                            // Real history budget based on actual OpenAI overhead measurement (reserve overhead + 16k buffer)
+                            let realHistoryBudget = Math.max(3000, modelContextLimit - actualOverheadTokens - 16000);
+                            if (isFreeModel && realHistoryBudget > 70000) {
+                                realHistoryBudget = 70000;
+                            }
+
+                            const rawOaMsgs = geminiContentsToOpenAI(contents, systemText);
+                            const sanitizedOaMsgs = sanitizeOpenAIMessages(rawOaMsgs);
+                            // Trim using ACTUAL measured budget
+                            const oaMsgs = trimOpenAIMessages(sanitizedOaMsgs, realHistoryBudget);
+
+                            // Update debug stats with accurate post-conversion numbers
+                            const finalMsgChars = JSON.stringify(oaMsgs).length;
+                            const finalToolsChars = oaTools ? JSON.stringify(oaTools).length : 0;
+                            dbgLog({
+                                ..._dbgLastStats,
+                                sysMsgChars, oaToolsChars,
+                                actualOverheadTokens,
+                                realHistoryBudget,
+                                finalMsgChars,
+                                finalToolsChars,
+                                finalEstimatedTokens: Math.ceil((finalMsgChars + finalToolsChars) / 1.55),
+                            });
+
+                            const cleanBase = (provider.baseUrl || 'https://api.openai.com/v1').replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
+                            const apiUrl = cleanBase + '/chat/completions';
+                            const payload = {
+                                model: customModel.modelId,
+                                stream: true,
+                                messages: oaMsgs,
+                                include_reasoning: true
+                            };
+                            if (oaTools) payload.tools = oaTools;
+
+                            const requestStartTime = Date.now();
+                            let firstTokenTime = null;
+                            let totalGeneratedChars = 0;
+
+                            const apiRes = await fetch(apiUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Authorization': 'Bearer ' + (provider.apiKey || '')
+                                },
+                                body: JSON.stringify(payload)
+                            });
+
+                            if (!apiRes.ok) {
+                                const errTxt = await apiRes.text().catch(() => `HTTP ${apiRes.status}`);
+                                console.error(`[SX PROXY] OpenAI upstream error ${apiRes.status}:`, errTxt);
+                                const errChunk = JSON.stringify({
+                                    response: {
+                                        candidates: [{
+                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü (HTTP ${apiRes.status}): ${errTxt}` }] },
+                                            finishReason: 'STOP'
+                                        }]
+                                    }
+                                });
+                                res.write(`data: ${errChunk}\n\n`);
+                                res.end();
+                                return;
+                            }
+
+                            const reader = apiRes.body.getReader();
+                            const decoder = new TextDecoder();
+                            let buf = '';
+                            let inThink = false;
+                            const activeToolCalls = {};
+                            let totalChunksSent = 0;
+
+                            let rawLinesSample = [];
+                            while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+                                buf += decoder.decode(value, { stream: true });
+                                const lines = buf.split('\n');
+                                buf = lines.pop();
+                                for (const line of lines) {
+                                    if (!line.startsWith('data: ')) continue;
+                                    const raw = line.slice(6).trim();
+                                    if (!raw || raw === '[DONE]') continue;
+                                    if (rawLinesSample.length < 5) rawLinesSample.push(raw);
+                                    try {
+                                        const ev = JSON.parse(raw);
+                                        if (ev.error) {
+                                            const errObj = ev.error;
+                                            const errMsg = typeof errObj === 'string' ? errObj : (errObj.message || JSON.stringify(errObj));
+                                            console.error('[SX PROXY] Upstream SSE error event:', errMsg);
+                                            const errChunk = JSON.stringify({
+                                                response: {
+                                                    candidates: [{
+                                                        content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü: ${errMsg}` }] },
+                                                        finishReason: 'STOP'
+                                                    }]
+                                                }
+                                            });
+                                            res.write(`data: ${errChunk}\n\n`);
+                                            totalChunksSent++;
+                                            break;
+                                        }
+                                        const choice = ev.choices?.[0];
+                                        const delta = choice?.delta || {};
+                                        if (choice?.finish_reason) {
+                                            dbgLog({ ..._dbgLastStats, lastFinishReason: choice.finish_reason, rawLinesSample });
+                                        }
+
+                                        // Reasoning / Thought (OpenRouter, DeepSeek, Ollama, etc.)
+                                        let rc = '';
+                                        if (typeof delta.reasoning === 'string') {
+                                            rc = delta.reasoning;
+                                        } else if (typeof delta.reasoning_content === 'string') {
+                                            rc = delta.reasoning_content;
+                                        } else if (typeof delta.thought === 'string') {
+                                            rc = delta.thought;
+                                        } else if (Array.isArray(delta.reasoning_details)) {
+                                            rc = delta.reasoning_details.map(d => d.text || '').join('');
+                                        }
+                                        if (rc) {
+                                            if (!firstTokenTime) firstTokenTime = Date.now();
+                                            totalGeneratedChars += rc.length;
+                                            console.log('[SX PROXY THOUGHT]', rc.replace(/\n/g, ' ').slice(0, 30));
+                                            const chunk = JSON.stringify({
+                                                response: {
+                                                    candidates: [{
+                                                        content: { role: 'model', parts: [{ text: rc, thought: true }] }
+                                                    }]
+                                                }
+                                            });
+                                            res.write(`data: ${chunk}\n\n`);
+                                            totalChunksSent++;
+                                        }
+
+                                        // Content (handling potential embedded <think>, <thought>, or [THINK] tags)
+                                        let textStream = delta.content || '';
+                                        while (textStream) {
+                                            if (inThink) {
+                                                let closeIdx = -1;
+                                                let closeLen = 0;
+                                                const c1 = textStream.indexOf('</think>');
+                                                const c2 = textStream.indexOf('</thought>');
+                                                const c3 = textStream.indexOf('[/THINK]');
+                                                
+                                                const candidates = [
+                                                    { idx: c1, len: 8 },
+                                                    { idx: c2, len: 10 },
+                                                    { idx: c3, len: 8 }
+                                                ].filter(c => c.idx !== -1).sort((a, b) => a.idx - b.idx);
+
+                                                if (candidates.length > 0) {
+                                                    closeIdx = candidates[0].idx;
+                                                    closeLen = candidates[0].len;
+                                                }
+
+                                                if (closeIdx !== -1) {
+                                                    const thTxt = textStream.slice(0, closeIdx);
+                                                    inThink = false;
+                                                    textStream = textStream.slice(closeIdx + closeLen);
+                                                    if (thTxt) {
+                                                        const chunk = JSON.stringify({
+                                                            response: {
+                                                                candidates: [{
+                                                                    content: { role: 'model', parts: [{ text: thTxt, thought: true }] }
+                                                                }]
+                                                            }
+                                                        });
+                                                        res.write(`data: ${chunk}\n\n`);
+                                                    }
+                                                } else {
+                                                    const chunk = JSON.stringify({
+                                                        response: {
+                                                            candidates: [{
+                                                                content: { role: 'model', parts: [{ text: textStream, thought: true }] }
+                                                            }]
+                                                        }
+                                                    });
+                                                    res.write(`data: ${chunk}\n\n`);
+                                                    textStream = '';
+                                                }
+                                            } else {
+                                                let openIdx = -1;
+                                                let openLen = 0;
+                                                const o1 = textStream.indexOf('<think>');
+                                                const o2 = textStream.indexOf('<thought>');
+                                                const o3 = textStream.indexOf('[THINK]');
+
+                                                const candidates = [
+                                                    { idx: o1, len: 7 },
+                                                    { idx: o2, len: 9 },
+                                                    { idx: o3, len: 7 }
+                                                ].filter(c => c.idx !== -1).sort((a, b) => a.idx - b.idx);
+
+                                                if (candidates.length > 0) {
+                                                    openIdx = candidates[0].idx;
+                                                    openLen = candidates[0].len;
+                                                }
+
+                                                if (openIdx !== -1) {
+                                                    const normTxt = textStream.slice(0, openIdx);
+                                                    inThink = true;
+                                                    textStream = textStream.slice(openIdx + openLen);
+                                                    if (normTxt) {
+                                                        if (!firstTokenTime) firstTokenTime = Date.now();
+                                                        totalGeneratedChars += normTxt.length;
+                                                        const chunk = JSON.stringify({
+                                                            response: {
+                                                                candidates: [{
+                                                                    content: { role: 'model', parts: [{ text: normTxt }] }
+                                                                }]
+                                                            }
+                                                        });
+                                                        res.write(`data: ${chunk}\n\n`);
+                                                        totalChunksSent++;
+                                                    }
+                                                } else {
+                                                    if (!firstTokenTime) firstTokenTime = Date.now();
+                                                    totalGeneratedChars += textStream.length;
+                                                    const chunk = JSON.stringify({
+                                                        response: {
+                                                            candidates: [{
+                                                                content: { role: 'model', parts: [{ text: textStream }] }
+                                                            }]
+                                                        }
+                                                    });
+                                                    res.write(`data: ${chunk}\n\n`);
+                                                    totalChunksSent++;
+                                                    textStream = '';
+                                                }
+                                            }
+                                        }
+
+                                        // Tool calls
+                                        if (Array.isArray(delta.tool_calls)) {
+                                            for (const tc of delta.tool_calls) {
+                                                const idx = tc.index ?? 0;
+                                                if (!activeToolCalls[idx]) {
+                                                    activeToolCalls[idx] = { name: '', arguments: '' };
+                                                }
+                                                if (tc.function?.name) activeToolCalls[idx].name += tc.function.name;
+                                                if (tc.function?.arguments) activeToolCalls[idx].arguments += tc.function.arguments;
+                                            }
+                                        }
+                                    } catch(e) {}
+                                }
+                            }
+
+                            // Emit accumulated tool calls if any
+                            const fcParts = [];
+                            for (const idx of Object.keys(activeToolCalls).sort()) {
+                                const tc = activeToolCalls[idx];
+                                if (!tc.name) continue;
+                                let parsedArgs = {};
+                                try { parsedArgs = JSON.parse(tc.arguments || '{}'); } catch(e) { parsedArgs = { raw: tc.arguments }; }
+                                fcParts.push({
+                                    functionCall: {
+                                        name: tc.name,
+                                        args: parsedArgs
+                                    }
+                                });
+                            }
+                            if (fcParts.length > 0) {
+                                const fnChunk = JSON.stringify({
+                                    response: {
+                                        candidates: [{
+                                            content: { role: 'model', parts: fcParts },
+                                            finishReason: 'STOP'
+                                        }]
+                                    }
+                                });
+                                res.write(`data: ${fnChunk}\n\n`);
+                                totalChunksSent++;
+                            }
+
+                            // Record performance metrics for this conversation
+                            const totalRequestMs = Date.now() - requestStartTime;
+                            const ttftMs = firstTokenTime ? (firstTokenTime - requestStartTime) : totalRequestMs;
+                            const estimatedCompTokens = Math.max(1, Math.round(totalGeneratedChars / 3.5));
+                            const generationMs = Math.max(1, totalRequestMs - ttftMs);
+                            const tps = Number(((estimatedCompTokens / (generationMs / 1000))).toFixed(1));
+
+                            const perfData = {
+                                ttftMs,
+                                totalMs: totalRequestMs,
+                                generationMs,
+                                completionTokens: estimatedCompTokens,
+                                tps,
+                                modelName: customModel?.name || customModel?.modelId || 'Custom Model',
+                                timestamp: new Date().toISOString()
+                            };
+
+                            if (reqConvKey) convPerfStats[reqConvKey] = perfData;
+                            convPerfStats['last'] = perfData;
+                            saveConvPerfToDisk();
+                            console.log(`[SX PROXY PERF] ${reqConvKey || 'last'}: TTFT=${ttftMs}ms, Total=${totalRequestMs}ms, CompToks=${estimatedCompTokens}, TPS=${tps}`);
+
+                            // If model sent absolutely nothing (empty stream), emit a fallback to avoid
+                            // "model output must contain either output text or tool calls" error
+                            if (totalChunksSent === 0) {
+                                console.warn('[SX PROXY] Model returned empty stream — sending fallback message');
+                                dbgLog({ ..._dbgLastStats, totalChunksSent: 0, rawLinesSample });
+                                const fallback = JSON.stringify({
+                                    response: {
+                                        candidates: [{
+                                            content: { role: 'model', parts: [{ text: '_(Model boş yanıt döndürdü. Lütfen farklı bir model seçin veya tekrar deneyin.)_' }] },
+                                            finishReason: 'STOP'
+                                        }]
+                                    }
+                                });
+                                res.write(`data: ${fallback}\n\n`);
+                            }
+                        }
+
+                        // Send finish STOP frame (without empty text to avoid validation errors)
+                        const fin = JSON.stringify({
+                            response: {
+                                candidates: [{
+                                    finishReason: 'STOP'
+                                }]
+                            }
+                        });
+                        res.write(`data: ${fin}\n\n`);
+                        res.end();
+                    } catch(err) {
+                        console.error('[SX PROXY ERROR]', err);
+                        const errChunk = JSON.stringify({
+                            response: {
+                                candidates: [{
+                                    content: { role: 'model', parts: [{ text: `\nHata oluştu: ${err.message}` }] },
+                                    finishReason: 'STOP'
+                                }]
+                            }
+                        });
+                        res.write(`data: ${errChunk}\n\n`);
+                        res.end();
+                    }
+                });
+                return;
+            }
+
+            // Proxy everything else to appropriate Google endpoint
+            const targetBase = url.startsWith('/v1beta') ? 'https://generativelanguage.googleapis.com' : 'https://daily-cloudcode-pa.googleapis.com';
+            const targetUrl = `${targetBase}${url}`;
+            const fwdHeaders = { ...req.headers };
+            delete fwdHeaders['host'];
+            delete fwdHeaders['content-length'];
+
+            let bodyChunks = [];
+            req.on('data', chunk => bodyChunks.push(chunk));
+            req.on('end', async () => {
+                try {
+                    const upstream = await fetch(targetUrl, {
+                        method: req.method,
+                        headers: fwdHeaders,
+                        body: req.method !== 'GET' && req.method !== 'HEAD' ? Buffer.concat(bodyChunks) : undefined
+                    });
+                    const respBuffer = await upstream.arrayBuffer();
+                    const respHeaders = {};
+                    upstream.headers.forEach((val, key) => {
+                        if (key !== 'transfer-encoding' && key !== 'content-encoding') {
+                            respHeaders[key] = val;
+                        }
+                    });
+                    respHeaders['access-control-allow-origin'] = '*';
+                    res.writeHead(upstream.status, respHeaders);
+                    res.end(Buffer.from(respBuffer));
+                } catch(e) {
+                    res.writeHead(502);
+                    res.end(e.message);
+                }
+            });
+        });
+
+        server.on('error', (err) => {
+            console.error('[SX PROXY Server Error]', err);
+            resolve();
+        });
+
+        server.listen(15725, '127.0.0.1', () => {
+            internalProxyServer = server;
+            console.log('[SX PROXY] Running on http://127.0.0.1:15725');
+            resolve();
+        });
+    });
+}
+
+module.exports = {
+    startInternalProxy,
+    inMemoryConfig
+};
