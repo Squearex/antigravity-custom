@@ -710,6 +710,10 @@
     }
 
     function buildCustomModelConfigs() {
+        const sxModels = getSXModels();
+        if (sxModels && sxModels.length > 0) {
+            return sxModels.map((m, idx) => buildSXModelConfig(m, idx));
+        }
         return [
             {
                 label: "SX Custom Engine",
@@ -727,31 +731,21 @@
                 tagDescription: "",
                 supportedMimeTypes: { "text/plain": true, "image/png": true, "image/jpeg": true, "image/webp": true, "image/gif": true },
                 modelId: "sx-proxy-1"
-            },
-            {
-                label: "SX Placeholder",
-                modelOrAlias: { model: "MODEL_PLACEHOLDER_M2" },
-                supportsImages: true,
-                supportsThinking: true,
-                supportsAdaptiveThinking: true,
-                supportsRawThinking: true,
-                thinkingBudget: 16384,
-                minThinkingBudget: 2048,
-                isRecommended: false,
-                allowedTiers: ALLOWED_TIERS,
-                quotaInfo: { remainingFraction: 1.0, resetTime: "2030-12-31T23:59:59Z" },
-                tagTitle: "",
-                tagDescription: "",
-                supportedMimeTypes: { "text/plain": true, "image/png": true, "image/jpeg": true, "image/webp": true, "image/gif": true },
-                modelId: "sx-proxy-2"
             }
         ];
     }
 
     function buildCustomModelSorts() {
+        const sxModels = getSXModels();
+        if (sxModels && sxModels.length > 0) {
+            return [{
+                name: "Recommended",
+                groups: [{ groupName: "AI Models", modelLabels: sxModels.map(m => m.name) }]
+            }];
+        }
         return [{
             name: "Recommended",
-            groups: [{ groupName: "AI Models", modelLabels: ["SX Custom Engine", "SX Placeholder"] }]
+            groups: [{ groupName: "AI Models", modelLabels: ["SX Custom Engine"] }]
         }];
     }
 
@@ -790,8 +784,10 @@
                         data.userStatus.planStatus.userStatus = "USER_STATUS_ACTIVE";
                         if (!data.userStatus.cascadeModelConfigData) data.userStatus.cascadeModelConfigData = {};
                         const _configs = buildCustomModelConfigs();
-                        const _firstModel = _configs[0]?.modelOrAlias?.model || 'SX_EMPTY';
-                        const _firstModelId = _configs[0]?.modelId || 'sx-empty';
+                        const curActiveId = localStorage.getItem('sx_active_model_id');
+                        const _activeModel = _configs.find(c => c.modelId === curActiveId) || _configs[0];
+                        const _firstModel = _activeModel?.modelOrAlias?.model || 'SX_EMPTY';
+                        const _firstModelId = _activeModel?.modelId || 'sx-empty';
                         const _modelRef = { versionId: 'v-custom', modelOrAlias: { model: _firstModel } };
                         data.userStatus.cascadeModelConfigData.clientModelConfigs = _configs;
                         data.userStatus.cascadeModelConfigData.clientModelSorts = buildCustomModelSorts();
@@ -2554,6 +2550,22 @@
                                     const c = item.querySelector('.sx-item-check');
                                     if (c) c.style.visibility = 'visible';
 
+                                    // Immediately update the trigger button text
+                                    const trig = document.querySelector('[data-testid="model-selector-trigger"]');
+                                    if (trig) {
+                                        const s = trig.querySelector('.truncate') || trig.querySelector('span') || trig;
+                                        const pInfo = providerMap[m.providerId] || { name: '', dotColor: '#38bdf8' };
+                                        if (s) {
+                                            s.dataset.sxKey = m.id + '_' + pInfo.name;
+                                            s.style.setProperty('display', 'inline-flex', 'important');
+                                            s.style.setProperty('align-items', 'center', 'important');
+                                            s.innerHTML = 
+                                                (pInfo.name ? `<span class="sx-prov-badge" style="display:inline-flex;align-items:center;gap:3.5px;padding:0.5px 5px;border-radius:4px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);font-size:9.5px;font-weight:700;color:${pInfo.dotColor};margin-right:6px;letter-spacing:0.3px;vertical-align:middle;line-height:normal;flex-shrink:0;"><span style="width:4px;height:4px;border-radius:50%;background:${pInfo.dotColor};"></span>${sxEsc(pInfo.name)}</span>` : '') +
+                                                `<span class="sx-model-name-text" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle;font-size:12px;font-weight:600;color:rgba(255,255,255,0.95);">${sxEsc(m.name)}</span>`;
+                                        }
+                                        trig.setAttribute('aria-label', `Select model, current: ${m.name}`);
+                                    }
+
                                     // Trigger React state & close popper
                                     if (sampleNative) sampleNative.click();
                                     setTimeout(hookDOM, 30);
@@ -2622,10 +2634,11 @@
                 const walker = document.createTreeWalker(trigger, NodeFilter.SHOW_TEXT);
                 let node;
                 while ((node = walker.nextNode())) {
-                    if (node.nodeValue && (node.nodeValue.includes('No Models Configured') || node.nodeValue.includes('Setup Required'))) {
+                    if (node.nodeValue && (node.nodeValue.includes('No Models Configured') || node.nodeValue.includes('Setup Required') || node.nodeValue.includes('SX Custom Engine'))) {
                         node.nodeValue = 'Kurulum Gerekli';
                     }
                 }
+            } else {
                 const curConv = getActiveConversationKey();
                 const activeId = (curConv ? localStorage.getItem('sx_active_model_' + curConv) : null) || localStorage.getItem('sx_active_model_id');
                 const activeM = sxModels.find(m => m.id === activeId) || sxModels[0];
@@ -2652,9 +2665,9 @@
                     else if (pLower.includes('perplexity')) dotColor = '#22d3ee';
                     else if (pLower.includes('ollama') || pLower.includes('lm studio')) dotColor = '#84cc16';
 
-                    const s = trigger.querySelector('span');
+                    const s = trigger.querySelector('.truncate') || trigger.querySelector('span') || trigger;
                     const desiredKey = activeM.id + '_' + provName;
-                    if (s && (!s.querySelector('.sx-prov-badge') || s.dataset.sxKey !== desiredKey)) {
+                    if (s && (s.dataset.sxKey !== desiredKey || s.innerText.includes('SX Custom Engine') || !s.querySelector('.sx-prov-badge'))) {
                         s.dataset.sxKey = desiredKey;
                         s.style.setProperty('display', 'inline-flex', 'important');
                         s.style.setProperty('align-items', 'center', 'important');
@@ -2662,8 +2675,10 @@
                         s.style.setProperty('overflow', 'visible', 'important');
                         s.innerHTML = 
                             (provName ? `<span class="sx-prov-badge" style="display:inline-flex;align-items:center;gap:3.5px;padding:0.5px 5px;border-radius:4px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);font-size:9.5px;font-weight:700;color:${dotColor};margin-right:6px;letter-spacing:0.3px;vertical-align:middle;line-height:normal;flex-shrink:0;"><span style="width:4px;height:4px;border-radius:50%;background:${dotColor};"></span>${sxEsc(provName)}</span>` : '') +
-                            `<span class="sx-model-name-text" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle;">${sxEsc(activeM.name)}</span>`;
+                            `<span class="sx-model-name-text" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle;font-size:12px;font-weight:600;color:rgba(255,255,255,0.95);">${sxEsc(activeM.name)}</span>`;
                     }
+
+                    trigger.setAttribute('aria-label', `Select model, current: ${activeM.name}`);
 
                     // ── 3.04 Constrain trigger layout ──
                     if (trigger.parentElement) {
