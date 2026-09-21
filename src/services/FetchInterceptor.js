@@ -133,7 +133,7 @@ export class FetchInterceptor {
                                         modelName: activeId || 'Active Model',
                                         timestamp: new Date().toISOString()
                                     };
-                                    window.SX_SDK?.perf?.recordPerfMetrics(convKey, perfData);
+                                    window.SX_SDK?.perf?.recordLiveMessagePerf(convKey, perfData);
                                     return;
                                 }
                                 if (!firstTokenTime) {
