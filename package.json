@@ -9,6 +9,10 @@
     "email": "antigravity-support@google.com"
   },
   "main": "dist/main.js",
+  "scripts": {
+    "build:inject": "esbuild src/index.js --bundle --outfile=dist/sx-inject.js --platform=browser --target=es2022",
+    "watch:inject": "esbuild src/index.js --bundle --outfile=dist/sx-inject.js --platform=browser --target=es2022 --watch"
+  },
   "dependencies": {
     "@bufbuild/protobuf": "^2.13.0",
     "@connectrpc/connect": "^2.1.2",
@@ -17,5 +21,8 @@
     "electron-log": "^5.4.3",
     "electron-updater": "^6.8.9",
     "shell-env": "^4.0.3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }
