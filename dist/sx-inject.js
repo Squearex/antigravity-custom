@@ -167,7 +167,14 @@
 
             localStorage.setItem('sx_active_theme_preset', preset.id);
 
-            // 1. If Settings > Appearance dialog is open, sync via Antigravity's native inputs
+            // 1. Live CSS variable application on document.documentElement
+            const root = document.documentElement;
+            root.style.setProperty('--background', preset.background);
+            root.style.setProperty('--foreground', preset.foreground);
+            root.style.setProperty('--primary', preset.primary);
+            root.style.setProperty('--sidebar-background', preset.background);
+
+            // 2. If Settings > Appearance dialog is open, sync via Antigravity's native inputs
             const d = document.querySelector('[role="dialog"]');
             if (d) {
                 const darkThemeH3 = Array.from(d.querySelectorAll('*')).find(el => el.children.length === 0 && el.textContent.trim() === 'Dark Theme');
@@ -2011,42 +2018,56 @@
             }
         }
 
-        // 3. Hook native preset combobox listbox when opened
+        // 3. Transform native preset combobox listbox options into SX Presets (hide defaults completely)
         const listbox = document.querySelector('[role="listbox"]');
-        if (listbox && !listbox.querySelector('.sx-custom-preset-option')) {
-            const hasDefaultDark = Array.from(listbox.querySelectorAll('[role="option"]')).some(o => o.innerText.includes('Default Dark'));
-            if (hasDefaultDark) {
-                const sep = document.createElement('div');
-                sep.className = 'sx-preset-separator';
-                sep.style.cssText = 'height:1px;background:rgba(255,255,255,0.08);margin:4px 6px;';
-                listbox.appendChild(sep);
+        if (listbox) {
+            // Remove old extra injected elements if any
+            listbox.querySelectorAll('.sx-preset-separator, .sx-preset-header, .sx-custom-preset-option').forEach(el => el.remove());
 
-                const hdr = document.createElement('div');
-                hdr.className = 'sx-preset-header';
-                hdr.style.cssText = 'padding:6px 8px 3px 8px;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#38bdf8;display:flex;align-items:center;gap:4px;user-select:none;';
-                hdr.innerHTML = '<span>⚡</span> <span>SX Presets</span>';
-                listbox.appendChild(hdr);
+            const options = Array.from(listbox.querySelectorAll('[role="option"]'));
+            if (options.length > 0) {
+                const activeThemeId = localStorage.getItem('sx_active_theme_preset') || 'sx-signature';
 
-                SX_THEME_PRESETS.forEach(p => {
-                    const opt = document.createElement('div');
-                    opt.className = 'sx-custom-preset-option w-full text-left whitespace-nowrap transition-colors duration-150 select-none rounded-md flex items-center gap-1.5 px-2 py-1 text-[13px] outline-none no-focus-ring text-secondary-foreground data-[selected]:text-foreground cursor-pointer focus:bg-secondary focus:text-foreground hover:bg-secondary hover:text-foreground';
-                    opt.style.cssText = 'padding:4px 8px;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12.5px;border-radius:5px;transition:background 0.15s;';
-                    opt.innerHTML = `
-                        <span style="width:7px;height:7px;border-radius:50%;background:${p.primary};box-shadow:0 0 5px ${p.primary}88;flex-shrink:0;"></span>
-                        <span class="truncate" style="font-weight:500;color:rgba(255,255,255,0.9);">${p.name}</span>
-                        <span style="font-size:9px;color:${p.primary};background:${p.primary}18;padding:1px 5px;border-radius:3px;margin-left:auto;font-weight:700;">${p.badge}</span>
-                    `;
+                options.forEach((opt, idx) => {
+                    const p = SX_THEME_PRESETS[idx];
+                    if (!p) {
+                        opt.style.setProperty('display', 'none', 'important');
+                        return;
+                    }
+                    opt.style.setProperty('display', 'flex', 'important');
 
-                    opt.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        sxApplyThemePreset(p, true);
-                        const combo = card.querySelector('button[role="combobox"]');
-                        if (combo) combo.click();
-                        else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
-                    });
+                    const isMatch = (p.id === activeThemeId);
+                    if (opt.dataset.sxId !== p.id || opt.dataset.sxMatch !== String(isMatch)) {
+                        opt.dataset.sxId = p.id;
+                        opt.dataset.sxMatch = String(isMatch);
+                        opt.style.cssText = 'padding:6px 10px;display:flex;align-items:center;gap:7px;cursor:pointer;border-radius:6px;width:100%;box-sizing:border-box;';
 
-                    listbox.appendChild(opt);
+                        opt.innerHTML = `
+                            <span style="width:8px;height:8px;border-radius:50%;background:${p.primary};box-shadow:0 0 6px ${p.primary}99;flex-shrink:0;"></span>
+                            <span class="truncate" style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,0.92);flex:1;min-width:0;">${p.name}</span>
+                            <span style="font-size:9px;font-weight:700;color:${p.tagColor};background:${p.tagColor}1a;border:1px solid ${p.tagColor}33;padding:1px 5px;border-radius:4px;letter-spacing:0.2px;flex-shrink:0;">${p.badge}</span>
+                            ${isMatch ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + p.primary + '" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>' : ''}
+                        `;
+                    }
+
+                    if (!opt.dataset.sxHooked) {
+                        opt.dataset.sxHooked = 'true';
+                        opt.addEventListener('click', () => {
+                            sxApplyThemePreset(p, true);
+                        }, true);
+                    }
                 });
+            }
+        }
+
+        // 4. Update combobox button text to active SX preset name
+        const combo = card.querySelector('button[role="combobox"]');
+        if (combo) {
+            const activeThemeId = localStorage.getItem('sx_active_theme_preset') || 'sx-signature';
+            const curP = SX_THEME_PRESETS.find(x => x.id === activeThemeId) || SX_THEME_PRESETS[0];
+            const span = combo.querySelector('.truncate') || combo.querySelector('span') || combo;
+            if (span && curP && span.innerText !== curP.name) {
+                span.innerText = curP.name;
             }
         }
     }
