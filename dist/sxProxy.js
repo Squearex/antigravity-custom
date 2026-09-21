@@ -985,6 +985,40 @@ function startInternalProxy() {
                 return;
             }
 
+            // Save custom theme seeds to config.json
+            // POST /sx/save-theme body: { background, foregroundOverride, primary }
+            if (url === '/sx/save-theme' && req.method === 'POST') {
+                let raw = '';
+                req.on('data', chunk => raw += chunk);
+                req.on('end', () => {
+                    try {
+                        const { background, foregroundOverride, primary } = JSON.parse(raw);
+                        const homedir = require('os').homedir();
+                        const configPaths = [
+                            path.join(homedir, '.gemini-custom', 'config', 'config.json'),
+                            path.join(homedir, '.gemini', 'config', 'config.json')
+                        ];
+                        for (const cp of configPaths) {
+                            if (fs.existsSync(cp)) {
+                                try {
+                                    const cfg = JSON.parse(fs.readFileSync(cp, 'utf8'));
+                                    if (!cfg.userSettings) cfg.userSettings = {};
+                                    cfg.userSettings.customThemeSeedsDark = { background, foregroundOverride, primary };
+                                    cfg.userSettings.themeMode = 'THEME_MODE_DARK';
+                                    fs.writeFileSync(cp, JSON.stringify(cfg, null, 2), 'utf8');
+                                } catch(e) {}
+                            }
+                        }
+                        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ ok: true }));
+                    } catch(e) {
+                        res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ error: e.message }));
+                    }
+                });
+                return;
+            }
+
             // CORS proxy: lets the renderer make requests to external APIs without CORS errors
             // POST /sx/proxy-fetch  body: { url, method, headers, body? }
             if (url === '/sx/proxy-fetch' && req.method === 'POST') {

@@ -56,6 +56,193 @@
     }
     sxFetchPersistedConfig();
 
+    // ────────────────────────────────────────────────────────────────────────
+    // SX Theme Presets & Engine
+    // ────────────────────────────────────────────────────────────────────────
+    const SX_THEME_PRESETS = [
+        {
+            id: 'sx-signature',
+            name: 'SX Development Pro',
+            badge: 'Official ⭐',
+            desc: 'Derin obsidyen arka plan, elektrik camgöbeği ışıma ve buz beyazı metinler',
+            background: '#0B0F17',
+            foreground: '#F8FAFC',
+            primary: '#38BDF8',
+            tagColor: '#38bdf8'
+        },
+        {
+            id: 'sx-cyberpunk',
+            name: 'SX Cyberpunk Neon',
+            badge: 'High Contrast',
+            desc: 'Koyu synthwave atmosferi ve elektrik menekşe/mor aksan',
+            background: '#08090E',
+            foreground: '#F1F5F9',
+            primary: '#A855F7',
+            tagColor: '#a855f7'
+        },
+        {
+            id: 'sx-oled',
+            name: 'SX OLED Pure Black',
+            badge: 'Zero Lux',
+            desc: 'Tamamen saf %100 siyah OLED zemin ve zümrüt yeşili lazer aksan',
+            background: '#000000',
+            foreground: '#F8FAFC',
+            primary: '#10B981',
+            tagColor: '#10b981'
+        },
+        {
+            id: 'sx-crimson',
+            name: 'SX Crimson Eclipse',
+            badge: 'Vampiric',
+            desc: 'Derin yakut kırmızısı gölgeler ve keskin gül-kırmızı aksan',
+            background: '#11090D',
+            foreground: '#FFF1F2',
+            primary: '#F43F5E',
+            tagColor: '#f43f5e'
+        },
+        {
+            id: 'sx-amber',
+            name: 'SX Sunset Amber',
+            badge: 'Warm',
+            desc: 'Sıcak kömür tonları ve parıldayan altın kehribar ışıltısı',
+            background: '#12100C',
+            foreground: '#FEF3C7',
+            primary: '#F59E0B',
+            tagColor: '#f59e0b'
+        },
+        {
+            id: 'sx-arctic',
+            name: 'SX Arctic Glacier',
+            badge: 'Cool Frost',
+            desc: 'Kutup soğuğu lacivert zemin ve parlak buzul turkuazı detaylar',
+            background: '#0A1118',
+            foreground: '#E6F4F8',
+            primary: '#06B6D4',
+            tagColor: '#06b6d4'
+        },
+        {
+            id: 'sx-amethyst',
+            name: 'SX Royal Amethyst',
+            badge: 'Luxury',
+            desc: 'Kadife imparatorluk obsidyeni ve lüks lavanta mor aydınlatması',
+            background: '#0F0B18',
+            foreground: '#F3E8FF',
+            primary: '#C084FC',
+            tagColor: '#c084fc'
+        },
+        {
+            id: 'sx-tokyo',
+            name: 'SX Tokyo Neon',
+            badge: 'Atmosphere',
+            desc: 'Gece yarısı indigo zemin ve modern Tokyo mavisi aurası',
+            background: '#13141F',
+            foreground: '#C0CAF5',
+            primary: '#7AA2F7',
+            tagColor: '#7aa2f7'
+        }
+    ];
+
+    function sxApplyThemePreset(presetOrId, saveToServer = true) {
+        try {
+            const preset = typeof presetOrId === 'string'
+                ? SX_THEME_PRESETS.find(p => p.id === presetOrId) || SX_THEME_PRESETS[0]
+                : presetOrId;
+            if (!preset) return;
+
+            localStorage.setItem('sx_active_theme_preset', preset.id);
+
+            // 1. Live CSS variable application on document.documentElement
+            const root = document.documentElement;
+            root.style.setProperty('--background', preset.background, 'important');
+            root.style.setProperty('--foreground', preset.foreground, 'important');
+            root.style.setProperty('--primary', preset.primary, 'important');
+            root.style.setProperty('--sidebar-background', preset.background, 'important');
+
+            // 2. If Settings > Appearance dialog is open, sync native inputs & studio cards
+            const d = document.querySelector('[role="dialog"]');
+            if (d) {
+                const darkThemeH3 = Array.from(d.querySelectorAll('*')).find(el => el.children.length === 0 && el.textContent.trim() === 'Dark Theme');
+                if (darkThemeH3) {
+                    const spaceY2 = darkThemeH3.closest('.space-y-2');
+                    if (spaceY2) {
+                        const inputs = Array.from(spaceY2.querySelectorAll('input.uppercase'));
+                        if (inputs.length >= 3) {
+                            const bgClean = preset.background.replace('#', '').toUpperCase();
+                            const fgClean = preset.foreground.replace('#', '').toUpperCase();
+                            const prClean = preset.primary.replace('#', '').toUpperCase();
+                            if (inputs[0].value !== bgClean) {
+                                inputs[0].value = bgClean;
+                                inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+                                inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                            if (inputs[1].value !== fgClean) {
+                                inputs[1].value = fgClean;
+                                inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+                                inputs[1].dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                            if (inputs[2].value !== prClean) {
+                                inputs[2].value = prClean;
+                                inputs[2].dispatchEvent(new Event('input', { bubbles: true }));
+                                inputs[2].dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                        }
+                    }
+                }
+
+                const studio = d.querySelector('#sx-theme-studio');
+                if (studio) {
+                    studio.querySelectorAll('.sx-theme-card').forEach(c => {
+                        const isMatch = (c.dataset.themeId === preset.id);
+                        c.style.border = isMatch ? ('1.5px solid ' + preset.primary) : '1px solid rgba(255,255,255,0.08)';
+                        c.style.boxShadow = isMatch ? ('0 0 16px ' + preset.primary + '33') : 'none';
+                        const badgeSpan = c.querySelector('.sx-theme-active-indicator');
+                        if (badgeSpan) {
+                            badgeSpan.style.display = isMatch ? 'inline-flex' : 'none';
+                        }
+                    });
+                }
+            }
+
+            // 3. Persist to config.json via sxProxy
+            if (saveToServer) {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', 'http://127.0.0.1:15725/sx/save-theme', true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+                xhr.send(JSON.stringify({
+                    background: preset.background,
+                    foregroundOverride: preset.foreground,
+                    primary: preset.primary
+                }));
+            }
+        } catch(e) {
+            console.error('[SX Theme] Apply error:', e);
+        }
+    }
+
+    function syncActiveThemeVariables() {
+        try {
+            const activeThemeId = localStorage.getItem('sx_active_theme_preset') || 'sx-signature';
+            const preset = SX_THEME_PRESETS.find(p => p.id === activeThemeId) || SX_THEME_PRESETS[0];
+            if (!preset) return;
+            const root = document.documentElement;
+            if (root && root.style.getPropertyValue('--background') !== preset.background) {
+                root.style.setProperty('--background', preset.background, 'important');
+                root.style.setProperty('--foreground', preset.foreground, 'important');
+                root.style.setProperty('--primary', preset.primary, 'important');
+                root.style.setProperty('--sidebar-background', preset.background, 'important');
+            }
+        } catch(e) {}
+    }
+
+    // Restore & apply theme on initialization
+    try {
+        const savedThemePreset = localStorage.getItem('sx_active_theme_preset') || 'sx-signature';
+        sxApplyThemePreset(savedThemePreset, false);
+    } catch(e) {}
+    window.SX_THEME_PRESETS = SX_THEME_PRESETS;
+    window.sxApplyThemePreset = sxApplyThemePreset;
+    window.sxSyncActiveThemeVariables = syncActiveThemeVariables;
+
     // Storage helpers: always prioritize whichever has the most up-to-date models
     function getSXProviders() {
         try {
@@ -1790,9 +1977,114 @@
     });
 
     // ────────────────────────────────────────────────────────────────────────
+    // Settings > Appearance Tab — SX Theme Studio Injection
+    // ────────────────────────────────────────────────────────────────────────
+    function trySXAppearanceSettingsInject() {
+        const dialog = document.querySelector('[role="dialog"]');
+        if (!dialog) return;
+
+        // Check if on Appearance tab: look for "Dark Theme"
+        const all = Array.from(dialog.querySelectorAll('*'));
+        const darkThemeH3 = all.find(el => el.children.length === 0 && el.textContent.trim() === 'Dark Theme');
+        if (!darkThemeH3) return;
+
+        const spaceY2 = darkThemeH3.closest('.space-y-2');
+        if (!spaceY2 || !spaceY2.parentElement) return;
+
+        if (dialog.querySelector('#sx-theme-studio')) return;
+
+        const activeThemeId = localStorage.getItem('sx_active_theme_preset') || 'sx-signature';
+
+        const studio = document.createElement('div');
+        studio.id = 'sx-theme-studio';
+        studio.style.cssText = 'background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:18px;margin-bottom:16px;box-sizing:border-box;';
+
+        let cardsHtml = '';
+        SX_THEME_PRESETS.forEach(p => {
+            const isActive = (p.id === activeThemeId);
+            const borderStyle = isActive 
+                ? 'border:1.5px solid ' + p.primary + ';box-shadow:0 0 16px ' + p.primary + '33;' 
+                : 'border:1px solid rgba(255,255,255,0.08);';
+            cardsHtml += `
+                <div class="sx-theme-card" data-theme-id="${p.id}" style="background:${p.background};border-radius:10px;padding:12px 14px;${borderStyle}cursor:pointer;display:flex;flex-direction:column;gap:8px;position:relative;transition:all 0.2s cubic-bezier(0.4, 0, 0.2, 1);user-select:none;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;">
+                        <span style="font-size:12.5px;font-weight:700;color:${p.foreground};letter-spacing:-0.2px;display:flex;align-items:center;gap:6px;">
+                            ${p.name}
+                        </span>
+                        <span style="font-size:9px;font-weight:700;color:${p.tagColor};background:${p.tagColor}18;border:1px solid ${p.tagColor}40;padding:1.5px 6px;border-radius:4px;letter-spacing:0.3px;">
+                            ${p.badge}
+                        </span>
+                    </div>
+                    
+                    <div style="display:flex;align-items:center;gap:6px;margin:2px 0;">
+                        <div style="display:flex;align-items:center;gap:4px;background:rgba(255,255,255,0.06);padding:3px 6px;border-radius:5px;border:1px solid rgba(255,255,255,0.08);">
+                            <span style="width:10px;height:10px;border-radius:50%;background:${p.background};border:1px solid rgba(255,255,255,0.3);" title="Background: ${p.background}"></span>
+                            <span style="font-size:9.5px;color:rgba(255,255,255,0.5);font-family:ui-monospace,monospace;">${p.background}</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px;background:rgba(255,255,255,0.06);padding:3px 6px;border-radius:5px;border:1px solid rgba(255,255,255,0.08);">
+                            <span style="width:10px;height:10px;border-radius:50%;background:${p.primary};border:1px solid rgba(255,255,255,0.3);" title="Primary: ${p.primary}"></span>
+                            <span style="font-size:9.5px;color:${p.primary};font-weight:600;font-family:ui-monospace,monospace;">${p.primary}</span>
+                        </div>
+                        <span class="sx-theme-active-indicator" style="margin-left:auto;font-size:10px;font-weight:700;color:${p.primary};display:${isActive ? 'inline-flex' : 'none'};align-items:center;gap:3px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Aktif</span>
+                    </div>
+                    
+                    <div style="font-size:11px;color:rgba(255,255,255,0.55);line-height:1.4;">
+                        ${p.desc}
+                    </div>
+                </div>
+            `;
+        });
+
+        studio.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:#38bdf818;border:1px solid #38bdf833;color:#38bdf8;font-size:13px;">⚡</span>
+                    <div>
+                        <div style="font-size:13.5px;font-weight:700;color:#ffffff;letter-spacing:-0.2px;display:flex;align-items:center;gap:7px;">
+                            SX Development Theme Studio
+                            <span style="font-size:9px;background:#38bdf822;color:#38bdf8;border:1px solid #38bdf844;padding:1px 6px;border-radius:10px;font-weight:700;">8 Özel Tema</span>
+                        </div>
+                        <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px;">
+                            Antigravity Custom için optimize edilmiş, gözü yormayan yüksek kontrastlı premium paletler. Tıklayarak anında uygulayabilirsiniz.
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(280px, 1fr));gap:10px;">
+                ${cardsHtml}
+            </div>
+        `;
+
+        studio.querySelectorAll('.sx-theme-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tid = card.dataset.themeId;
+                const p = SX_THEME_PRESETS.find(x => x.id === tid);
+                if (p) sxApplyThemePreset(p, true);
+            });
+            card.addEventListener('mouseenter', () => {
+                if (card.dataset.themeId !== localStorage.getItem('sx_active_theme_preset')) {
+                    card.style.transform = 'translateY(-1px)';
+                    card.style.borderColor = 'rgba(255,255,255,0.2)';
+                }
+            });
+            card.addEventListener('mouseleave', () => {
+                card.style.transform = 'translateY(0)';
+                if (card.dataset.themeId !== localStorage.getItem('sx_active_theme_preset')) {
+                    card.style.borderColor = 'rgba(255,255,255,0.08)';
+                }
+            });
+        });
+
+        spaceY2.parentElement.insertBefore(studio, spaceY2);
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
     // DOM Hook Loop: empty state banner + sync trigger
     // ────────────────────────────────────────────────────────────────────────
     function hookDOM() {
+        syncActiveThemeVariables();
+
         // ── 1. Model selector dropdown ──
         const sxPopperMenu = document.querySelector('div[data-radix-popper-content-wrapper] [role="menu"]');
         if (sxPopperMenu && !sxPopperMenu.closest('[data-sx-usage-panel]')) {
@@ -2506,6 +2798,7 @@
         }
 
         trySXModelsSettingsInject();
+        trySXAppearanceSettingsInject();
     }
 
     // ── Startup: restore per-conversation models from proxy disk ──
