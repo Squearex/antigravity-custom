@@ -349,12 +349,15 @@ export class ThemeEngine {
                 background-color: ${preset.background} !important;
             }
 
-            /* SX Atmospheric Lighting Field (Top-Center Luminous Glow) */
+            /* SX Atmospheric Lighting Field (Expanded, Softer Luminous Glow) */
             body.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full {
                 position: relative;
                 overflow: hidden;
-                background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-                background-size: 28px 28px;
+                background-color: var(--background) !important;
+                background-image: 
+                    radial-gradient(ellipse 130% 90% at 50% 15%, rgba(var(--sx-accent-rgb), 0.05) 0%, transparent 80%),
+                    radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px) !important;
+                background-size: 100% 100%, 28px 28px !important;
             }
             body.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full::before {
                 content: '';
@@ -362,10 +365,41 @@ export class ThemeEngine {
                 top: 0;
                 left: 0;
                 right: 0;
-                height: 420px;
-                background: radial-gradient(ellipse 80% 360px at 50% 0%, rgba(var(--sx-accent-rgb), 0.14), rgba(var(--sx-accent-rgb), 0.03) 50%, transparent 80%);
+                height: 100%;
+                max-height: 1050px;
+                background: radial-gradient(ellipse 110% 800px at 50% -2%, rgba(var(--sx-accent-rgb), 0.16) 0%, rgba(var(--sx-accent-rgb), 0.08) 35%, rgba(var(--sx-accent-rgb), 0.03) 65%, transparent 95%);
                 pointer-events: none;
                 z-index: 0;
+            }
+
+            /* Transparent Sticky Chat Message Headers (Prevents dark block artifacts) */
+            body.sx-theme-active div.sticky.top-0 {
+                background: transparent !important;
+            }
+            body.sx-theme-active div.sticky.top-0::after {
+                display: none !important;
+            }
+
+            /* User Input Steps / Prompt Card Theming (Removes solid black backgrounds) */
+            body.sx-theme-active [class*="group/user-input-step"] [data-testid="lifted-context-menu-trigger"],
+            body.sx-theme-active [data-testid="user-input-step"] [data-testid="lifted-context-menu-trigger"],
+            body.sx-theme-active [class*="group/user-input-step"] .bg-card-border,
+            body.sx-theme-active [data-testid="user-input-step"] .bg-card-border {
+                background: rgba(var(--sx-accent-rgb), 0.08) !important;
+                border: 1px solid rgba(var(--sx-accent-rgb), 0.25) !important;
+                border-radius: 14px !important;
+                box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.35) !important;
+            }
+            body.sx-theme-active [class*="group/user-input-step"] .bg-card,
+            body.sx-theme-active [data-testid="user-input-step"] .bg-card {
+                background: rgba(var(--sx-accent-rgb), 0.04) !important;
+                backdrop-filter: blur(12px) !important;
+                border-radius: 13px !important;
+            }
+            body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-container,
+            body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-container {
+                background: rgba(10, 15, 20, 0.85) !important;
+                border: 1px solid rgba(var(--sx-accent-rgb), 0.2) !important;
             }
 
             /* Floating Prompt Card Glassmorphism & Cyber Glow */
