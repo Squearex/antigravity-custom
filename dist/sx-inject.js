@@ -660,9 +660,70 @@
             body.sx-theme-active aside {
                 background-color: ${preset.background} !important;
             }
+
+            /* SX Atmospheric Lighting Field (Top-Center Luminous Glow) */
+            body.sx-theme-active .flex-1.flex.min-h-0.relative::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 460px;
+                background: radial-gradient(ellipse 80% 380px at 50% -10%, rgba(var(--sx-accent-rgb), 0.16), rgba(var(--sx-accent-rgb), 0.04) 55%, transparent 85%);
+                pointer-events: none;
+                z-index: 0;
+            }
+
+            /* SX Subtle Tech Matrix / Grid Atmosphere */
+            body.sx-theme-active .flex-1.flex.min-h-0.relative {
+                background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+                background-size: 28px 28px;
+            }
+
+            /* Floating Prompt Card Glassmorphism & Cyber Glow */
+            body.sx-theme-active .bg-card.rounded-\\[calc\\(theme\\(borderRadius\\.2xl\\)-1px\\)\\] {
+                background: rgba(6, 10, 16, 0.74) !important;
+                backdrop-filter: blur(20px) saturate(180%) !important;
+                border: 1px solid rgba(var(--sx-accent-rgb), 0.28) !important;
+                box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.65), 0 0 20px -2px rgba(var(--sx-accent-rgb), 0.18) !important;
+                transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            }
+            body.sx-theme-active .bg-card.rounded-\\[calc\\(theme\\(borderRadius\\.2xl\\)-1px\\)\\]:focus-within {
+                border-color: var(--primary) !important;
+                box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.75), 0 0 28px -2px rgba(var(--sx-accent-rgb), 0.35) !important;
+            }
+
+            /* Sleek Cyber Scrollbars */
+            body.sx-theme-active *::-webkit-scrollbar {
+                width: 6px;
+                height: 6px;
+            }
+            body.sx-theme-active *::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            body.sx-theme-active *::-webkit-scrollbar-thumb {
+                background: rgba(var(--sx-accent-rgb), 0.25);
+                border-radius: 9999px;
+            }
+            body.sx-theme-active *::-webkit-scrollbar-thumb:hover {
+                background: var(--primary);
+                box-shadow: 0 0 10px var(--primary);
+            }
+
+            /* Developer Code Blocks Obsidian Glass */
+            body.sx-theme-active pre {
+                border: 1px solid rgba(var(--sx-accent-rgb), 0.20) !important;
+                background: rgba(3, 7, 12, 0.65) !important;
+                box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4) !important;
+                border-radius: 8px !important;
+            }
+
+            /* Primary Buttons Glow */
             body.sx-theme-active button.bg-primary {
                 box-shadow: 0 0 14px rgba(var(--sx-accent-rgb), 0.4) !important;
             }
+
+            /* Active Sidebar Conversation */
             body.sx-theme-active .bg-secondary:not(button):not(input) {
                 border-left: 2px solid var(--primary);
             }
