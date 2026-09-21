@@ -142,6 +142,61 @@
         }
     ];
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Antigravity Native Theme Dictionary Integration & Crash Prevention
+    // ────────────────────────────────────────────────────────────────────────
+    function sxPatchNativeThemeDict() {
+        try {
+            if (typeof F$ !== 'undefined') {
+                ['dark', 'light'].forEach(mode => {
+                    if (F$[mode] && !F$[mode].__sxPatched) {
+                        SX_THEME_PRESETS.forEach(p => {
+                            F$[mode][p.name] = {
+                                background: p.background,
+                                foregroundOverride: p.foreground,
+                                primary: p.primary
+                            };
+                        });
+                        F$[mode] = new Proxy(F$[mode], {
+                            get(target, prop) {
+                                if (prop in target) return target[prop];
+                                if (typeof prop === 'string') {
+                                    const sx = SX_THEME_PRESETS.find(p => p.name === prop || p.id === prop);
+                                    if (sx) return { background: sx.background, foregroundOverride: sx.foreground, primary: sx.primary };
+                                    return target[mode === 'light' ? 'Default Light' : 'Default Dark'] || Object.values(target)[0];
+                                }
+                                return target[prop];
+                            }
+                        });
+                        F$[mode].__sxPatched = true;
+                    }
+                });
+            }
+        } catch(e) {}
+    }
+    sxPatchNativeThemeDict();
+    setInterval(sxPatchNativeThemeDict, 300);
+
+    // Safe Storage hook to prevent "Cannot read properties of undefined (reading 'background')"
+    try {
+        const _origGetItem = Storage.prototype.getItem;
+        Storage.prototype.getItem = function(key) {
+            const val = _origGetItem.apply(this, arguments);
+            if (key === 'theme-preset-dark' || key === 'theme-preset-light') {
+                if (typeof F$ === 'undefined' || !F$?.dark?.[val]) {
+                    const isSX = SX_THEME_PRESETS.some(p => p.name === val || p.id === val);
+                    if (isSX) {
+                        sxPatchNativeThemeDict();
+                        if (typeof F$ === 'undefined' || !F$?.dark?.[val]) {
+                            return 'Default Dark';
+                        }
+                    }
+                }
+            }
+            return val;
+        };
+    } catch(e) {}
+
     function setNativeValue(element, value) {
         if (!element) return;
         const valueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set;
@@ -191,6 +246,7 @@
                 : presetOrId;
             if (!preset) return;
 
+            sxPatchNativeThemeDict();
             localStorage.setItem('sx_active_theme_preset', preset.id);
             localStorage.setItem('theme-preset-dark', preset.name);
 
