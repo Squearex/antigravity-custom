@@ -1156,7 +1156,7 @@ function startInternalProxy() {
 
             // Handle retrieveUserQuotaSummary
             if (url.includes('retrieveUserQuotaSummary')) {
-                const bucket = { remainingFraction: 1.0, disabled: false, resetTime: "2030-12-31T23:59:59Z" };
+                const bucket = { displayName: "SX Development", remainingFraction: 1.0, disabled: false, resetTime: "2030-12-31T23:59:59Z" };
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                 res.end(JSON.stringify({
                     buckets: [bucket],

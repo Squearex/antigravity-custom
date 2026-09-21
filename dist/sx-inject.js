@@ -766,6 +766,43 @@
             body.sx-theme-active .bg-secondary:not(button):not(input) {
                 border-left: 2px solid var(--primary);
             }
+
+            /* Symmetrical View Usage and Quota Submenu Alignment */
+            [role="menu"][data-nested] {
+                width: 320px !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5) !important;
+            }
+            [role="menu"][data-nested] [role="group"] {
+                gap: 0 !important;
+            }
+            [role="menu"][data-nested] [role="presentation"] {
+                padding: 6px 10px !important;
+                font-size: 11px !important;
+                font-weight: 600 !important;
+                color: rgba(255, 255, 255, 0.45) !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.6px !important;
+            }
+            [role="menu"][data-nested] .flex.items-center.justify-between.px-2 {
+                border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+                padding: 6px 10px !important;
+                margin-top: 0 !important;
+            }
+            [role="menu"][data-nested] span.text-foreground.truncate {
+                font-size: 11px !important;
+                font-weight: 600 !important;
+                color: rgba(255, 255, 255, 0.9) !important;
+            }
+            [role="menu"][data-nested] span.text-xs.text-foreground {
+                font-size: 11px !important;
+                font-weight: 600 !important;
+                font-family: ui-monospace, monospace !important;
+                color: #a3e635 !important;
+            }
         `;
     }
   };
@@ -2726,6 +2763,14 @@
               trigger.setAttribute("aria-label", `Select model, current: ${activeM.name}`);
             }
           }
+        }
+      }
+      const quotaMenu = document.querySelector('[role="menu"][data-nested]');
+      if (quotaMenu) {
+        const span = quotaMenu.querySelector("span.text-foreground.truncate");
+        if (span && (!span.dataset.sxFixed || !span.textContent.trim())) {
+          span.dataset.sxFixed = "true";
+          span.innerHTML = '<span style="color:#38bdf8;font-weight:700;">SX</span> <span style="color:#ffffff;">Development</span>';
         }
       }
       this.trySXModelsSettingsInject();

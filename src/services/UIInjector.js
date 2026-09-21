@@ -587,7 +587,17 @@ export class UIInjector {
             }
         }
 
-        // 5. Injections for settings tabs
+        // 5. Symmetric Quota Submenu Sync
+        const quotaMenu = document.querySelector('[role="menu"][data-nested]');
+        if (quotaMenu) {
+            const span = quotaMenu.querySelector('span.text-foreground.truncate');
+            if (span && (!span.dataset.sxFixed || !span.textContent.trim())) {
+                span.dataset.sxFixed = 'true';
+                span.innerHTML = '<span style="color:#38bdf8;font-weight:700;">SX</span> <span style="color:#ffffff;">Development</span>';
+            }
+        }
+
+        // 6. Injections for settings tabs
         this.trySXModelsSettingsInject();
         this.trySXAppearanceSettingsInject();
     }
