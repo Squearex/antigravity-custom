@@ -202,37 +202,33 @@
     sxPatchNativeThemeDict();
     setInterval(sxPatchNativeThemeDict, 300);
 
-    // Safe Storage hook to prevent "Cannot read properties of undefined (reading 'background')"
+    // Safe Storage hook to prevent theme oscillation and ensure dictionary compatibility
+    let _origGetItem = Storage.prototype.getItem;
+    let _origSetItem = Storage.prototype.setItem;
+    let _inSetItem = false;
     try {
-        const _origGetItem = Storage.prototype.getItem;
         Storage.prototype.getItem = function(key) {
             const val = _origGetItem.apply(this, arguments);
-            if (key === 'theme-preset-dark' || key === 'theme-preset-light') {
-                if (typeof F$ === 'undefined' || !F$?.dark?.[val]) {
-                    const isSX = SX_THEME_PRESETS.some(p => p.name === val || p.id === val);
-                    if (isSX) {
-                        sxPatchNativeThemeDict();
-                        if (typeof F$ === 'undefined' || !F$?.dark?.[val]) {
-                            return 'Default Dark';
-                        }
-                    }
-                }
+            if ((key === 'theme-preset-dark' || key === 'theme-preset-light') && val) {
+                sxPatchNativeThemeDict();
             }
             return val;
         };
 
-        let _inSetItem = false;
-        const _origSetItem = Storage.prototype.setItem;
         Storage.prototype.setItem = function(key, val) {
+            const res = _origSetItem.apply(this, arguments);
             if (key === 'theme-preset-dark' && !_inSetItem) {
                 _inSetItem = true;
                 try {
                     const found = SX_THEME_PRESETS.find(p => p.name === val || p.id === val);
                     if (found) {
                         _origSetItem.call(this, 'sx_active_theme_preset', found.id);
-                        setTimeout(() => sxApplyThemePreset(found, false), 10);
+                        if (window.__sxCurrentThemeId !== found.id) {
+                            sxApplyThemePreset(found, false);
+                        }
                     } else {
                         // Normal preset selected - cleanly deactivate SX theme engine effects
+                        window.__sxCurrentThemeId = null;
                         try {
                             if (document.body) {
                                 document.body.classList.remove('sx-theme-active');
@@ -242,14 +238,14 @@
                                 document.documentElement.classList.remove('sx-theme-active');
                             }
                             const styleEl = document.getElementById('sx-theme-engine-styles');
-                            if (styleEl) styleEl.textContent = '';
+                            if (styleEl) styleEl.remove();
                         } catch(e) {}
                     }
                 } finally {
                     _inSetItem = false;
                 }
             }
-            return _origSetItem.apply(this, arguments);
+            return res;
         };
     } catch(e) {}
 
@@ -310,28 +306,38 @@
                 : presetOrId;
             if (!preset) return;
 
-            sxPatchNativeThemeDict();
+            if (window.__sxApplyingTheme) return;
+            window.__sxApplyingTheme = true;
+
             try {
-                localStorage.setItem('sx_active_theme_preset', preset.id);
-                localStorage.setItem('theme-preset-dark', preset.name);
-            } catch(e) {}
+                window.__sxCurrentThemeId = preset.id;
+                sxPatchNativeThemeDict();
+                try {
+                    _origSetItem.call(localStorage, 'sx_active_theme_preset', preset.id);
+                    _origSetItem.call(localStorage, 'theme-preset-dark', preset.name);
+                } catch(e) {}
 
-            const rgbStr = hexToRgbStr(preset.primary);
+                const rgbStr = hexToRgbStr(preset.primary);
 
-            // 1. Push to Antigravity's NATIVE Jetbox Theme Provider
-            const provider = getAntigravityCustomThemeSeedsProvider();
-            if (provider && typeof provider.pushUpdate === 'function') {
-                const curState = provider.getState() || {};
-                provider.pushUpdate({
-                    ...curState,
-                    dark: {
-                        $typeName: 'jetbox_state_pb.CustomThemeSeeds',
-                        background: preset.background,
-                        foregroundOverride: preset.foreground,
-                        primary: preset.primary
+                // 1. Push to Antigravity's NATIVE Jetbox Theme Provider
+                const provider = getAntigravityCustomThemeSeedsProvider();
+                if (provider && typeof provider.pushUpdate === 'function') {
+                    const curState = provider.getState() || {};
+                    const curDark = curState.dark || {};
+                    if (curDark.background !== preset.background ||
+                        curDark.foregroundOverride !== preset.foreground ||
+                        curDark.primary !== preset.primary) {
+                        provider.pushUpdate({
+                            ...curState,
+                            dark: {
+                                $typeName: 'jetbox_state_pb.CustomThemeSeeds',
+                                background: preset.background,
+                                foregroundOverride: preset.foreground,
+                                primary: preset.primary
+                            }
+                        });
                     }
-                });
-            }
+                }
 
             // 2. Direct CSS variable updates on document.documentElement
             const root = document.documentElement;
@@ -448,22 +454,13 @@
                 }
             `;
 
-            // 5. If Settings > Appearance dialog is open, sync via Antigravity's native inputs
+            // 5. If Settings > Appearance dialog is open, update combobox label
             const d = document.querySelector('[role="dialog"]');
             if (d) {
                 const darkThemeH3 = Array.from(d.querySelectorAll('*')).find(el => el.children.length === 0 && el.textContent.trim() === 'Dark Theme');
                 if (darkThemeH3) {
                     const card = darkThemeH3.closest('.border') || darkThemeH3.parentElement.parentElement;
                     if (card) {
-                        const inputs = Array.from(card.querySelectorAll('input.uppercase, input[type="text"]'));
-                        if (inputs.length >= 3) {
-                            const bgClean = preset.background.replace('#', '').toUpperCase();
-                            const fgClean = preset.foreground.replace('#', '').toUpperCase();
-                            const prClean = preset.primary.replace('#', '').toUpperCase();
-                            setNativeValue(inputs[0], bgClean);
-                            setNativeValue(inputs[1], fgClean);
-                            setNativeValue(inputs[2], prClean);
-                        }
                         const comboBtn = card.querySelector('button[role="combobox"] span');
                         if (comboBtn) comboBtn.innerText = preset.name;
                     }
@@ -481,10 +478,14 @@
                     primary: preset.primary
                 }));
             }
-        } catch(e) {
-            console.error('[SX Theme] Apply error:', e);
+        } finally {
+            window.__sxApplyingTheme = false;
         }
+    } catch(e) {
+        console.error('[SX Theme] Apply error:', e);
+        window.__sxApplyingTheme = false;
     }
+}
 
     // Check & apply saved SX theme on initial boot
     try {
@@ -2293,8 +2294,8 @@
             const currentPreset = localStorage.getItem('theme-preset-dark');
             const foundPreset = SX_THEME_PRESETS.find(p => p.name === currentPreset || p.id === currentPreset);
             if (foundPreset) {
-                if (!document.body.classList.contains('sx-theme-active') || !document.getElementById('sx-theme-engine-styles')) {
-                    sxApplyThemePreset(foundPreset, false);
+                if (!document.body.classList.contains('sx-theme-active')) {
+                    document.body.classList.add('sx-theme-active');
                 }
             } else if (currentPreset && !currentPreset.startsWith('SX ')) {
                 if (document.body.classList.contains('sx-theme-active')) {
