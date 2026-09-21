@@ -359,6 +359,38 @@
         { id: 'custom',     name: 'Custom Endpoint', baseUrl: '',                         protocol: 'openai', modelsPath: '/models' }
     ];
 
+    function getSXProviderMeta(providerIdOrName) {
+        let prov = null;
+        try {
+            const providers = getSXProviders();
+            if (typeof providerIdOrName === 'string') {
+                prov = providers.find(p => p.id === providerIdOrName || (p.name && p.name.toLowerCase() === providerIdOrName.toLowerCase()));
+            } else if (providerIdOrName && typeof providerIdOrName === 'object') {
+                prov = providerIdOrName;
+            }
+        } catch (e) {}
+        const name = prov ? prov.name : (typeof providerIdOrName === 'string' ? providerIdOrName : 'Custom');
+        const pLower = (name || '').toLowerCase();
+        let dotColor = '#10b981'; // default emerald
+        if (pLower.includes('kilo')) dotColor = '#f97316'; // warm orange
+        else if (pLower.includes('kira')) dotColor = '#f59e0b'; // amber
+        else if (pLower.includes('anthropic')) dotColor = '#a855f7'; // violet
+        else if (pLower.includes('openrouter')) dotColor = '#06b6d4'; // cyan / sky blue
+        else if (pLower.includes('deepseek')) dotColor = '#3b82f6'; // deep blue
+        else if (pLower.includes('groq')) dotColor = '#f43f5e'; // rose/orange
+        else if (pLower.includes('mistral')) dotColor = '#ea580c'; // amber orange
+        else if (pLower.includes('together')) dotColor = '#6366f1'; // indigo
+        else if (pLower.includes('fireworks')) dotColor = '#ec4899'; // pink
+        else if (pLower.includes('xai') || pLower.includes('grok')) dotColor = '#ffffff'; // white
+        else if (pLower.includes('gemini') || pLower.includes('google')) dotColor = '#4285f4'; // google blue
+        else if (pLower.includes('silicon')) dotColor = '#14b8a6'; // teal
+        else if (pLower.includes('qwen') || pLower.includes('dashscope')) dotColor = '#8b5cf6'; // purple
+        else if (pLower.includes('cohere')) dotColor = '#d97706'; // coral
+        else if (pLower.includes('perplexity')) dotColor = '#22d3ee'; // light cyan
+        else if (pLower.includes('ollama') || pLower.includes('lm studio')) dotColor = '#84cc16'; // lime green
+        return { id: prov ? prov.id : '', name, dotColor, protocol: prov?.protocol || 'openai' };
+    }
+
     // Internal helper: route external fetches through sxProxy to avoid CORS blocks.
     // Uses XMLHttpRequest (not fetch) to bypass the SX fetch interceptor which would
     // otherwise hijack requests to 127.0.0.1:15725 and route them to the language server.
@@ -1443,12 +1475,9 @@
                 html += '<div class="sx-empty-hint">No providers yet.<br>Add OpenRouter, Kilo Code, Anthropic or any OpenAI-compatible provider.</div>';
             } else {
                 providers.forEach(p => {
-                    const proto = p.protocol || 'openai';
-                    const pLower = (p.name || '').toLowerCase();
-                    let dotColor = '#10b981';
-                    if (pLower.includes('kilo')) dotColor = '#f97316';
-                    else if (pLower.includes('anthropic')) dotColor = '#a855f7';
-                    else if (pLower.includes('openrouter')) dotColor = '#06b6d4';
+                    const meta = getSXProviderMeta(p);
+                    const proto = meta.protocol || 'openai';
+                    const dotColor = meta.dotColor;
 
                     const count = models.filter(m => m.providerId === p.id).length;
                     const countLabel = count === 1 ? '1 model' : `${count} models`;
@@ -2387,24 +2416,7 @@
                 const providers = getSXProviders();
                 const providerMap = {};
                 providers.forEach(p => {
-                    const pLower = (p.name || '').toLowerCase();
-                    let dotColor = '#10b981'; // default emerald
-                    if (pLower.includes('kilo')) dotColor = '#f97316'; // warm orange
-                    else if (pLower.includes('anthropic')) dotColor = '#a855f7'; // violet
-                    else if (pLower.includes('openrouter')) dotColor = '#06b6d4'; // cyan
-                    else if (pLower.includes('deepseek')) dotColor = '#3b82f6'; // deep blue
-                    else if (pLower.includes('groq')) dotColor = '#f43f5e'; // rose/orange
-                    else if (pLower.includes('mistral')) dotColor = '#ea580c'; // amber orange
-                    else if (pLower.includes('together')) dotColor = '#6366f1'; // indigo
-                    else if (pLower.includes('fireworks')) dotColor = '#ec4899'; // pink
-                    else if (pLower.includes('xai') || pLower.includes('grok')) dotColor = '#ffffff'; // white
-                    else if (pLower.includes('gemini') || pLower.includes('google')) dotColor = '#4285f4'; // google blue
-                    else if (pLower.includes('silicon')) dotColor = '#14b8a6'; // teal
-                    else if (pLower.includes('qwen') || pLower.includes('dashscope')) dotColor = '#8b5cf6'; // purple
-                    else if (pLower.includes('cohere')) dotColor = '#d97706'; // coral
-                    else if (pLower.includes('perplexity')) dotColor = '#22d3ee'; // light cyan
-                    else if (pLower.includes('ollama') || pLower.includes('lm studio')) dotColor = '#84cc16'; // lime green
-                    providerMap[p.id] = { name: p.name, protocol: p.protocol || 'openai', dotColor };
+                    providerMap[p.id] = getSXProviderMeta(p);
                 });
 
                 // Hide all native items to avoid duplicates/limits
@@ -2554,7 +2566,7 @@
                                     const trig = document.querySelector('[data-testid="model-selector-trigger"]');
                                     if (trig) {
                                         const s = trig.querySelector('.truncate') || trig.querySelector('span') || trig;
-                                        const pInfo = providerMap[m.providerId] || { name: '', dotColor: '#38bdf8' };
+                                        const pInfo = getSXProviderMeta(m.providerId);
                                         if (s) {
                                             s.dataset.sxKey = m.id + '_' + pInfo.name;
                                             s.style.setProperty('display', 'inline-flex', 'important');
@@ -2643,27 +2655,9 @@
                 const activeId = (curConv ? localStorage.getItem('sx_active_model_' + curConv) : null) || localStorage.getItem('sx_active_model_id');
                 const activeM = sxModels.find(m => m.id === activeId) || sxModels[0];
                 if (activeM) {
-                    const providers = getSXProviders();
-                    const prov = providers.find(p => p.id === activeM.providerId);
-                    const provName = prov ? prov.name : '';
-
-                    let dotColor = '#10b981';
-                    const pLower = (provName || '').toLowerCase();
-                    if (pLower.includes('kilo')) dotColor = '#f97316';
-                    else if (pLower.includes('anthropic')) dotColor = '#a855f7';
-                    else if (pLower.includes('openrouter')) dotColor = '#06b6d4';
-                    else if (pLower.includes('deepseek')) dotColor = '#3b82f6';
-                    else if (pLower.includes('groq')) dotColor = '#f43f5e';
-                    else if (pLower.includes('mistral')) dotColor = '#ea580c';
-                    else if (pLower.includes('together')) dotColor = '#6366f1';
-                    else if (pLower.includes('fireworks')) dotColor = '#ec4899';
-                    else if (pLower.includes('xai') || pLower.includes('grok')) dotColor = '#ffffff';
-                    else if (pLower.includes('gemini') || pLower.includes('google')) dotColor = '#4285f4';
-                    else if (pLower.includes('silicon')) dotColor = '#14b8a6';
-                    else if (pLower.includes('qwen') || pLower.includes('dashscope')) dotColor = '#8b5cf6';
-                    else if (pLower.includes('cohere')) dotColor = '#d97706';
-                    else if (pLower.includes('perplexity')) dotColor = '#22d3ee';
-                    else if (pLower.includes('ollama') || pLower.includes('lm studio')) dotColor = '#84cc16';
+                    const pInfo = getSXProviderMeta(activeM.providerId);
+                    const provName = pInfo.name;
+                    const dotColor = pInfo.dotColor;
 
                     const s = trigger.querySelector('.truncate') || trigger.querySelector('span') || trigger;
                     const desiredKey = activeM.id + '_' + provName;
