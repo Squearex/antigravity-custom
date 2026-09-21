@@ -396,10 +396,27 @@ export class ThemeEngine {
                 backdrop-filter: blur(12px) !important;
                 border-radius: 13px !important;
             }
+            /* Message Actions Container (Eliminates dark box and dark shadow bleed) */
+            body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-shadow,
+            body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-shadow {
+                box-shadow: none !important;
+            }
             body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-container,
             body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-container {
-                background: rgba(10, 15, 20, 0.85) !important;
-                border: 1px solid rgba(var(--sx-accent-rgb), 0.2) !important;
+                background: transparent !important;
+                border: none !important;
+                box-shadow: none !important;
+            }
+            body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-container button,
+            body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-container button {
+                opacity: 0.65;
+                transition: opacity 0.15s ease, color 0.15s ease, transform 0.15s ease;
+            }
+            body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-container button:hover,
+            body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-container button:hover {
+                opacity: 1;
+                color: var(--primary) !important;
+                transform: scale(1.1);
             }
 
             /* Floating Prompt Card Glassmorphism & Cyber Glow */
