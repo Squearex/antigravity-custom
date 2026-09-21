@@ -61,14 +61,34 @@
     // ────────────────────────────────────────────────────────────────────────
     const SX_THEME_PRESETS = [
         {
+            id: 'sx-matrix',
+            name: 'SX Cyber Matrix',
+            badge: 'Flagship ⚡',
+            desc: 'Siber fosfor yeşili ışıltısı, derin matrix obsidyeni ve hacker estetiği',
+            background: '#030805',
+            foreground: '#E2FDF0',
+            primary: '#00FF87',
+            tagColor: '#00ff87'
+        },
+        {
+            id: 'sx-synthwave',
+            name: 'SX Quantum Synthwave',
+            badge: 'Synthwave 🌌',
+            desc: 'Neon fuşya ve elektrik moru tonları ile 80ler retro-fütürizmi',
+            background: '#090614',
+            foreground: '#FDF2F8',
+            primary: '#FF2A85',
+            tagColor: '#ff2a85'
+        },
+        {
             id: 'sx-signature',
             name: 'SX Development Pro',
             badge: 'Official ⭐',
-            desc: 'Derin obsidyen arka plan, elektrik camgöbeği ışıma ve buz beyazı metinler',
-            background: '#0B0F17',
-            foreground: '#F8FAFC',
-            primary: '#38BDF8',
-            tagColor: '#38bdf8'
+            desc: 'Derin safir obsidyen zemin, elektrik camgöbeği ışıma ve fütüristik mühendislik estetiği',
+            background: '#060B12',
+            foreground: '#F0F9FF',
+            primary: '#00E5FF',
+            tagColor: '#00e5ff'
         },
         {
             id: 'sx-cyberpunk',
@@ -201,12 +221,32 @@
             return val;
         };
 
+        let _inSetItem = false;
         const _origSetItem = Storage.prototype.setItem;
         Storage.prototype.setItem = function(key, val) {
-            if (key === 'theme-preset-dark') {
-                const found = SX_THEME_PRESETS.find(p => p.name === val || p.id === val);
-                if (found) {
-                    _origSetItem.call(this, 'sx_active_theme_preset', found.id);
+            if (key === 'theme-preset-dark' && !_inSetItem) {
+                _inSetItem = true;
+                try {
+                    const found = SX_THEME_PRESETS.find(p => p.name === val || p.id === val);
+                    if (found) {
+                        _origSetItem.call(this, 'sx_active_theme_preset', found.id);
+                        setTimeout(() => sxApplyThemePreset(found, false), 10);
+                    } else {
+                        // Normal preset selected - cleanly deactivate SX theme engine effects
+                        try {
+                            if (document.body) {
+                                document.body.classList.remove('sx-theme-active');
+                                document.body.removeAttribute('data-sx-preset');
+                            }
+                            if (document.documentElement) {
+                                document.documentElement.classList.remove('sx-theme-active');
+                            }
+                            const styleEl = document.getElementById('sx-theme-engine-styles');
+                            if (styleEl) styleEl.textContent = '';
+                        } catch(e) {}
+                    }
+                } finally {
+                    _inSetItem = false;
                 }
             }
             return _origSetItem.apply(this, arguments);
@@ -255,16 +295,28 @@
         }
     }
 
+    function hexToRgbStr(hex) {
+        if (!hex) return '56, 189, 248';
+        let c = hex.replace('#', '');
+        if (c.length === 3) c = c.split('').map(x => x + x).join('');
+        const num = parseInt(c, 16);
+        return `${(num >> 16) & 255}, ${(num >> 8) & 255}, ${num & 255}`;
+    }
+
     function sxApplyThemePreset(presetOrId, saveToServer = true) {
         try {
             const preset = typeof presetOrId === 'string'
-                ? SX_THEME_PRESETS.find(p => p.id === presetOrId) || SX_THEME_PRESETS[0]
+                ? SX_THEME_PRESETS.find(p => p.id === presetOrId || p.name === presetOrId) || SX_THEME_PRESETS[0]
                 : presetOrId;
             if (!preset) return;
 
             sxPatchNativeThemeDict();
-            localStorage.setItem('sx_active_theme_preset', preset.id);
-            localStorage.setItem('theme-preset-dark', preset.name);
+            try {
+                localStorage.setItem('sx_active_theme_preset', preset.id);
+                localStorage.setItem('theme-preset-dark', preset.name);
+            } catch(e) {}
+
+            const rgbStr = hexToRgbStr(preset.primary);
 
             // 1. Push to Antigravity's NATIVE Jetbox Theme Provider
             const provider = getAntigravityCustomThemeSeedsProvider();
@@ -287,6 +339,7 @@
             root.style.setProperty('--foreground', preset.foreground);
             root.style.setProperty('--primary', preset.primary);
             root.style.setProperty('--sidebar-background', preset.background);
+            root.style.setProperty('--sx-accent-rgb', rgbStr);
 
             // 3. Syntax Highlighting CSS Variables (matching Antigravity's native i7b)
             if (document.body) {
@@ -310,7 +363,92 @@
                 bStyle.setProperty('--syntax-default-fg', 'var(--foreground)');
             }
 
-            // 4. If Settings > Appearance dialog is open, sync via Antigravity's native inputs
+            // 4. Activate SX Specialized Atmosphere Engine & Custom CSS
+            if (document.body) {
+                document.body.classList.add('sx-theme-active');
+                document.body.setAttribute('data-sx-preset', preset.id);
+            }
+            if (document.documentElement) {
+                document.documentElement.classList.add('sx-theme-active');
+            }
+
+            let styleEl = document.getElementById('sx-theme-engine-styles');
+            if (!styleEl) {
+                styleEl = document.createElement('style');
+                styleEl.id = 'sx-theme-engine-styles';
+                document.head.appendChild(styleEl);
+            }
+
+            styleEl.textContent = `
+                /* SX Atmospheric Lighting Field */
+                body.sx-theme-active .flex-1.flex.min-h-0.relative::before {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: 420px;
+                    background: radial-gradient(ellipse 75% 340px at 50% -10%, rgba(var(--sx-accent-rgb), 0.12), transparent 80%);
+                    pointer-events: none;
+                    z-index: 0;
+                }
+
+                /* SX Subtle Tech Matrix / Grid Atmosphere */
+                body.sx-theme-active .flex-1.flex.min-h-0.relative {
+                    background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+                    background-size: 28px 28px;
+                }
+
+                /* Floating Prompt Card Glassmorphism & Cyber Glow */
+                body.sx-theme-active .bg-card.rounded-\\[calc\\(theme\\(borderRadius\\.2xl\\)-1px\\)\\] {
+                    background: rgba(6, 10, 16, 0.74) !important;
+                    backdrop-filter: blur(20px) saturate(180%) !important;
+                    border: 1px solid rgba(var(--sx-accent-rgb), 0.28) !important;
+                    box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.65), 0 0 20px -2px rgba(var(--sx-accent-rgb), 0.18) !important;
+                    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+                }
+                body.sx-theme-active .bg-card.rounded-\\[calc\\(theme\\(borderRadius\\.2xl\\)-1px\\)\\]:focus-within {
+                    border-color: var(--primary) !important;
+                    box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.75), 0 0 28px -2px rgba(var(--sx-accent-rgb), 0.35) !important;
+                }
+
+                /* Sleek Cyber Scrollbars */
+                body.sx-theme-active *::-webkit-scrollbar {
+                    width: 6px;
+                    height: 6px;
+                }
+                body.sx-theme-active *::-webkit-scrollbar-track {
+                    background: transparent;
+                }
+                body.sx-theme-active *::-webkit-scrollbar-thumb {
+                    background: rgba(var(--sx-accent-rgb), 0.25);
+                    border-radius: 9999px;
+                }
+                body.sx-theme-active *::-webkit-scrollbar-thumb:hover {
+                    background: var(--primary);
+                    box-shadow: 0 0 10px var(--primary);
+                }
+
+                /* Developer Code Blocks Obsidian Glass */
+                body.sx-theme-active pre {
+                    border: 1px solid rgba(var(--sx-accent-rgb), 0.20) !important;
+                    background: rgba(3, 7, 12, 0.65) !important;
+                    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4) !important;
+                    border-radius: 8px !important;
+                }
+
+                /* Primary Buttons Glow */
+                body.sx-theme-active button.bg-primary {
+                    box-shadow: 0 0 14px rgba(var(--sx-accent-rgb), 0.4) !important;
+                }
+
+                /* Active Sidebar Conversation */
+                body.sx-theme-active .bg-secondary:not(button):not(input) {
+                    border-left: 2px solid var(--primary);
+                }
+            `;
+
+            // 5. If Settings > Appearance dialog is open, sync via Antigravity's native inputs
             const d = document.querySelector('[role="dialog"]');
             if (d) {
                 const darkThemeH3 = Array.from(d.querySelectorAll('*')).find(el => el.children.length === 0 && el.textContent.trim() === 'Dark Theme');
@@ -326,30 +464,11 @@
                             setNativeValue(inputs[1], fgClean);
                             setNativeValue(inputs[2], prClean);
                         }
-                        const btnSpan = card.querySelector('#sx-preset-combobox-btn .sx-preset-btn-name');
-                        if (btnSpan) btnSpan.innerText = preset.name;
-                        const btnDot = card.querySelector('#sx-preset-btn-dot');
-                        if (btnDot) {
-                            btnDot.style.background = preset.primary;
-                            btnDot.style.boxShadow = `0 0 5px ${preset.primary}`;
-                        }
+                        const comboBtn = card.querySelector('button[role="combobox"] span');
+                        if (comboBtn) comboBtn.innerText = preset.name;
                     }
                 }
             }
-
-            // 5. Update Quick Pills active state
-            document.querySelectorAll('.sx-preset-pill').forEach(pill => {
-                const isMatch = pill.dataset.sxId === preset.id;
-                if (isMatch) {
-                    pill.style.borderColor = preset.primary;
-                    pill.style.background = 'rgba(255,255,255,0.14)';
-                    pill.style.color = '#ffffff';
-                } else {
-                    pill.style.borderColor = 'rgba(255,255,255,0.1)';
-                    pill.style.background = 'rgba(255,255,255,0.05)';
-                    pill.style.color = 'rgba(255,255,255,0.85)';
-                }
-            });
 
             // 6. Persist to config.json via sxProxy
             if (saveToServer) {
@@ -366,6 +485,15 @@
             console.error('[SX Theme] Apply error:', e);
         }
     }
+
+    // Check & apply saved SX theme on initial boot
+    try {
+        const _initialPreset = localStorage.getItem('theme-preset-dark') || 'SX Cyber Matrix';
+        const _foundInitial = SX_THEME_PRESETS.find(p => p.name === _initialPreset || p.id === _initialPreset);
+        if (_foundInitial) {
+            setTimeout(() => sxApplyThemePreset(_foundInitial, false), 150);
+        }
+    } catch(e) {}
 
     // Export helpers to window
     window.SX_THEME_PRESETS = SX_THEME_PRESETS;
@@ -2160,6 +2288,23 @@
     // DOM Hook Loop: empty state banner + sync trigger
     // ────────────────────────────────────────────────────────────────────────
     function hookDOM() {
+        // ── 0. Ensure SX Theme Engine is active if an SX theme preset is selected ──
+        try {
+            const currentPreset = localStorage.getItem('theme-preset-dark');
+            const foundPreset = SX_THEME_PRESETS.find(p => p.name === currentPreset || p.id === currentPreset);
+            if (foundPreset) {
+                if (!document.body.classList.contains('sx-theme-active') || !document.getElementById('sx-theme-engine-styles')) {
+                    sxApplyThemePreset(foundPreset, false);
+                }
+            } else if (currentPreset && !currentPreset.startsWith('SX ')) {
+                if (document.body.classList.contains('sx-theme-active')) {
+                    document.body.classList.remove('sx-theme-active');
+                    document.body.removeAttribute('data-sx-preset');
+                    document.getElementById('sx-theme-engine-styles')?.remove();
+                }
+            }
+        } catch(e) {}
+
         // ── 1. Model selector dropdown ──
         const sxPopperMenu = document.querySelector('div[data-radix-popper-content-wrapper] [role="menu"]');
         if (sxPopperMenu && !sxPopperMenu.closest('[data-sx-usage-panel]')) {
