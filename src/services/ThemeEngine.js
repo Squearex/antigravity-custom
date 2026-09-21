@@ -380,43 +380,30 @@ export class ThemeEngine {
                 display: none !important;
             }
 
-            /* User Input Steps / Prompt Card Theming (Removes solid black backgrounds) */
-            body.sx-theme-active [class*="group/user-input-step"] [data-testid="lifted-context-menu-trigger"],
-            body.sx-theme-active [data-testid="user-input-step"] [data-testid="lifted-context-menu-trigger"],
-            body.sx-theme-active [class*="group/user-input-step"] .bg-card-border,
-            body.sx-theme-active [data-testid="user-input-step"] .bg-card-border {
-                background: rgba(var(--sx-accent-rgb), 0.08) !important;
-                border: 1px solid rgba(var(--sx-accent-rgb), 0.25) !important;
-                border-radius: 14px !important;
-                box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.35) !important;
-            }
-            body.sx-theme-active [class*="group/user-input-step"] .bg-card,
-            body.sx-theme-active [data-testid="user-input-step"] .bg-card {
-                background: rgba(var(--sx-accent-rgb), 0.04) !important;
-                backdrop-filter: blur(12px) !important;
-                border-radius: 13px !important;
-            }
             /* Message Actions Container (Eliminates dark box and dark shadow bleed) */
             body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-shadow,
             body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-shadow {
                 box-shadow: none !important;
             }
-            body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-container,
-            body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-container {
-                background: transparent !important;
-                border: none !important;
-                box-shadow: none !important;
+
+            /* Assistant Message Timestamp & Performance Metrics */
+            body.sx-theme-active .flex.w-full.items-start.gap-1 > .grow {
+                opacity: 0.85 !important;
+                transition: opacity 0.15s ease;
             }
-            body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-container button,
-            body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-container button {
-                opacity: 0.65;
-                transition: opacity 0.15s ease, color 0.15s ease, transform 0.15s ease;
+            body.sx-theme-active .flex.w-full.items-start.gap-1:hover > .grow {
+                opacity: 1 !important;
             }
-            body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-container button:hover,
-            body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-container button:hover {
-                opacity: 1;
-                color: var(--primary) !important;
-                transform: scale(1.1);
+            .sx-msg-perf-metrics {
+                user-select: none;
+                cursor: default;
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                font-size: 11px;
+                margin-left: 8px;
+                line-height: 1;
             }
 
             /* Floating Prompt Card Glassmorphism & Cyber Glow */

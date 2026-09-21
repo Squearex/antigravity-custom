@@ -80,12 +80,17 @@ export class FetchInterceptor {
             }
         }
 
-        // 2. Attach conversation and model metadata to streamGenerateContent
+        // 2. Attach conversation and model metadata and measure streaming performance for streamGenerateContent
         if (url.includes('streamGenerateContent')) {
+            const reqStart = performance.now();
+            let firstTokenTime = null;
+            let totalBytes = 0;
+            let convKey = '';
+            let activeId = '';
             try {
-                const convKey = this.models.getActiveConversationKey();
+                convKey = this.models.getActiveConversationKey();
                 const convModel = convKey ? localStorage.getItem('sx_active_model_' + convKey) : null;
-                const activeId = convModel || localStorage.getItem('sx_active_model_id');
+                activeId = convModel || localStorage.getItem('sx_active_model_id');
                 if (activeId) {
                     if (!args[1]) args[1] = {};
                     if (!args[1].headers) args[1].headers = {};
@@ -101,6 +106,61 @@ export class FetchInterceptor {
                     }
                 }
             } catch(e) {}
+
+            const resp = await this.origFetch.apply(context, args);
+
+            try {
+                if (resp && resp.body && typeof resp.body.getReader === 'function') {
+                    const origReader = resp.body.getReader();
+                    const self = this;
+                    const readable = new ReadableStream({
+                        async pull(controller) {
+                            try {
+                                const { done, value } = await origReader.read();
+                                if (done) {
+                                    controller.close();
+                                    const totalMs = Math.round(performance.now() - reqStart);
+                                    const ttftMs = firstTokenTime ? Math.round(firstTokenTime - reqStart) : totalMs;
+                                    const compTokens = Math.max(1, Math.round(totalBytes / 4));
+                                    const genMs = Math.max(1, totalMs - ttftMs);
+                                    const tps = Number(((compTokens / (genMs / 1000))).toFixed(1));
+                                    const perfData = {
+                                        ttftMs,
+                                        totalMs,
+                                        generationMs: genMs,
+                                        completionTokens: compTokens,
+                                        tps,
+                                        modelName: activeId || 'Active Model',
+                                        timestamp: new Date().toISOString()
+                                    };
+                                    window.SX_SDK?.perf?.recordPerfMetrics(convKey, perfData);
+                                    return;
+                                }
+                                if (!firstTokenTime) {
+                                    firstTokenTime = performance.now();
+                                }
+                                if (value) {
+                                    totalBytes += value.length;
+                                }
+                                controller.enqueue(value);
+                            } catch(err) {
+                                controller.error(err);
+                            }
+                        },
+                        cancel(reason) {
+                            return origReader.cancel(reason);
+                        }
+                    });
+
+                    return new Response(readable, {
+                        status: resp.status,
+                        statusText: resp.statusText,
+                        headers: resp.headers
+                    });
+                }
+            } catch(e) {}
+
+            return resp;
         }
 
         const resp = await this.origFetch.apply(context, args);

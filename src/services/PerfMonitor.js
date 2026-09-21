@@ -1,6 +1,7 @@
 /**
  * SX Core SDK - PerfMonitor
  * Tracks real-time LLM inference performance: TTFT, TPS, and total response stream latency.
+ * Renders metrics inside the popover and inline right next to message timestamps.
  */
 export class PerfMonitor {
     constructor(networkClient, modelManager, logger) {
@@ -8,9 +9,11 @@ export class PerfMonitor {
         this.models = modelManager;
         this.logger = logger;
         this._perfStatsCache = {};
+        this._observer = null;
     }
 
     init() {
+        // 1. Click outside listener for the popover
         document.addEventListener('click', (e) => {
             const perfPop = document.getElementById('sx-perf-popover');
             if (perfPop && !perfPop.contains(e.target) && !e.target.closest('#sx-perf-btn')) {
@@ -19,15 +22,132 @@ export class PerfMonitor {
                 if (pBtn) pBtn.classList.remove('sx-active');
             }
         });
+
+        // 2. Setup observer & periodic interval for injecting inline metrics next to timestamps
+        this.setupMessageFootersObserver();
+
+        // 3. Initial sync with proxy stats
+        setTimeout(() => {
+            const convKey = this.models.getActiveConversationKey();
+            const cleanConvId = (convKey || '').replace(/^conv_/, '');
+            this.fetchPerfStats(cleanConvId);
+        }, 500);
+    }
+
+    setupMessageFootersObserver() {
+        try {
+            if (this._observer) this._observer.disconnect();
+            this._observer = new MutationObserver(() => {
+                this.injectMetricsToMessageFooters();
+            });
+            this._observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        } catch(e) {}
+
+        // Fallback polling interval
+        setInterval(() => {
+            this.injectMetricsToMessageFooters();
+            this.updatePerfButtonUI();
+        }, 1500);
+    }
+
+    recordPerfMetrics(convKey, perfData) {
+        if (!perfData) return;
+        const cleanConvId = (convKey || '').replace(/^conv_/, '');
+        this._perfStatsCache[cleanConvId || 'new'] = perfData;
+        this._perfStatsCache['last'] = perfData;
+        try {
+            localStorage.setItem('sx_last_perf_stats', JSON.stringify(perfData));
+        } catch(e) {}
+
+        this.injectMetricsToMessageFooters(perfData);
+        this.updatePerfButtonUI();
+
+        // If popover is currently open, refresh it live
+        const pop = document.getElementById('sx-perf-popover');
+        if (pop && this._currentRenderFn) {
+            this._currentRenderFn(perfData);
+        }
+    }
+
+    getLatestStats(convId) {
+        const clean = (convId || '').replace(/^conv_/, '');
+        if (clean && this._perfStatsCache[clean]) return this._perfStatsCache[clean];
+        if (this._perfStatsCache['new']) return this._perfStatsCache['new'];
+        if (this._perfStatsCache['last']) return this._perfStatsCache['last'];
+
+        try {
+            const saved = localStorage.getItem('sx_last_perf_stats');
+            if (saved) return JSON.parse(saved);
+        } catch(e) {}
+        return null;
     }
 
     async fetchPerfStats(convId) {
-        const stats = await this.network.fetchPerfStats(convId || '');
-        if (stats) {
-            this._perfStatsCache[convId || 'new'] = stats;
-            return stats;
-        }
-        return this._perfStatsCache[convId || 'new'] || null;
+        try {
+            const cleanConvId = (convId || '').replace(/^conv_/, '');
+            const raw = await this.network.fetchPerfStats(cleanConvId);
+            const stats = raw?.stats || raw;
+            if (stats && stats.ttftMs) {
+                this._perfStatsCache[cleanConvId || 'new'] = stats;
+                this._perfStatsCache['last'] = stats;
+                this.injectMetricsToMessageFooters(stats);
+                this.updatePerfButtonUI();
+                return stats;
+            }
+        } catch(e) {}
+        return this.getLatestStats(convId);
+    }
+
+    injectMetricsToMessageFooters(specificStats) {
+        try {
+            const footers = Array.from(document.querySelectorAll('.flex.w-full.items-start.gap-1 > .grow'));
+            if (!footers || footers.length === 0) return;
+
+            const stats = specificStats || this.getLatestStats();
+            if (!stats || !stats.ttftMs) return;
+
+            const ttftSec = (stats.ttftMs / 1000).toFixed(2);
+            let speedColor = '#10b981';
+            if (stats.tps < 15) speedColor = '#f43f5e';
+            else if (stats.tps < 30) speedColor = '#eab308';
+            else if (stats.tps < 60) speedColor = '#38bdf8';
+
+            footers.forEach(footerEl => {
+                // Must have a time pattern e.g. "1:03" or "21:21, 21.09.2026"
+                const text = footerEl.textContent.trim();
+                if (!/\b\d{1,2}:\d{2}\b/.test(text)) return;
+
+                let badge = footerEl.querySelector('.sx-msg-perf-metrics');
+                if (!badge) {
+                    badge = document.createElement('span');
+                    badge.className = 'sx-msg-perf-metrics';
+                    badge.style.cssText = `
+                        margin-left: 8px;
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 5px;
+                        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                        font-size: 11px;
+                        user-select: none;
+                        vertical-align: middle;
+                        line-height: 1;
+                    `;
+                    footerEl.appendChild(badge);
+                }
+
+                badge.innerHTML = `
+                    <span style="color: #64748b; font-size: 10px;">•</span>
+                    <span style="color: ${speedColor}; font-weight: 700;" title="İnferans Hızı: ${stats.tps} Token/Saniye">⚡ ${stats.tps} TPS</span>
+                    <span style="color: #64748b; font-size: 10px;">•</span>
+                    <span style="color: #38bdf8; font-weight: 600;" title="İlk Yanıt Süresi (TTFT): ${stats.ttftMs}ms (${ttftSec}s)">⏱️ ${ttftSec}s TTFT</span>
+                    <span style="color: #64748b; font-size: 10px;">•</span>
+                    <span style="color: #94a3b8;" title="Toplam Üretilen Token: ~${stats.completionTokens} tok">~${stats.completionTokens} tok</span>
+                `;
+            });
+        } catch(e) {}
     }
 
     togglePerfPopover(anchorEl) {
@@ -35,6 +155,7 @@ export class PerfMonitor {
         if (pop) {
             pop.remove();
             if (anchorEl) anchorEl.classList.remove('sx-active');
+            this._currentRenderFn = null;
             return;
         }
 
@@ -47,7 +168,7 @@ export class PerfMonitor {
         pop.id = 'sx-perf-popover';
         pop.style.cssText = `
             position: fixed;
-            width: 310px;
+            width: 320px;
             background: #14151b;
             border: 1px solid rgba(255, 255, 255, 0.14);
             border-radius: 12px;
@@ -62,7 +183,7 @@ export class PerfMonitor {
         `;
 
         const rect = anchorEl.getBoundingClientRect();
-        const popLeft = Math.max(10, Math.min(window.innerWidth - 330, rect.left - 20));
+        const popLeft = Math.max(10, Math.min(window.innerWidth - 340, rect.left - 20));
         pop.style.left = popLeft + 'px';
         pop.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
 
@@ -92,12 +213,15 @@ export class PerfMonitor {
         pop.querySelector('#sx-perf-popover-header').onclick = () => {
             pop.remove();
             if (anchorEl) anchorEl.classList.remove('sx-active');
+            this._currentRenderFn = null;
         };
 
-        const renderPerfDetails = (stats) => {
+        const renderPerfDetails = (rawStats) => {
             const listEl = pop.querySelector('#sx-perf-items-list');
             const tpsBadge = pop.querySelector('#sx-perf-tps-badge');
             if (!listEl) return;
+
+            const stats = rawStats?.stats || rawStats;
 
             if (!stats || !stats.ttftMs) {
                 listEl.innerHTML = `
@@ -149,7 +273,9 @@ export class PerfMonitor {
             `;
         };
 
-        const cached = this._perfStatsCache[cleanConvId] || this._perfStatsCache['new'];
+        this._currentRenderFn = renderPerfDetails;
+
+        const cached = this.getLatestStats(cleanConvId);
         if (cached) renderPerfDetails(cached);
 
         this.fetchPerfStats(cleanConvId).then(stats => {
@@ -162,7 +288,7 @@ export class PerfMonitor {
         if (!perfBtn) return;
         const convKey = this.models.getActiveConversationKey();
         const cleanConvId = (convKey || '').replace(/^conv_/, '');
-        const stats = this._perfStatsCache[cleanConvId] || this._perfStatsCache['new'];
+        const stats = this.getLatestStats(cleanConvId);
 
         if (stats && stats.ttftMs) {
             perfBtn.title = `Model Performansı: ${stats.tps || 0} TPS, TTFT ${stats.ttftMs}ms (Tıkla)`;

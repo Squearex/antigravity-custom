@@ -338,7 +338,8 @@
     }
     async fetchPerfStats(convId) {
       try {
-        return await this.get(`/get-chat-perf-stats?convId=${encodeURIComponent(convId)}`);
+        const res = await this.get(`/get-chat-perf-stats?convId=${encodeURIComponent(convId)}`);
+        return res?.stats || res || null;
       } catch (e) {
         return null;
       }
@@ -692,43 +693,30 @@
                 display: none !important;
             }
 
-            /* User Input Steps / Prompt Card Theming (Removes solid black backgrounds) */
-            body.sx-theme-active [class*="group/user-input-step"] [data-testid="lifted-context-menu-trigger"],
-            body.sx-theme-active [data-testid="user-input-step"] [data-testid="lifted-context-menu-trigger"],
-            body.sx-theme-active [class*="group/user-input-step"] .bg-card-border,
-            body.sx-theme-active [data-testid="user-input-step"] .bg-card-border {
-                background: rgba(var(--sx-accent-rgb), 0.08) !important;
-                border: 1px solid rgba(var(--sx-accent-rgb), 0.25) !important;
-                border-radius: 14px !important;
-                box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.35) !important;
-            }
-            body.sx-theme-active [class*="group/user-input-step"] .bg-card,
-            body.sx-theme-active [data-testid="user-input-step"] .bg-card {
-                background: rgba(var(--sx-accent-rgb), 0.04) !important;
-                backdrop-filter: blur(12px) !important;
-                border-radius: 13px !important;
-            }
             /* Message Actions Container (Eliminates dark box and dark shadow bleed) */
             body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-shadow,
             body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-shadow {
                 box-shadow: none !important;
             }
-            body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-container,
-            body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-container {
-                background: transparent !important;
-                border: none !important;
-                box-shadow: none !important;
+
+            /* Assistant Message Timestamp & Performance Metrics */
+            body.sx-theme-active .flex.w-full.items-start.gap-1 > .grow {
+                opacity: 0.85 !important;
+                transition: opacity 0.15s ease;
             }
-            body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-container button,
-            body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-container button {
-                opacity: 0.65;
-                transition: opacity 0.15s ease, color 0.15s ease, transform 0.15s ease;
+            body.sx-theme-active .flex.w-full.items-start.gap-1:hover > .grow {
+                opacity: 1 !important;
             }
-            body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-container button:hover,
-            body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-container button:hover {
-                opacity: 1;
-                color: var(--primary) !important;
-                transform: scale(1.1);
+            .sx-msg-perf-metrics {
+                user-select: none;
+                cursor: default;
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                font-size: 11px;
+                margin-left: 8px;
+                line-height: 1;
             }
 
             /* Floating Prompt Card Glassmorphism & Cyber Glow */
@@ -1263,6 +1251,7 @@
       this.models = modelManager;
       this.logger = logger;
       this._perfStatsCache = {};
+      this._observer = null;
     }
     init() {
       document.addEventListener("click", (e) => {
@@ -1273,20 +1262,123 @@
           if (pBtn) pBtn.classList.remove("sx-active");
         }
       });
+      this.setupMessageFootersObserver();
+      setTimeout(() => {
+        const convKey = this.models.getActiveConversationKey();
+        const cleanConvId = (convKey || "").replace(/^conv_/, "");
+        this.fetchPerfStats(cleanConvId);
+      }, 500);
+    }
+    setupMessageFootersObserver() {
+      try {
+        if (this._observer) this._observer.disconnect();
+        this._observer = new MutationObserver(() => {
+          this.injectMetricsToMessageFooters();
+        });
+        this._observer.observe(document.body, {
+          childList: true,
+          subtree: true
+        });
+      } catch (e) {
+      }
+      setInterval(() => {
+        this.injectMetricsToMessageFooters();
+        this.updatePerfButtonUI();
+      }, 1500);
+    }
+    recordPerfMetrics(convKey, perfData) {
+      if (!perfData) return;
+      const cleanConvId = (convKey || "").replace(/^conv_/, "");
+      this._perfStatsCache[cleanConvId || "new"] = perfData;
+      this._perfStatsCache["last"] = perfData;
+      try {
+        localStorage.setItem("sx_last_perf_stats", JSON.stringify(perfData));
+      } catch (e) {
+      }
+      this.injectMetricsToMessageFooters(perfData);
+      this.updatePerfButtonUI();
+      const pop = document.getElementById("sx-perf-popover");
+      if (pop && this._currentRenderFn) {
+        this._currentRenderFn(perfData);
+      }
+    }
+    getLatestStats(convId) {
+      const clean = (convId || "").replace(/^conv_/, "");
+      if (clean && this._perfStatsCache[clean]) return this._perfStatsCache[clean];
+      if (this._perfStatsCache["new"]) return this._perfStatsCache["new"];
+      if (this._perfStatsCache["last"]) return this._perfStatsCache["last"];
+      try {
+        const saved = localStorage.getItem("sx_last_perf_stats");
+        if (saved) return JSON.parse(saved);
+      } catch (e) {
+      }
+      return null;
     }
     async fetchPerfStats(convId) {
-      const stats = await this.network.fetchPerfStats(convId || "");
-      if (stats) {
-        this._perfStatsCache[convId || "new"] = stats;
-        return stats;
+      try {
+        const cleanConvId = (convId || "").replace(/^conv_/, "");
+        const raw = await this.network.fetchPerfStats(cleanConvId);
+        const stats = raw?.stats || raw;
+        if (stats && stats.ttftMs) {
+          this._perfStatsCache[cleanConvId || "new"] = stats;
+          this._perfStatsCache["last"] = stats;
+          this.injectMetricsToMessageFooters(stats);
+          this.updatePerfButtonUI();
+          return stats;
+        }
+      } catch (e) {
       }
-      return this._perfStatsCache[convId || "new"] || null;
+      return this.getLatestStats(convId);
+    }
+    injectMetricsToMessageFooters(specificStats) {
+      try {
+        const footers = Array.from(document.querySelectorAll(".flex.w-full.items-start.gap-1 > .grow"));
+        if (!footers || footers.length === 0) return;
+        const stats = specificStats || this.getLatestStats();
+        if (!stats || !stats.ttftMs) return;
+        const ttftSec = (stats.ttftMs / 1e3).toFixed(2);
+        let speedColor = "#10b981";
+        if (stats.tps < 15) speedColor = "#f43f5e";
+        else if (stats.tps < 30) speedColor = "#eab308";
+        else if (stats.tps < 60) speedColor = "#38bdf8";
+        footers.forEach((footerEl) => {
+          const text = footerEl.textContent.trim();
+          if (!/\b\d{1,2}:\d{2}\b/.test(text)) return;
+          let badge = footerEl.querySelector(".sx-msg-perf-metrics");
+          if (!badge) {
+            badge = document.createElement("span");
+            badge.className = "sx-msg-perf-metrics";
+            badge.style.cssText = `
+                        margin-left: 8px;
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 5px;
+                        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                        font-size: 11px;
+                        user-select: none;
+                        vertical-align: middle;
+                        line-height: 1;
+                    `;
+            footerEl.appendChild(badge);
+          }
+          badge.innerHTML = `
+                    <span style="color: #64748b; font-size: 10px;">\u2022</span>
+                    <span style="color: ${speedColor}; font-weight: 700;" title="\u0130nferans H\u0131z\u0131: ${stats.tps} Token/Saniye">\u26A1 ${stats.tps} TPS</span>
+                    <span style="color: #64748b; font-size: 10px;">\u2022</span>
+                    <span style="color: #38bdf8; font-weight: 600;" title="\u0130lk Yan\u0131t S\xFCresi (TTFT): ${stats.ttftMs}ms (${ttftSec}s)">\u23F1\uFE0F ${ttftSec}s TTFT</span>
+                    <span style="color: #64748b; font-size: 10px;">\u2022</span>
+                    <span style="color: #94a3b8;" title="Toplam \xDCretilen Token: ~${stats.completionTokens} tok">~${stats.completionTokens} tok</span>
+                `;
+        });
+      } catch (e) {
+      }
     }
     togglePerfPopover(anchorEl) {
       let pop = document.getElementById("sx-perf-popover");
       if (pop) {
         pop.remove();
         if (anchorEl) anchorEl.classList.remove("sx-active");
+        this._currentRenderFn = null;
         return;
       }
       const convKey = this.models.getActiveConversationKey();
@@ -1296,7 +1388,7 @@
       pop.id = "sx-perf-popover";
       pop.style.cssText = `
             position: fixed;
-            width: 310px;
+            width: 320px;
             background: #14151b;
             border: 1px solid rgba(255, 255, 255, 0.14);
             border-radius: 12px;
@@ -1310,7 +1402,7 @@
             backdrop-filter: blur(16px);
         `;
       const rect = anchorEl.getBoundingClientRect();
-      const popLeft = Math.max(10, Math.min(window.innerWidth - 330, rect.left - 20));
+      const popLeft = Math.max(10, Math.min(window.innerWidth - 340, rect.left - 20));
       pop.style.left = popLeft + "px";
       pop.style.bottom = window.innerHeight - rect.top + 8 + "px";
       pop.innerHTML = `
@@ -1337,11 +1429,13 @@
       pop.querySelector("#sx-perf-popover-header").onclick = () => {
         pop.remove();
         if (anchorEl) anchorEl.classList.remove("sx-active");
+        this._currentRenderFn = null;
       };
-      const renderPerfDetails = (stats) => {
+      const renderPerfDetails = (rawStats) => {
         const listEl = pop.querySelector("#sx-perf-items-list");
         const tpsBadge = pop.querySelector("#sx-perf-tps-badge");
         if (!listEl) return;
+        const stats = rawStats?.stats || rawStats;
         if (!stats || !stats.ttftMs) {
           listEl.innerHTML = `
                     <div style="font-size:12px;color:#94a3b8;text-align:center;padding:12px 0;line-height:1.5;">
@@ -1393,7 +1487,8 @@
                 </div>
             `;
       };
-      const cached = this._perfStatsCache[cleanConvId] || this._perfStatsCache["new"];
+      this._currentRenderFn = renderPerfDetails;
+      const cached = this.getLatestStats(cleanConvId);
       if (cached) renderPerfDetails(cached);
       this.fetchPerfStats(cleanConvId).then((stats) => {
         if (pop.isConnected && stats) renderPerfDetails(stats);
@@ -1404,7 +1499,7 @@
       if (!perfBtn) return;
       const convKey = this.models.getActiveConversationKey();
       const cleanConvId = (convKey || "").replace(/^conv_/, "");
-      const stats = this._perfStatsCache[cleanConvId] || this._perfStatsCache["new"];
+      const stats = this.getLatestStats(cleanConvId);
       if (stats && stats.ttftMs) {
         perfBtn.title = `Model Performans\u0131: ${stats.tps || 0} TPS, TTFT ${stats.ttftMs}ms (T\u0131kla)`;
       } else {
@@ -1658,10 +1753,15 @@
         }
       }
       if (url.includes("streamGenerateContent")) {
+        const reqStart = performance.now();
+        let firstTokenTime = null;
+        let totalBytes = 0;
+        let convKey = "";
+        let activeId = "";
         try {
-          const convKey = this.models.getActiveConversationKey();
+          convKey = this.models.getActiveConversationKey();
           const convModel = convKey ? localStorage.getItem("sx_active_model_" + convKey) : null;
-          const activeId = convModel || localStorage.getItem("sx_active_model_id");
+          activeId = convModel || localStorage.getItem("sx_active_model_id");
           if (activeId) {
             if (!args[1]) args[1] = {};
             if (!args[1].headers) args[1].headers = {};
@@ -1678,6 +1778,58 @@
           }
         } catch (e) {
         }
+        const resp2 = await this.origFetch.apply(context, args);
+        try {
+          if (resp2 && resp2.body && typeof resp2.body.getReader === "function") {
+            const origReader = resp2.body.getReader();
+            const self = this;
+            const readable = new ReadableStream({
+              async pull(controller) {
+                try {
+                  const { done, value } = await origReader.read();
+                  if (done) {
+                    controller.close();
+                    const totalMs = Math.round(performance.now() - reqStart);
+                    const ttftMs = firstTokenTime ? Math.round(firstTokenTime - reqStart) : totalMs;
+                    const compTokens = Math.max(1, Math.round(totalBytes / 4));
+                    const genMs = Math.max(1, totalMs - ttftMs);
+                    const tps = Number((compTokens / (genMs / 1e3)).toFixed(1));
+                    const perfData = {
+                      ttftMs,
+                      totalMs,
+                      generationMs: genMs,
+                      completionTokens: compTokens,
+                      tps,
+                      modelName: activeId || "Active Model",
+                      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+                    };
+                    window.SX_SDK?.perf?.recordPerfMetrics(convKey, perfData);
+                    return;
+                  }
+                  if (!firstTokenTime) {
+                    firstTokenTime = performance.now();
+                  }
+                  if (value) {
+                    totalBytes += value.length;
+                  }
+                  controller.enqueue(value);
+                } catch (err) {
+                  controller.error(err);
+                }
+              },
+              cancel(reason) {
+                return origReader.cancel(reason);
+              }
+            });
+            return new Response(readable, {
+              status: resp2.status,
+              statusText: resp2.statusText,
+              headers: resp2.headers
+            });
+          }
+        } catch (e) {
+        }
+        return resp2;
       }
       const resp = await this.origFetch.apply(context, args);
       if (url.includes("HasAuthToken")) {

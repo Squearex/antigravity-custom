@@ -89,7 +89,8 @@ export class NetworkClient {
 
     async fetchPerfStats(convId) {
         try {
-            return await this.get(`/get-chat-perf-stats?convId=${encodeURIComponent(convId)}`);
+            const res = await this.get(`/get-chat-perf-stats?convId=${encodeURIComponent(convId)}`);
+            return res?.stats || res || null;
         } catch(e) {
             return null;
         }
