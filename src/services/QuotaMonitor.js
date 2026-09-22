@@ -15,6 +15,8 @@ export class QuotaMonitor {
         this._sentCache = {};
         this._progressFailTs = 0;
         this._detailsFailTs = {};
+        this._lastGen = null;
+        this._lastPollTs = 0;
     }
 
     _fmt(n) {
@@ -126,27 +128,23 @@ export class QuotaMonitor {
             }
         }
 
-        // Live generation progress: moves the ring while the model streams
+        // Live generation progress: only updates shared state here; the ring and
+        // popover read it through calculateLiveContextMetrics on the next tick,
+        // so there is exactly one render path and no flicker.
         const wantLive = (pop && pop.isConnected) || this._streamActive || (Date.now() - (this._lastStreamTs || 0) < 45000);
-        if (wantLive && !isFresh && !this._progressInFlight) {
+        const bgPollDue = !isFresh && (Date.now() - (this._lastPollTs || 0) > 5000);
+        if (!this._progressInFlight && (wantLive || bgPollDue) && !isFresh) {
+            this._lastPollTs = Date.now();
             this._progressInFlight = this.fetchStreamProgress(cleanConvId).then(p => {
                 this._progressInFlight = null;
                 if (!p) { this._streamActive = false; return; }
                 this._streamActive = !!p.streaming;
-                if (p.streaming) this._lastStreamTs = Date.now();
                 const gen = p.genTokens || 0;
-                if (gen > 0 && (p.streaming || (Date.now() - this._lastStreamTs < 45000))) {
-                    const cur = this.calculateLiveContextMetrics(cleanConvId, activeM);
-                    const totalUsed = cur.totalUsed + gen;
-                    const pct = Math.min(100, (totalUsed / cur.totalContext) * 100);
-                    const live = { ...cur, totalUsed, percentExact: pct, percentNum: Math.round(pct), genTokens: gen,
-                        tooltip: cur.tooltip + ` [+${this._fmt(gen)} üretiliyor]` };
-                    this.updateContextRing(live);
-                    const popNow = document.getElementById('sx-context-popover');
-                    if (popNow && popNow.isConnected && popNow.dataset.convKey === cacheKey) {
-                        const d = this._contextDetailsCache[cacheKey]?.data;
-                        if (d) this.renderPopoverDetails(popNow, d, live);
-                    }
+                if (gen > 50) {
+                    this._lastGen = { tokens: gen, ts: Date.now() };
+                    if (p.streaming) this._lastStreamTs = Date.now();
+                } else if (!p.streaming) {
+                    this._streamActive = false;
                 }
             }).catch(() => { this._progressInFlight = null; this._streamActive = false; });
         }
@@ -254,8 +252,17 @@ export class QuotaMonitor {
         const draftChars = draftText.length;
         const draftTokens = draftChars > 0 ? Math.ceil(draftChars / 3.2) : 0;
 
-        const totalUsed = baseUsed + draftTokens;
-        const isFresh = (baseUsed === 0 && draftTokens === 0);
+        // Live generated tokens folded in here so EVERY render path (tick, poll,
+        // popover) sees the same numbers — no flicker from competing sources.
+        let genTokens = 0;
+        try {
+            if (this._lastGen && (Date.now() - this._lastGen.ts < 15000) && this._lastGen.tokens > 50) {
+                genTokens = this._lastGen.tokens;
+            }
+        } catch(e) {}
+
+        const totalUsed = baseUsed + draftTokens + genTokens;
+        const isFresh = (baseUsed === 0 && draftTokens === 0 && genTokens === 0);
         const pct = isFresh ? 0 : Math.min(100, (totalUsed / totalContext) * 100);
 
         function fmt(n) {
@@ -267,17 +274,19 @@ export class QuotaMonitor {
         let tooltip = '';
         const percentDisplay = (pct > 0 && pct < 1) ? '<1%' : `${Math.round(pct)}%`;
         const transcriptNote = (sentTok > 0 && transcriptUsed > totalUsed) ? ` • transkript ${fmt(transcriptUsed)}` : '';
+        const genSuffix = genTokens > 0 ? ` [+${fmt(genTokens)} üretiliyor]` : '';
         if (isFresh) {
             tooltip = `Context: Yeni Sohbet (0 / ${fmt(totalContext)})`;
         } else if (draftTokens > 0) {
-            tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay}) [+${fmt(draftTokens)} taslak]${transcriptNote}`;
+            tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay}) [+${fmt(draftTokens)} taslak]${genSuffix}${transcriptNote}`;
         } else {
-            tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay})${transcriptNote}`;
+            tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay})${genSuffix}${transcriptNote}`;
         }
 
         return {
             isFresh,
             draftTokens,
+            genTokens,
             totalUsed,
             totalContext,
             totalContextFormatted: fmt(totalContext),
@@ -485,9 +494,9 @@ export class QuotaMonitor {
             convLine.textContent = `sohbet ${shortConv} • ${ageTxt} güncellendi${basisTxt}${trTxt}`;
         } catch(e) {}
 
-        const totalUsed = liveMetrics?.draftTokens > 0 ? liveMetrics.totalUsed : data.usedTokens;
-        const pctNum = liveMetrics?.draftTokens > 0 ? liveMetrics.percentNum : data.percentNum;
-        const pctExact = liveMetrics?.draftTokens > 0 ? liveMetrics.percentExact : (data.percentNum || 0);
+        const totalUsed = liveMetrics?.totalUsed ?? data.usedTokens;
+        const pctNum = liveMetrics?.percentNum ?? data.percentNum;
+        const pctExact = liveMetrics?.percentExact ?? (data.percentNum || 0);
         const pctDisplay = liveMetrics?.percentDisplay || (pctNum === 0 && totalUsed > 0 ? '<1%' : `${pctNum}%`);
 
         if (statText) {
@@ -505,7 +514,7 @@ export class QuotaMonitor {
         if (itemsList) {
             let html = '';
             const itemsToRender = [...data.items];
-            if (liveMetrics?.genTokens > 0) {
+            if (liveMetrics?.genTokens > 50) {
                 const genPct = ((liveMetrics.genTokens / data.totalContext) * 100).toFixed(1);
                 itemsToRender.unshift({
                     label: 'Üretiliyor (canlı)',

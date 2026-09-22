@@ -1250,6 +1250,8 @@
       this._sentCache = {};
       this._progressFailTs = 0;
       this._detailsFailTs = {};
+      this._lastGen = null;
+      this._lastPollTs = 0;
     }
     _fmt(n) {
       if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -1346,7 +1348,9 @@
         }
       }
       const wantLive = pop && pop.isConnected || this._streamActive || Date.now() - (this._lastStreamTs || 0) < 45e3;
-      if (wantLive && !isFresh && !this._progressInFlight) {
+      const bgPollDue = !isFresh && Date.now() - (this._lastPollTs || 0) > 5e3;
+      if (!this._progressInFlight && (wantLive || bgPollDue) && !isFresh) {
+        this._lastPollTs = Date.now();
         this._progressInFlight = this.fetchStreamProgress(cleanConvId).then((p) => {
           this._progressInFlight = null;
           if (!p) {
@@ -1354,26 +1358,12 @@
             return;
           }
           this._streamActive = !!p.streaming;
-          if (p.streaming) this._lastStreamTs = Date.now();
           const gen = p.genTokens || 0;
-          if (gen > 0 && (p.streaming || Date.now() - this._lastStreamTs < 45e3)) {
-            const cur = this.calculateLiveContextMetrics(cleanConvId, activeM);
-            const totalUsed = cur.totalUsed + gen;
-            const pct = Math.min(100, totalUsed / cur.totalContext * 100);
-            const live = {
-              ...cur,
-              totalUsed,
-              percentExact: pct,
-              percentNum: Math.round(pct),
-              genTokens: gen,
-              tooltip: cur.tooltip + ` [+${this._fmt(gen)} \xFCretiliyor]`
-            };
-            this.updateContextRing(live);
-            const popNow = document.getElementById("sx-context-popover");
-            if (popNow && popNow.isConnected && popNow.dataset.convKey === cacheKey) {
-              const d = this._contextDetailsCache[cacheKey]?.data;
-              if (d) this.renderPopoverDetails(popNow, d, live);
-            }
+          if (gen > 50) {
+            this._lastGen = { tokens: gen, ts: Date.now() };
+            if (p.streaming) this._lastStreamTs = Date.now();
+          } else if (!p.streaming) {
+            this._streamActive = false;
           }
         }).catch(() => {
           this._progressInFlight = null;
@@ -1469,8 +1459,15 @@
       const draftText = this.getDraftPromptText();
       const draftChars = draftText.length;
       const draftTokens = draftChars > 0 ? Math.ceil(draftChars / 3.2) : 0;
-      const totalUsed = baseUsed + draftTokens;
-      const isFresh = baseUsed === 0 && draftTokens === 0;
+      let genTokens = 0;
+      try {
+        if (this._lastGen && Date.now() - this._lastGen.ts < 15e3 && this._lastGen.tokens > 50) {
+          genTokens = this._lastGen.tokens;
+        }
+      } catch (e) {
+      }
+      const totalUsed = baseUsed + draftTokens + genTokens;
+      const isFresh = baseUsed === 0 && draftTokens === 0 && genTokens === 0;
       const pct = isFresh ? 0 : Math.min(100, totalUsed / totalContext * 100);
       function fmt(n) {
         if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -1480,16 +1477,18 @@
       let tooltip = "";
       const percentDisplay = pct > 0 && pct < 1 ? "<1%" : `${Math.round(pct)}%`;
       const transcriptNote = sentTok > 0 && transcriptUsed > totalUsed ? ` \u2022 transkript ${fmt(transcriptUsed)}` : "";
+      const genSuffix = genTokens > 0 ? ` [+${fmt(genTokens)} \xFCretiliyor]` : "";
       if (isFresh) {
         tooltip = `Context: Yeni Sohbet (0 / ${fmt(totalContext)})`;
       } else if (draftTokens > 0) {
-        tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay}) [+${fmt(draftTokens)} taslak]${transcriptNote}`;
+        tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay}) [+${fmt(draftTokens)} taslak]${genSuffix}${transcriptNote}`;
       } else {
-        tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay})${transcriptNote}`;
+        tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay})${genSuffix}${transcriptNote}`;
       }
       return {
         isFresh,
         draftTokens,
+        genTokens,
         totalUsed,
         totalContext,
         totalContextFormatted: fmt(totalContext),
@@ -1680,9 +1679,9 @@
         convLine.textContent = `sohbet ${shortConv} \u2022 ${ageTxt} g\xFCncellendi${basisTxt}${trTxt}`;
       } catch (e) {
       }
-      const totalUsed = liveMetrics?.draftTokens > 0 ? liveMetrics.totalUsed : data.usedTokens;
-      const pctNum = liveMetrics?.draftTokens > 0 ? liveMetrics.percentNum : data.percentNum;
-      const pctExact = liveMetrics?.draftTokens > 0 ? liveMetrics.percentExact : data.percentNum || 0;
+      const totalUsed = liveMetrics?.totalUsed ?? data.usedTokens;
+      const pctNum = liveMetrics?.percentNum ?? data.percentNum;
+      const pctExact = liveMetrics?.percentExact ?? (data.percentNum || 0);
       const pctDisplay = liveMetrics?.percentDisplay || (pctNum === 0 && totalUsed > 0 ? "<1%" : `${pctNum}%`);
       if (statText) {
         const draftSuffix = liveMetrics?.draftTokens > 0 ? ` (+${fmt(liveMetrics.draftTokens)} taslak)` : "";
@@ -1698,7 +1697,7 @@
       if (itemsList) {
         let html = "";
         const itemsToRender = [...data.items];
-        if (liveMetrics?.genTokens > 0) {
+        if (liveMetrics?.genTokens > 50) {
           const genPct = (liveMetrics.genTokens / data.totalContext * 100).toFixed(1);
           itemsToRender.unshift({
             label: "\xDCretiliyor (canl\u0131)",
