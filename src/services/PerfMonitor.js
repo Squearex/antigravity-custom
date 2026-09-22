@@ -281,16 +281,17 @@ export class PerfMonitor {
                         vertical-align: middle;
                         line-height: 1;
                     `;
-                    footerEl.appendChild(badge);
+                    footerEl.insertBefore(badge, footerEl.childNodes[1] || footerEl.firstChild.nextSibling || footerEl.firstChild);
                 }
 
+                const splitStr = (stats.normalTokens != null || stats.thinkingTokens != null) ? ` N${stats.normalTokens || 0}/T${stats.thinkingTokens || 0}` : '';
                 badge.innerHTML = `
                     <span style="color: #64748b; font-size: 10px;">•</span>
                     <span style="color: ${speedColor}; font-weight: 700;" title="İnferans Hızı: ${stats.tps} Token/Saniye">⚡ ${stats.tps} TPS</span>
                     <span style="color: #64748b; font-size: 10px;">•</span>
-                    <span style="color: #38bdf8; font-weight: 600;" title="İlk Yanıt Süresi (TTFT): ${stats.ttftMs}ms (${ttftSec}s)">⏱️ ${ttftStr} TTFT</span>
+                    <span style="color: #38bdf8; font-weight: 600;" title="İlk Yanıt Süresi (TTFT): ${stats.ttftMs}ms">⏱️ ${ttftStr}</span>
                     <span style="color: #64748b; font-size: 10px;">•</span>
-                    <span style="color: #94a3b8;" title="Bu Mesaj İçin Üretilen Token: ~${stats.completionTokens} tok">~${stats.completionTokens} tok</span>
+                    <span style="color: #94a3b8;" title="Bu Mesaj İçin Üretilen Token: ~${stats.completionTokens} tok${splitStr}">~${stats.completionTokens} tok${splitStr}</span>
                 `;
             });
         } catch(e) {}

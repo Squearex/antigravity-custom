@@ -2214,15 +2214,16 @@
                         vertical-align: middle;
                         line-height: 1;
                     `;
-            footerEl.appendChild(badge);
+            footerEl.insertBefore(badge, footerEl.childNodes[1] || footerEl.firstChild.nextSibling || footerEl.firstChild);
           }
+          const splitStr = stats.normalTokens != null || stats.thinkingTokens != null ? ` N${stats.normalTokens || 0}/T${stats.thinkingTokens || 0}` : "";
           badge.innerHTML = `
                     <span style="color: #64748b; font-size: 10px;">\u2022</span>
                     <span style="color: ${speedColor}; font-weight: 700;" title="\u0130nferans H\u0131z\u0131: ${stats.tps} Token/Saniye">\u26A1 ${stats.tps} TPS</span>
                     <span style="color: #64748b; font-size: 10px;">\u2022</span>
-                    <span style="color: #38bdf8; font-weight: 600;" title="\u0130lk Yan\u0131t S\xFCresi (TTFT): ${stats.ttftMs}ms (${ttftSec}s)">\u23F1\uFE0F ${ttftStr} TTFT</span>
+                    <span style="color: #38bdf8; font-weight: 600;" title="\u0130lk Yan\u0131t S\xFCresi (TTFT): ${stats.ttftMs}ms">\u23F1\uFE0F ${ttftStr}</span>
                     <span style="color: #64748b; font-size: 10px;">\u2022</span>
-                    <span style="color: #94a3b8;" title="Bu Mesaj \u0130\xE7in \xDCretilen Token: ~${stats.completionTokens} tok">~${stats.completionTokens} tok</span>
+                    <span style="color: #94a3b8;" title="Bu Mesaj \u0130\xE7in \xDCretilen Token: ~${stats.completionTokens} tok${splitStr}">~${stats.completionTokens} tok${splitStr}</span>
                 `;
         });
       } catch (e) {
