@@ -21,6 +21,18 @@ function isContextOverflow(status, text) {
     return CONTEXT_OVERFLOW_RE.test(String(text || '').slice(0, 2000));
 }
 
+// Tolerant JSON body parsing: strips BOM/whitespace some clients prepend.
+// Returns null instead of throwing.
+function parseJsonBody(raw) {
+    try {
+        const s = String(raw == null ? '' : raw).replace(/^\uFEFF/, '').trim();
+        if (!s) return null;
+        return JSON.parse(s);
+    } catch(e) {
+        return null;
+    }
+}
+
 // Upstream watchdog: free-tier gateways can queue/hang forever leaving the UI
 // stuck on "Working". TTFB aborts when no response headers arrive in time;
 // total timer bounds the whole attempt including long streams.
@@ -1037,7 +1049,8 @@ function startInternalProxy() {
                 req.on('data', chunk => body += chunk);
                 req.on('end', () => {
                     try {
-                        const parsed = JSON.parse(body);
+                        const parsed = parseJsonBody(body);
+                        if (!parsed) throw new Error('Invalid JSON body');
                         // Guard: never accidentally wipe disk config with empty payload
                         if ((!parsed.models || !parsed.models.length) && (!parsed.providers || !parsed.providers.length) && (inMemoryConfig.models.length > 0 || inMemoryConfig.providers.length > 0) && !parsed.forceClear) {
                             console.warn('[SX PROXY] Ignored accidental empty config update from UI to protect saved models.');
@@ -1049,11 +1062,13 @@ function startInternalProxy() {
                         if (Array.isArray(parsed.models)) inMemoryConfig.models = parsed.models;
                         saveConfigToDisk();
                         console.log('[SX PROXY] Config updated from UI:', inMemoryConfig.models.length, 'models,', inMemoryConfig.providers.length, 'providers');
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ ok: true }));
                     } catch(e) {
                         console.error('[SX PROXY] Failed to parse config update:', e);
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ ok: false, error: 'Invalid JSON: ' + e.message }));
                     }
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ ok: true }));
                 });
                 return;
             }
@@ -1611,7 +1626,7 @@ function startInternalProxy() {
                     try {
                         const rawBody = Buffer.concat(bodyChunks).toString('utf8');
                         let reqJson = {};
-                        try { reqJson = JSON.parse(rawBody); } catch(e) {}
+                        try { reqJson = parseJsonBody(rawBody) || {}; } catch(e) {}
 
                         if (!inMemoryConfig.models.length) {
                             loadConfigFromDisk();
