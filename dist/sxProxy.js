@@ -30,7 +30,7 @@ async function fetchUpstream(url, opts) {
     const ctrl = new AbortController();
     let totalFired = false, ttfbFired = false;
     const ttfbTimer = setTimeout(() => { ttfbFired = true; try { ctrl.abort(); } catch(e){} }, SX_TTFB_TIMEOUT_MS);
-    const totalTimer = setTimeout(() => { totalFired = true; try { ctrl.abort(); } catch(e){} }, SX_TOTAL_TIMEOUT_MS);
+    const totalTimer = setTimeout(() => { totalFired = true; try { ctrl.abort(); } catch(e){} }, totalMs);
     const done = () => { clearTimeout(ttfbTimer); clearTimeout(totalTimer); };
     try {
         const res = await fetch(url, { ...opts, signal: ctrl.signal });
@@ -111,6 +111,160 @@ function recordToolCall(convKey, name, argsStr) {
 function makeLoopNudge(name, argsStr, count) {
     const shortArgs = String(argsStr || '').slice(0, 300);
     return `[Sistem Uyarısı: '${name}' aracını aynı parametrelerle art arda ${count} kez çağırdın ve ilerleme yok — bu bir döngü. Aynı çağrıyı tekrarlama. Şunları dene: (1) bir önceki hata mesajındaki parametreyi düzelt, (2) önce listele/ara araçlarıyla doğru yolu bul, (3) farklı bir dosya ya da yönteme geç. Parametreler: ${shortArgs}]`;
+}
+
+// ── Automatic context compaction (professional fix for full context) ──────
+// When history exceeds the budget, the evicted middle is summarized with the
+// same provider/model (one cheap non-streaming call) and the summary is pinned:
+// [first turn (goal)] + [rolling summary] + [last K turns].
+// The on-disk transcript keeps growing, but the model always receives a working
+// set: nothing forgotten (knowledge lives in the summary), never stops.
+// Re-summarizes only after substantial new growth; any failure falls back to
+// the previous plain-trim behavior without breaking the chat.
+const COMPACT_KEEP_LAST = 4;
+const COMPACT_MIN_EVICT_CHARS = 8000;
+const COMPACT_GROWTH_THRESHOLD = 20000;
+const COMPACT_SUMMARY_MAX_OUT = 2500;
+const COMPACT_INPUT_MAX_CHARS = 24000;
+const COMPACT_SUMMARY_MARKER = '[Otomatik Bağlam Özeti]';
+const compactState = {}; // convKey -> { summary, coveredChars, ts }
+let compactStateLoaded = false;
+
+function getCompactStateFile() { try { return path.join(app.getPath('userData'), 'sx_compact_state.json'); } catch(e){ return ''; } }
+function loadCompactState() {
+    if (compactStateLoaded) return;
+    compactStateLoaded = true;
+    try {
+        const p = getCompactStateFile();
+        if (p && fs.existsSync(p)) {
+            const data = JSON.parse(fs.readFileSync(p, 'utf8')) || {};
+            for (const k of Object.keys(data)) {
+                if (data[k] && typeof data[k].summary === 'string') compactState[k] = data[k];
+            }
+        }
+    } catch(e){}
+}
+function saveCompactState() {
+    try {
+        const p = getCompactStateFile();
+        if (!p) return;
+        const keys = Object.keys(compactState).slice(-100);
+        const out = {};
+        for (const k of keys) out[k] = compactState[k];
+        fs.writeFileSync(p, JSON.stringify(out), 'utf8');
+    } catch(e){}
+}
+function stripSummaryNotes(contents) {
+    if (!Array.isArray(contents)) return contents;
+    return contents.filter(c => {
+        const parts = c?.parts || [];
+        return !parts.some(p => typeof p.text === 'string' && p.text.startsWith(COMPACT_SUMMARY_MARKER));
+    });
+}
+function turnToText(c, idx) {
+    const role = (c?.role === 'model' || c?.role === 'assistant') ? 'Asistan' : 'Kullanıcı';
+    const bits = [];
+    for (const p of (c?.parts || [])) {
+        if (typeof p.text === 'string' && p.text.trim()) bits.push(p.text.slice(0, 2000));
+        else if (p.functionCall) bits.push(`[Araç çağrısı: ${p.functionCall.name || '?'}(${JSON.stringify(p.functionCall.args || {}).slice(0, 500)})]`);
+        else if (p.functionResponse) {
+            const r = typeof p.functionResponse.response === 'string' ? p.functionResponse.response : JSON.stringify(p.functionResponse.response || '');
+            bits.push(`[Araç sonucu: ${r.slice(0, 1200)}]`);
+        }
+    }
+    if (!bits.length) return '';
+    return `--- Adım ${idx} (${role}) ---\n${bits.join('\n').slice(0, 4000)}`;
+}
+function extractSummaryText(data, proto) {
+    try {
+        if (proto === 'anthropic') {
+            const blocks = data?.content || [];
+            const t = blocks.filter(b => b.type === 'text' && b.text).map(b => b.text).join('\n');
+            if (t.trim()) return t.trim().slice(0, 12000);
+        } else {
+            const t = data?.choices?.[0]?.message?.content || '';
+            if (String(t).trim()) return String(t).trim().slice(0, 12000);
+        }
+    } catch(e){}
+    return '';
+}
+async function summarizeForCompaction(provider, modelId, inputText, prevSummary) {
+    const proto = (provider?.protocol || 'openai').toLowerCase();
+    const cleanBase = String(provider?.baseUrl || '').replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
+    if (!cleanBase || !modelId) throw new Error('no provider/model for summarizer');
+    const sysPrompt = 'Aşağıdaki uzun bir yapay zeka asistanı sohbet geçmişidir. Sohbete kaldığı yerden devam edebilmek için kompakt bir bağlam özeti çıkar. Şu başlıkları kullan: (1) Amaç, (2) Alınan kararlar, (3) Yapılan işler ve dokunulan dosyalar, (4) Karşılaşılan hatalar ve çözümleri, (5) Güncel durum ve sonraki adım. Gereksiz detayı at, dosya yollarını ve kritik kod kararlarını koru. Yanıtı konuşmanın ana dilinde yaz, en fazla ~2500 token.';
+    const userText = (prevSummary ? `ÖNCEKİ ÖZET (bunu güncelle, baştan yazma):\n${prevSummary.slice(0, 6000)}\n\n` : '') + `ÖZETLENECEK BÖLÜM:\n${inputText}`;
+    let url, headers, body;
+    if (proto === 'anthropic') {
+        url = cleanBase + '/v1/messages';
+        headers = { 'Content-Type': 'application/json', 'x-api-key': provider.apiKey || '', 'anthropic-version': '2023-06-01' };
+        body = JSON.stringify({ model: modelId, max_tokens: COMPACT_SUMMARY_MAX_OUT, system: sysPrompt, messages: [{ role: 'user', content: userText }] });
+    } else {
+        url = cleanBase + '/chat/completions';
+        headers = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (provider.apiKey || '') };
+        body = JSON.stringify({ model: modelId, max_tokens: COMPACT_SUMMARY_MAX_OUT, stream: false, messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userText }] });
+    }
+    const up = await fetchUpstream(url, { method: 'POST', headers, body }, null, { ttfbMs: 120000, totalMs: 300000 });
+    try {
+        const data = await up.res.json();
+        return extractSummaryText(data, proto);
+    } finally {
+        try { up.done(); } catch(e){}
+    }
+}
+function pinSummary(working, summary) {
+    if (!working.length) return working;
+    return [working[0], { role: 'user', parts: [{ text: `${COMPACT_SUMMARY_MARKER}\n${summary}` }] }, ...working.slice(1)];
+}
+async function autoCompactWithSummary(contents, budget, ctx) {
+    loadCompactState();
+    const convKey = ctx?.convKey || null;
+    const working = stripSummaryNotes(Array.isArray(contents) ? contents : []);
+    if (!working.length) return compactContentsForContext(contents, budget);
+    const st = convKey ? compactState[convKey] : null;
+    if (working.length <= COMPACT_KEEP_LAST + 2) {
+        return compactContentsForContext(st?.summary ? pinSummary(working, st.summary) : working, budget);
+    }
+    const totalChars = estimateContentChars(working);
+    const summaryChars = st?.summary ? st.summary.length + 200 : 0;
+    // Fits already (with room for a pinned summary)? Just pin and trim normally.
+    if (totalChars + summaryChars <= Math.max(30000, (budget - 6000) * 3.5)) {
+        return compactContentsForContext(st?.summary ? pinSummary(working, st.summary) : working, budget);
+    }
+    const lastTurns = working.slice(-COMPACT_KEEP_LAST);
+    // Growth gate: reuse stored summary unless the transcript grew substantially.
+    const covered = st?.coveredChars || 0;
+    if (st?.summary && totalChars < covered + COMPACT_GROWTH_THRESHOLD) {
+        return compactContentsForContext([working[0], { role: 'user', parts: [{ text: `${COMPACT_SUMMARY_MARKER}\n${st.summary}` }] }, ...lastTurns], budget);
+    }
+    // Need (re)summarization of the middle turns between first and last K.
+    const middle = working.slice(1, -COMPACT_KEEP_LAST);
+    const middleChars = estimateContentChars(middle);
+    if (middleChars < COMPACT_MIN_EVICT_CHARS) {
+        return compactContentsForContext(st?.summary ? pinSummary(working, st.summary) : working, budget);
+    }
+    try {
+        const texts = [];
+        let acc = 0;
+        for (let i = 0; i < middle.length && acc < COMPACT_INPUT_MAX_CHARS; i++) {
+            const t = turnToText(middle[i], i + 1);
+            if (!t) continue;
+            texts.push(t);
+            acc += t.length;
+        }
+        const summary = await summarizeForCompaction(ctx.provider, ctx.modelId, texts.join('\n\n').slice(0, COMPACT_INPUT_MAX_CHARS), st?.summary || '');
+        if (summary && summary.length > 200) {
+            if (convKey) {
+                compactState[convKey] = { summary, coveredChars: totalChars, ts: Date.now() };
+                saveCompactState();
+            }
+            console.log(`[SX PROXY] Context compacted for ${convKey || '?'}: ${middleChars} chars -> ${summary.length} chars summary`);
+            return compactContentsForContext([working[0], { role: 'user', parts: [{ text: `${COMPACT_SUMMARY_MARKER}\n${summary}` }] }, ...lastTurns], budget);
+        }
+    } catch(e) {
+        console.warn('[SX PROXY] Summarization failed, falling back to plain trim:', e.message);
+    }
+    return compactContentsForContext(st?.summary ? pinSummary(working, st.summary) : working, budget);
 }
 
 function getConvPerfFile() {
@@ -1553,7 +1707,7 @@ function startInternalProxy() {
 
                         // Auto-compact conversation history using real available budget
                         const contentsBeforeCompact = contents.length;
-                        contents = compactContentsForContext(contents, historyTokenBudget);
+                        contents = await autoCompactWithSummary(contents, historyTokenBudget, { provider, modelId: customModel?.modelId, convKey: reqConvKey });
                         // Agent loop breaker: inject pending nudge from the previous streamed response
                         try {
                             const pend = (reqConvKey && loopGuardPending[reqConvKey]) || null;
