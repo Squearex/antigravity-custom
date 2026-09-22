@@ -486,12 +486,11 @@ export class QuotaMonitor {
         }
         try {
             const shortConv = String(data.convId || liveMetrics?.convId || '').slice(0, 8) || '?';
-            const ageMs = liveMetrics?.cacheAgeMs;
-            const ageTxt = (ageMs == null) ? 'ölçülüyor' : (ageMs < 2000 ? 'az önce' : `${Math.round(ageMs / 1000)} sn önce`);
             const basisTxt = liveMetrics?.sentBased ? ' • gönderilen bazlı' : '';
             const trTxt = (liveMetrics?.sentBased && liveMetrics?.transcriptUsed > 0)
-                ? ` • transkript ${fmt(liveMetrics.transcriptUsed)}` : '';
-            convLine.textContent = `sohbet ${shortConv} • ${ageTxt} güncellendi${basisTxt}${trTxt}`;
+                ? ` • geçmiş ${fmt(liveMetrics.transcriptUsed)}` : '';
+            convLine.textContent = `sohbet ${shortConv}${basisTxt}${trTxt}`;
+            convLine.title = 'Bu sohbete ait ölçüm. Halka modele gönderilen boyutu gösterir; geçmiş diskteki toplamdır.';
         } catch(e) {}
 
         const totalUsed = liveMetrics?.totalUsed ?? data.usedTokens;
@@ -547,8 +546,9 @@ export class QuotaMonitor {
                 });
             }
             itemsToRender.forEach(item => {
+                const title = item.hint ? ` title="${item.hint}"` : '';
                 html += `
-                    <div style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;line-height:1.2;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;line-height:1.2;"${title}>
                         <div style="display:flex;align-items:center;gap:8px;">
                             <div style="width:7px;height:7px;border-radius:50%;background:${item.color || '#38bdf8'};flex-shrink:0;"></div>
                             <span style="color:#cbd5e1;">${item.label}</span>

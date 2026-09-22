@@ -111,15 +111,27 @@ export class ThemeEngine {
                     this.applyPreset(found, false);
                 }
             } else {
+                // User (or app) switched to a native theme: clear the SX marker so
+                // boot doesn't resurrect the old SX theme against explicit intent.
+                this.storage.silentSetItem('sx_active_theme_preset', '');
                 this.deactivateSXEffects();
             }
         });
 
-        // Apply saved preset on start
+        // Apply saved preset on start. Prefer the SX marker: the app may reset
+        // theme-preset-dark to a native default on boot, which must not wipe
+        // the user's last SX theme.
         setTimeout(() => {
             try {
-                const initialPreset = localStorage.getItem('theme-preset-dark') || 'SX Cyber Matrix';
-                const foundInitial = SX_THEME_PRESETS.find(p => p.name === initialPreset || p.id === initialPreset);
+                const savedId = localStorage.getItem('sx_active_theme_preset') || '';
+                const darkVal = localStorage.getItem('theme-preset-dark') || '';
+                const savedPreset = savedId && SX_THEME_PRESETS.find(p => p.id === savedId);
+                let foundInitial = null;
+                if (savedPreset && darkVal !== savedPreset.name) {
+                    foundInitial = savedPreset;
+                } else {
+                    foundInitial = SX_THEME_PRESETS.find(p => p.name === darkVal || p.id === darkVal);
+                }
                 if (foundInitial) {
                     this.applyPreset(foundInitial, false);
                 }

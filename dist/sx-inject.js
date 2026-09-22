@@ -582,13 +582,21 @@
             this.applyPreset(found, false);
           }
         } else {
+          this.storage.silentSetItem("sx_active_theme_preset", "");
           this.deactivateSXEffects();
         }
       });
       setTimeout(() => {
         try {
-          const initialPreset = localStorage.getItem("theme-preset-dark") || "SX Cyber Matrix";
-          const foundInitial = SX_THEME_PRESETS.find((p) => p.name === initialPreset || p.id === initialPreset);
+          const savedId = localStorage.getItem("sx_active_theme_preset") || "";
+          const darkVal = localStorage.getItem("theme-preset-dark") || "";
+          const savedPreset = savedId && SX_THEME_PRESETS.find((p) => p.id === savedId);
+          let foundInitial = null;
+          if (savedPreset && darkVal !== savedPreset.name) {
+            foundInitial = savedPreset;
+          } else {
+            foundInitial = SX_THEME_PRESETS.find((p) => p.name === darkVal || p.id === darkVal);
+          }
           if (foundInitial) {
             this.applyPreset(foundInitial, false);
           }
@@ -1673,11 +1681,10 @@
       }
       try {
         const shortConv = String(data.convId || liveMetrics?.convId || "").slice(0, 8) || "?";
-        const ageMs = liveMetrics?.cacheAgeMs;
-        const ageTxt = ageMs == null ? "\xF6l\xE7\xFCl\xFCyor" : ageMs < 2e3 ? "az \xF6nce" : `${Math.round(ageMs / 1e3)} sn \xF6nce`;
         const basisTxt = liveMetrics?.sentBased ? " \u2022 g\xF6nderilen bazl\u0131" : "";
-        const trTxt = liveMetrics?.sentBased && liveMetrics?.transcriptUsed > 0 ? ` \u2022 transkript ${fmt(liveMetrics.transcriptUsed)}` : "";
-        convLine.textContent = `sohbet ${shortConv} \u2022 ${ageTxt} g\xFCncellendi${basisTxt}${trTxt}`;
+        const trTxt = liveMetrics?.sentBased && liveMetrics?.transcriptUsed > 0 ? ` \u2022 ge\xE7mi\u015F ${fmt(liveMetrics.transcriptUsed)}` : "";
+        convLine.textContent = `sohbet ${shortConv}${basisTxt}${trTxt}`;
+        convLine.title = "Bu sohbete ait \xF6l\xE7\xFCm. Halka modele g\xF6nderilen boyutu g\xF6sterir; ge\xE7mi\u015F diskteki toplamd\u0131r.";
       } catch (e) {
       }
       const totalUsed = liveMetrics?.totalUsed ?? data.usedTokens;
@@ -1732,8 +1739,9 @@
           });
         }
         itemsToRender.forEach((item) => {
+          const title = item.hint ? ` title="${item.hint}"` : "";
           html += `
-                    <div style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;line-height:1.2;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;line-height:1.2;"${title}>
                         <div style="display:flex;align-items:center;gap:8px;">
                             <div style="width:7px;height:7px;border-radius:50%;background:${item.color || "#38bdf8"};flex-shrink:0;"></div>
                             <span style="color:#cbd5e1;">${item.label}</span>
@@ -2412,9 +2420,6 @@
           convKey = this.models.getActiveConversationKey();
           activeId = this.models.getActiveModelForConversation(convKey);
           if (activeId) {
-            if (convKey && convKey !== "conv_new") {
-              localStorage.setItem("sx_active_model_" + convKey, activeId);
-            }
             localStorage.setItem("sx_last_used_model_id", activeId);
             localStorage.setItem("sx_active_model_id", activeId);
             if (!args[1]) args[1] = {};
@@ -4425,9 +4430,11 @@
   };
 
   // src/index.js
+  var SX_BUILD = "2026.09.22-r11";
   (function bootstrapSX() {
     const logger = new Logger("SX");
-    logger.info("Core", "Bootstrapping SX Core SDK v2.0 (Modular Event-Driven Architecture)...");
+    logger.info("Core", `Bootstrapping SX Core SDK v2.0 (build ${SX_BUILD})...`);
+    window.__SX_BUILD = SX_BUILD;
     const bus = new EventBus();
     const container = new Container();
     container.register("bus", bus);

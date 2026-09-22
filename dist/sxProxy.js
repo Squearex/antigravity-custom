@@ -1281,7 +1281,7 @@ function startInternalProxy() {
 
                     const items = [
                         { label: 'Messages', color: '#3b82f6', tokens: fmt(msgTokens), percent: pct(msgTokens) },
-                        { label: 'System tools', color: '#60a5fa', tokens: fmt(isFreshChat ? 0 : (sysToolsTokens + toolTokens)), percent: pct(isFreshChat ? 0 : (sysToolsTokens + toolTokens)) },
+                        { label: 'Araç geçmişi', color: '#60a5fa', tokens: fmt(isFreshChat ? 0 : (sysToolsTokens + toolTokens)), percent: pct(isFreshChat ? 0 : (sysToolsTokens + toolTokens)), hint: 'Sohbet geçmişindeki araç çağrı ve sonuçları (diskteki transkript toplamı)' },
                         { label: 'System prompt', color: '#818cf8', tokens: fmt(isFreshChat ? 0 : sysPromptTokens), percent: pct(isFreshChat ? 0 : sysPromptTokens) },
                         { label: 'Skills', color: '#a78bfa', tokens: fmt(isFreshChat ? 0 : skillsTokens), percent: pct(isFreshChat ? 0 : skillsTokens) },
                         { label: 'MCP tools (deferred)', color: '#52525b', tokens: fmt(mcpToolsDeferred), percent: pct(mcpToolsDeferred) },

@@ -17,9 +17,13 @@ import { VoiceRecorder } from './services/VoiceRecorder.js';
 import { UIInjector } from './services/UIInjector.js';
 import { ModelMetaResolver } from './services/ModelMetaResolver.js';
 
+// Bump on every release so console/deploy skew is visible.
+export const SX_BUILD = '2026.09.22-r11';
+
 (function bootstrapSX() {
     const logger = new Logger('SX');
-    logger.info('Core', 'Bootstrapping SX Core SDK v2.0 (Modular Event-Driven Architecture)...');
+    logger.info('Core', `Bootstrapping SX Core SDK v2.0 (build ${SX_BUILD})...`);
+    window.__SX_BUILD = SX_BUILD;
 
     const bus = new EventBus();
     const container = new Container();

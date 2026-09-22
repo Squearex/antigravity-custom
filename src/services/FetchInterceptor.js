@@ -91,9 +91,11 @@ export class FetchInterceptor {
                 convKey = this.models.getActiveConversationKey();
                 activeId = this.models.getActiveModelForConversation(convKey);
                 if (activeId) {
-                    if (convKey && convKey !== 'conv_new') {
-                        localStorage.setItem('sx_active_model_' + convKey, activeId);
-                    }
+                    // NOTE: never persist per-conversation bindings here. This hook also fires
+                    // for background/subagent requests; writing sx_active_model_<conv> would
+                    // freeze fallback values and clobber other conversations ("model keeps
+                    // switching" bug). Explicit choices are persisted by the selector click path.
+                    // Global last-used pointers are safe: they always reflect the visible convo.
                     localStorage.setItem('sx_last_used_model_id', activeId);
                     localStorage.setItem('sx_active_model_id', activeId);
                     if (!args[1]) args[1] = {};
