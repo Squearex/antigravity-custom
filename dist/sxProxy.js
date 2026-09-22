@@ -2404,7 +2404,7 @@ function startInternalProxy() {
                                 stream: true,
                                 messages: [],
                                 include_reasoning: true,
-                                service_tier: (isGroq ? 'auto' : undefined)
+                                // Groq service_tier omitted: user's org only has on_demand; default is safe
                             };
                             if (oaTools) payload.tools = oaTools;
 
