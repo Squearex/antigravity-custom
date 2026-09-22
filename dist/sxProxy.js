@@ -2061,9 +2061,9 @@ function startInternalProxy() {
                         let historyTokenBudget = Math.max(4000, modelContextLimit - overheadTokens - 16000);
                         const isGroq = (provider?.name || '').toLowerCase().includes('groq') || (provider?.baseUrl || '').toLowerCase().includes('groq');
                         if (isGroq) {
-                            // Groq on-demand ITPM limit ~7000 input tok/min — cap history aggressively
-                            historyTokenBudget = Math.min(historyTokenBudget, 3500);
-                            console.log(`[SX PROXY] Groq detected — ITPM safe budget capped to ${historyTokenBudget}`);
+                            // Groq on-demand ITPM hard cap ~7000/min total input — keep single request well under
+                            historyTokenBudget = Math.min(historyTokenBudget, 1500);
+                            console.log(`[SX PROXY] Groq detected — aggressive ITPM cap to ${historyTokenBudget}`);
                         }
                         const isFreeModel = ((customModel?.modelId || '').toLowerCase().endsWith(':free') || (customModel?.name || '').toLowerCase().endsWith(':free')) || (provider?.name || '').toLowerCase().includes('free');
                         if (isFreeModel && historyTokenBudget > 70000) {
@@ -2366,8 +2366,8 @@ function startInternalProxy() {
                                 realHistoryBudget = 70000;
                             }
                             if (isGroq) {
-                                realHistoryBudget = Math.min(realHistoryBudget, 3500);
-                                console.log(`[SX PROXY] Groq detected (OpenAI path) — budget capped to ${realHistoryBudget}`);
+                                realHistoryBudget = Math.min(realHistoryBudget, 1500);
+                                console.log(`[SX PROXY] Groq detected (OpenAI path) — aggressive budget capped to ${realHistoryBudget}`);
                             }
 
                             const rawOaMsgs = geminiContentsToOpenAI(contents, systemText);
