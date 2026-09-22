@@ -3532,7 +3532,7 @@
         return;
       }
       const scanTs = Date.now();
-      if (this._lastSettingsScan && scanTs - this._lastSettingsScan < 2e3) return;
+      if (this._lastSettingsScan && scanTs - this._lastSettingsScan < 250 && !document.querySelector("#sx-content-wrapper")) return;
       this._lastSettingsScan = scanTs;
       let rightPanel = null;
       const MARKERS = ["Gemini Models", "Model Credits", "Your Plan"];

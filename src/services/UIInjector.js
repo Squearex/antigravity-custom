@@ -606,10 +606,9 @@ export class UIInjector {
             return;
         }
 
-        // Throttle the expensive full-tree marker scan while the dialog is open
-        // without our wrapper yet (hookDOM ticks every ~250ms).
+        // Throttle looser: allow rapid retries when settings dialog just opened
         const scanTs = Date.now();
-        if (this._lastSettingsScan && (scanTs - this._lastSettingsScan < 2000)) return;
+        if (this._lastSettingsScan && (scanTs - this._lastSettingsScan < 250) && !document.querySelector('#sx-content-wrapper')) return;
         this._lastSettingsScan = scanTs;
 
         let rightPanel = null;
