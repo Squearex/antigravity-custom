@@ -321,7 +321,7 @@ export class UIInjector {
         const isAlreadyAdded = (modelId, provId) =>
             self.state.getModels().some(m => m.modelId === modelId && m.providerId === provId);
 
-        const META_SRC_LABEL = { api: 'Provider API', zen: 'Zen dokümanı', 'zen-catalog': 'Zen katalog', openrouter: 'OpenRouter', local: 'Yerel DB', manual: 'Manuel', partial: 'Kısmi', none: 'Bilinmiyor' };
+        const META_SRC_LABEL = { api: 'Provider API', zen: 'Zen dokümanı', 'zen-catalog': 'Zen katalog', modelsdev: 'models.dev', openrouter: 'OpenRouter', local: 'Yerel DB', manual: 'Manuel', partial: 'Kısmi', none: 'Bilinmiyor' };
         const metaSrcLabel = (m) => META_SRC_LABEL[m?.metaSource] || (m?.metaSource || '');
 
         const metaFromFetched = (fm) => {

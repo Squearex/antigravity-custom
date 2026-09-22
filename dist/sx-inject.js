@@ -2783,7 +2783,7 @@
       const checkedIds = /* @__PURE__ */ new Set();
       const self = this;
       const isAlreadyAdded = (modelId, provId) => self.state.getModels().some((m) => m.modelId === modelId && m.providerId === provId);
-      const META_SRC_LABEL = { api: "Provider API", zen: "Zen dok\xFCman\u0131", "zen-catalog": "Zen katalog", openrouter: "OpenRouter", local: "Yerel DB", manual: "Manuel", partial: "K\u0131smi", none: "Bilinmiyor" };
+      const META_SRC_LABEL = { api: "Provider API", zen: "Zen dok\xFCman\u0131", "zen-catalog": "Zen katalog", modelsdev: "models.dev", openrouter: "OpenRouter", local: "Yerel DB", manual: "Manuel", partial: "K\u0131smi", none: "Bilinmiyor" };
       const metaSrcLabel = (m) => META_SRC_LABEL[m?.metaSource] || (m?.metaSource || "");
       const metaFromFetched = (fm) => {
         if (!fm) return {};
@@ -3697,6 +3697,11 @@
   var VISION_NAME_RE = /(?:^|[\/\-_.])(?:vl|vision|4o|omni|gemini|gemma|pixtral|llava|paligemma|vision[-_]?pro|llama[-_]?3\.2[-_].*vision)/i;
   var NO_VISION_NAME_RE = /(?:^|[\/\-_.])(?:code|coder|embedding|audio|transcribe|tts|whisper|rerank)/i;
   var NO_TOOLS_NAME_RE = /(?:^|[\/\-_.])(?:embedding|whisper|tts|transcribe|rerank|moderation|audio)/i;
+  var MODELSDEV_URL = "https://models.dev/api.json";
+  var OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
+  var MODELSDEV_CACHE_KEY = "sx_modelsdev_v1";
+  var OR_CACHE_KEY = "sx_openrouter_v1";
+  var CATALOG_CACHE_TTL = 24 * 60 * 60 * 1e3;
   var ModelMetaResolver = class {
     constructor(networkClient, logger) {
       this.network = networkClient;
@@ -3708,6 +3713,71 @@
       this._zenSet = null;
       this._zenPromise = null;
       this._zenLoadedAt = 0;
+      this._mdExact = null;
+      this._mdNorm = null;
+      this._mdPromise = null;
+      this._mdLoadedAt = 0;
+    }
+    _cacheGet(key) {
+      try {
+        if (typeof localStorage === "undefined") return null;
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const o = JSON.parse(raw);
+        if (!o || !o.ts || !Array.isArray(o.rows)) return null;
+        if (Date.now() - o.ts > CATALOG_CACHE_TTL) return null;
+        return o.rows;
+      } catch (e) {
+        return null;
+      }
+    }
+    _cacheSet(key, rows) {
+      try {
+        if (typeof localStorage === "undefined") return;
+        localStorage.setItem(key, JSON.stringify({ ts: Date.now(), rows }));
+      } catch (e) {
+      }
+    }
+    /** Compact row [id, ctx, vis(-1/0/1), tools(-1/0/1), name] -> meta object. */
+    _expandRow(r) {
+      const o = {};
+      if (r[1] > 0) o.contextLength = r[1];
+      if (r[2] === 1) o.supportsImages = true;
+      else if (r[2] === 0) o.supportsImages = false;
+      if (r[3] === 1) o.supportsTools = true;
+      else if (r[3] === 0) o.supportsTools = false;
+      if (r[4]) o.name = r[4];
+      return o;
+    }
+    _indexRows(rows) {
+      const exact = /* @__PURE__ */ new Map();
+      const norm = /* @__PURE__ */ new Map();
+      for (const r of rows) {
+        const id = String(r[0] || "").toLowerCase();
+        if (!id) continue;
+        const meta = this._expandRow(r);
+        if (!exact.has(id)) exact.set(id, meta);
+        const base = id.split("/").pop();
+        if (base && base !== id && !exact.has(base)) exact.set(base, meta);
+        for (const k of [this.normalizeKey(id), this.normalizeKey(base)]) {
+          if (k && !norm.has(k)) norm.set(k, meta);
+        }
+      }
+      return { exact, norm };
+    }
+    /** Last-resort fuzzy: prefix overlap between query and catalog keys. */
+    _fuzzyLookup(map, q) {
+      if (!map || !q || q.length < 10) return null;
+      let best = null;
+      for (const k of map.keys()) {
+        if (k === q) return map.get(k);
+        if (k.startsWith(q)) {
+          if (!best || k.length < best.k.length) best = { k, v: map.get(k) };
+        } else if (q.startsWith(k) && k.length >= 10) {
+          if (!best || k.length > best.k.length) best = { k, v: map.get(k) };
+        }
+      }
+      return best ? best.v : null;
     }
     /** Normalize model id for fuzzy matching across providers/catalogs. */
     normalizeKey(id) {
@@ -3792,27 +3862,36 @@
       return this._zenSet.has(String(modelId).toLowerCase());
     }
     async ensureOpenRouterCatalog(force = false) {
-      const maxAge = 12 * 60 * 60 * 1e3;
-      if (!force && this._orCatalog && Date.now() - this._orLoadedAt < maxAge) return this._orCatalog;
+      if (!force && this._orCatalog && Date.now() - this._orLoadedAt < CATALOG_CACHE_TTL) return this._orCatalog;
       if (this._orPromise && !force) return this._orPromise;
       this._orPromise = (async () => {
+        const cached = this._cacheGet(OR_CACHE_KEY);
+        if (cached && cached.length) {
+          const { exact, norm } = this._indexRows(cached);
+          this._orCatalogRaw = exact;
+          this._orCatalog = norm;
+          this._orLoadedAt = Date.now();
+          this.logger?.info?.("ModelMetaResolver", `OpenRouter catalog from cache: ${exact.size} models`);
+          return this._orCatalog;
+        }
         try {
-          const resp = await this.network.proxyFetch("https://openrouter.ai/api/v1/models", "GET", {});
+          const resp = await this.network.proxyFetch(OPENROUTER_MODELS_URL, "GET", {});
           if (!resp.ok) throw new Error("HTTP " + resp.status);
           const data = await resp.json();
           const list = Array.isArray(data?.data) ? data.data : [];
-          const exact = /* @__PURE__ */ new Map();
-          const norm = /* @__PURE__ */ new Map();
-          for (const m of list) {
-            if (!m?.id) continue;
+          const rows = list.filter((m) => m?.id).map((m) => {
             const meta = this._fromOpenRouterItem(m);
-            exact.set(String(m.id).toLowerCase(), meta);
-            const nk = this.normalizeKey(m.id);
-            if (nk && !norm.has(nk)) norm.set(nk, meta);
-            const base = String(m.id).split("/").pop();
-            const bk = this.normalizeKey(base);
-            if (bk && !norm.has(bk)) norm.set(bk, meta);
-          }
+            const id = String(m.id).toLowerCase();
+            return [
+              id,
+              meta.contextLength || 0,
+              typeof meta.supportsImages === "boolean" ? meta.supportsImages ? 1 : 0 : -1,
+              typeof meta.supportsTools === "boolean" ? meta.supportsTools ? 1 : 0 : -1,
+              String(m.name || "").slice(0, 120)
+            ];
+          });
+          this._cacheSet(OR_CACHE_KEY, rows);
+          const { exact, norm } = this._indexRows(rows);
           this._orCatalogRaw = exact;
           this._orCatalog = norm;
           this._orLoadedAt = Date.now();
@@ -3825,6 +3904,78 @@
         }
       })();
       return this._orPromise;
+    }
+    /** Parse models.dev api.json into compact rows. Pure — unit testable. */
+    _parseModelsDev(data) {
+      const rows = [];
+      if (!data || typeof data !== "object") return rows;
+      for (const pkey of Object.keys(data)) {
+        const models = data[pkey]?.models;
+        if (!models || typeof models !== "object") continue;
+        for (const mkey of Object.keys(models)) {
+          const m = models[mkey];
+          if (!m || typeof m !== "object") continue;
+          const id = String(m.id || mkey || "").toLowerCase();
+          if (!id) continue;
+          const ctxRaw = Number(m.limit?.context);
+          const ctx = Number.isFinite(ctxRaw) && ctxRaw >= 1e3 ? Math.round(ctxRaw) : 0;
+          let vis = -1;
+          const ins = Array.isArray(m.modalities?.input) ? m.modalities.input.map((x) => String(x).toLowerCase()) : [];
+          if (ins.includes("image")) vis = 1;
+          else if (ins.length && ins.every((x) => x === "text")) vis = 0;
+          const tools = typeof m.tool_call === "boolean" ? m.tool_call ? 1 : 0 : -1;
+          rows.push([id, ctx, vis, tools, String(m.name || "").slice(0, 120)]);
+        }
+      }
+      return rows;
+    }
+    /** models.dev catalog (7954 models incl. exact opencode/Zen ids). Cached 24h. */
+    async ensureModelsDev(force = false) {
+      if (!force && this._mdExact && Date.now() - this._mdLoadedAt < CATALOG_CACHE_TTL) return this._mdExact;
+      if (this._mdPromise && !force) return this._mdPromise;
+      this._mdPromise = (async () => {
+        const cached = this._cacheGet(MODELSDEV_CACHE_KEY);
+        if (cached && cached.length) {
+          const { exact, norm } = this._indexRows(cached);
+          this._mdExact = exact;
+          this._mdNorm = norm;
+          this._mdLoadedAt = Date.now();
+          this.logger?.info?.("ModelMetaResolver", `models.dev catalog from cache: ${exact.size} models`);
+          return this._mdExact;
+        }
+        try {
+          const resp = await this.network.proxyFetch(MODELSDEV_URL, "GET", {});
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          const data = await resp.json();
+          const rows = this._parseModelsDev(data);
+          if (!rows.length) throw new Error("empty models.dev payload");
+          this._cacheSet(MODELSDEV_CACHE_KEY, rows);
+          const { exact, norm } = this._indexRows(rows);
+          this._mdExact = exact;
+          this._mdNorm = norm;
+          this._mdLoadedAt = Date.now();
+          this.logger?.info?.("ModelMetaResolver", `models.dev catalog loaded: ${exact.size} models`);
+          return this._mdExact;
+        } catch (e) {
+          this.logger?.warn?.("ModelMetaResolver", "models.dev catalog failed", e.message);
+          this._mdPromise = null;
+          return null;
+        }
+      })();
+      return this._mdPromise;
+    }
+    lookupModelsDev(modelId) {
+      if (!this._mdExact) return null;
+      const raw = String(modelId || "").toLowerCase();
+      if (!raw) return null;
+      if (this._mdExact.has(raw)) return this._mdExact.get(raw);
+      const base = raw.split("/").pop();
+      if (base && base !== raw && this._mdExact.has(base)) return this._mdExact.get(base);
+      const key = this.normalizeKey(modelId);
+      if (key && this._mdNorm.has(key)) return this._mdNorm.get(key);
+      const bk = this.normalizeKey(base);
+      if (bk && bk !== key && this._mdNorm.has(bk)) return this._mdNorm.get(bk);
+      return this._fuzzyLookup(this._mdNorm, key) || this._fuzzyLookup(this._mdNorm, bk);
     }
     _fromOpenRouterItem(m) {
       const out = {};
@@ -3852,7 +4003,7 @@
       if (this._orCatalogRaw.has(base)) return this._orCatalogRaw.get(base);
       const bk = this.normalizeKey(base);
       if (bk && this._orCatalog.has(bk)) return this._orCatalog.get(bk);
-      return null;
+      return this._fuzzyLookup(this._orCatalog, key) || this._fuzzyLookup(this._orCatalog, bk);
     }
     /**
      * Merge metadata layers into a model-like object.
@@ -3905,18 +4056,36 @@
     async enrichAsync(input, opts = {}) {
       const out = this.enrich(input, opts);
       const id = out.modelId || out.id || "";
-      const missingCtx = !(Number(out.contextLength) > 0);
-      const missingVis = typeof out.supportsImages !== "boolean";
-      const missingTool = typeof out.supportsTools !== "boolean";
-      if (opts.online !== false && id && (missingCtx || missingVis || missingTool)) {
-        const online = await this.lookupOnline(id);
-        if (online) {
-          if (missingCtx && Number(online.contextLength) > 0) out.contextLength = Number(online.contextLength);
-          if (missingVis && typeof online.supportsImages === "boolean") out.supportsImages = online.supportsImages;
-          if (missingTool && typeof online.supportsTools === "boolean") out.supportsTools = online.supportsTools;
-          if (!out.name && online.name) out.name = online.name;
-          if (!out.metaSource) out.metaSource = "openrouter";
+      const need = () => ({
+        c: !(Number(out.contextLength) > 0),
+        v: typeof out.supportsImages !== "boolean",
+        t: typeof out.supportsTools !== "boolean"
+      });
+      const fill = (src, tag) => {
+        if (!src) return;
+        const n = need();
+        let touched = false;
+        if (n.c && Number(src.contextLength) > 0) {
+          out.contextLength = Number(src.contextLength);
+          touched = true;
         }
+        if (n.v && typeof src.supportsImages === "boolean") {
+          out.supportsImages = src.supportsImages;
+          touched = true;
+        }
+        if (n.t && typeof src.supportsTools === "boolean") {
+          out.supportsTools = src.supportsTools;
+          touched = true;
+        }
+        if (!out.name && src.name) out.name = src.name;
+        if (touched && !out.metaSource) out.metaSource = tag;
+      };
+      if (opts.online !== false && id) {
+        await this.ensureModelsDev().catch(() => null);
+        let n = need();
+        if (n.c || n.v || n.t) fill(this.lookupModelsDev(id), "modelsdev");
+        n = need();
+        if (n.c || n.v || n.t) fill(await this.lookupOnline(id), "openrouter");
       }
       if (!out.metaSource) {
         const kb = this._kbLookup(id);
@@ -3929,6 +4098,7 @@
       if (opts.online !== false) {
         await Promise.all([
           this.ensureZenCatalog().catch(() => null),
+          this.ensureModelsDev().catch(() => null),
           this.ensureOpenRouterCatalog().catch(() => null)
         ]);
       }
@@ -3951,6 +4121,7 @@
       if (opts.online !== false) {
         await Promise.all([
           this.ensureZenCatalog().catch(() => null),
+          this.ensureModelsDev().catch(() => null),
           this.ensureOpenRouterCatalog().catch(() => null)
         ]);
       }
@@ -4035,6 +4206,10 @@
           logger.info("Core", "Model metadata backfilled from knowledge sources.");
         }
       }).catch((e) => logger.warn("Core", "Metadata backfill failed", e.message));
+    });
+    metaResolver.ensureZenCatalog().catch(() => {
+    });
+    metaResolver.ensureModelsDev().catch(() => {
     });
     metaResolver.ensureOpenRouterCatalog().catch(() => {
     });

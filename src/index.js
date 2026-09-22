@@ -83,7 +83,9 @@ import { ModelMetaResolver } from './services/ModelMetaResolver.js';
         }).catch(e => logger.warn('Core', 'Metadata backfill failed', e.message));
     });
 
-    // Warm OpenRouter catalog in background for instant lookups
+    // Warm catalogs in background for instant lookups (Zen + models.dev + OpenRouter)
+    metaResolver.ensureZenCatalog().catch(() => {});
+    metaResolver.ensureModelsDev().catch(() => {});
     metaResolver.ensureOpenRouterCatalog().catch(() => {});
 
     // 5. Global exports for debugging & backwards compatibility
