@@ -134,11 +134,20 @@ function bumpStreamProgress(convKey, chars) {
 // Agent loop breaker: models sometimes call the same tool with identical args
 // over and over (e.g. view_file with bad params), burning the whole context.
 // Completed tool calls are tracked per conversation; on 5 consecutive identical
-// calls a nudge is queued and injected into the NEXT request instead of looping.
 const LOOP_GUARD_THRESHOLD = 5;
 const LOOP_GUARD_REWARN_EVERY = 10;
+const READ_ONLY_TOOLS = new Set([
+    'view_file', 'grep_search', 'list_dir', 'find_by_name',
+    'read_url_content', 'list_files', 'read_file', 'manage_subagents', 'read_command',
+    'search_web', 'get_metadata', 'list_functions', 'list_strings'
+]);
+const MODIFYING_TOOLS = new Set([
+    'write_to_file', 'replace_file_content', 'run_command', 'privileged-command',
+    'write_file', 'delete_files', 'copy_file', 'rename_files', 'server_command'
+]);
 const loopGuardCalls = {}; // convKey -> [{ key, ts }] (capped)
-const loopGuardPending = {}; // convKey -> { name, args, count }
+const loopGuardPending = {}; // convKey -> { name, args, count, type }
+const loopGuardReadOnlyCounts = {}; // convKey -> number
 function toolCallKey(name, argsStr) {
     const a = String(argsStr || '');
     return String(name || '') + '|' + (a.length > 500 ? a.slice(0, 500) : a);
@@ -146,6 +155,23 @@ function toolCallKey(name, argsStr) {
 function recordToolCall(convKey, name, argsStr) {
     if (!convKey || !name) return null;
     try {
+        const toolNameStr = String(name);
+        if (MODIFYING_TOOLS.has(toolNameStr)) {
+            loopGuardReadOnlyCounts[convKey] = 0;
+        } else if (READ_ONLY_TOOLS.has(toolNameStr)) {
+            const rCount = (loopGuardReadOnlyCounts[convKey] || 0) + 1;
+            loopGuardReadOnlyCounts[convKey] = rCount;
+            if (rCount >= 10 && rCount % 5 === 0) {
+                loopGuardPending[convKey] = {
+                    name: 'read_only_loop',
+                    args: `${toolNameStr} (art arda ${rCount} okuma)`,
+                    count: rCount,
+                    type: 'readonly'
+                };
+                console.warn(`[SX PROXY] Loop breaker: ${rCount} consecutive read-only calls on ${convKey} — nudge queued`);
+            }
+        }
+
         const key = toolCallKey(name, argsStr);
         if (!loopGuardCalls[convKey]) loopGuardCalls[convKey] = [];
         const arr = loopGuardCalls[convKey];
@@ -157,7 +183,7 @@ function recordToolCall(convKey, name, argsStr) {
         if (tail.length === LOOP_GUARD_THRESHOLD && tail.every(e => e.key === key)) {
             const total = arr.reduce((n, e) => n + (e.key === key ? 1 : 0), 0);
             if (total === LOOP_GUARD_THRESHOLD || (total > LOOP_GUARD_THRESHOLD && (total - LOOP_GUARD_THRESHOLD) % LOOP_GUARD_REWARN_EVERY === 0)) {
-                loopGuardPending[convKey] = { name: String(name), args: String(argsStr || '').slice(0, 300), count: total };
+                loopGuardPending[convKey] = { name: toolNameStr, args: String(argsStr || '').slice(0, 300), count: total, type: 'identical' };
                 console.warn(`[SX PROXY] Loop breaker: '${name}' x${total} identical calls on ${convKey} — nudge queued`);
                 return { loop: true, key, name, count: total };
             }
@@ -165,7 +191,10 @@ function recordToolCall(convKey, name, argsStr) {
     } catch(e){}
     return null;
 }
-function makeLoopNudge(name, argsStr, count) {
+function makeLoopNudge(name, argsStr, count, type) {
+    if (type === 'readonly' || name === 'read_only_loop') {
+        return `[Sistem Uyarısı: Arka arkaya ${count} kez sadece dosya okuma/arama yaptın ama hiçbir kod düzenlemesi veya komut çalıştırma yapmadın. Dosyaları tekrar tekrar okuma/arama döngüsünü DERHAL DURDUR. Elindeki bilgiler yeterlidir; hemen write_to_file veya replace_file_content kullanarak kod değişikliklerini yap veya kullanıcıya doğrudan yanıt ver!]`;
+    }
     const shortArgs = String(argsStr || '').slice(0, 300);
     return `[Sistem Uyarısı: '${name}' aracını aynı parametrelerle art arda ${count} kez çağırdın ve ilerleme yok — bu bir döngü. Aynı çağrıyı tekrarlama. Şunları dene: (1) bir önceki hata mesajındaki parametreyi düzelt, (2) önce listele/ara araçlarıyla doğru yolu bul, (3) farklı bir dosya ya da yönteme geç. Parametreler: ${shortArgs}]`;
 }
@@ -217,8 +246,8 @@ function makeIntentReminder(substantive) {
 // set: nothing forgotten (knowledge lives in the summary), never stops.
 // Re-summarizes only after substantial new growth; any failure falls back to
 // the previous plain-trim behavior without breaking the chat.
-const COMPACT_KEEP_LAST = 4;
-const COMPACT_MIN_EVICT_CHARS = 8000;
+const COMPACT_KEEP_LAST = 10;
+const COMPACT_MIN_EVICT_CHARS = 12000;
 const COMPACT_GROWTH_THRESHOLD = 20000;
 const COMPACT_SUMMARY_MAX_OUT = 2500;
 const COMPACT_INPUT_MAX_CHARS = 24000;
@@ -677,10 +706,9 @@ function trimOpenAIMessages(messages, maxTokens) {
     const systemMsgs = messages.filter(m => m.role === 'system');
     const nonSystem = messages.filter(m => m.role !== 'system');
 
-    // In code-heavy & tool-heavy conversations, OpenAI/Llama/Nex BPE tokenizers produce ~1 token per 1.5 - 1.6 chars!
-    // Using 3.5 chars/token causes 2.2x underestimation and HTTP 400 context_length_exceeded.
-    const CHARS_PER_TOKEN = 1.55;
-    const budgetChars = Math.max(10000, Math.floor((maxTokens - 8000) * CHARS_PER_TOKEN));
+    // Balanced token estimation: code & structured text averages ~2.6 chars/token.
+    const CHARS_PER_TOKEN = 2.6;
+    const budgetChars = Math.max(20000, Math.floor((maxTokens - 4000) * CHARS_PER_TOKEN));
 
     function totalNonSysChars(msgs) {
         return msgs.reduce((s, m) => s + msgChars(m), 0);
@@ -693,16 +721,18 @@ function trimOpenAIMessages(messages, maxTokens) {
 
     console.log(`[SX PROXY TRIM] Trimming required! Current ${currentNonSysChars} chars exceeds budget ${budgetChars} chars.`);
 
-    // Pass 1: Aggressively prune tool results in older turns (not last 4)
+    // Pass 1: Prune oversized tool results in older turns (keep last 12 turns intact, cap older to 8000 ch with head/tail preservation)
     const cloned = JSON.parse(JSON.stringify(nonSystem));
-    const recentStart = Math.max(0, cloned.length - 4);
+    const recentStart = Math.max(0, cloned.length - 12);
     for (let i = 0; i < cloned.length; i++) {
         const m = cloned[i];
         if (m.role === 'tool' && i < recentStart) {
-            const cap = 150;
+            const cap = 8000;
             const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
             if (c.length > cap) {
-                cloned[i] = { ...m, content: c.slice(0, cap) + `…[${c.length - cap} ch pruned]` };
+                const head = c.slice(0, Math.floor(cap * 0.7));
+                const tail = c.slice(-Math.floor(cap * 0.3));
+                cloned[i] = { ...m, content: `${head}\n…[${c.length - cap} karakter özetlendi]…\n${tail}` };
             }
         }
     }
@@ -779,17 +809,17 @@ function compactContentsForContext(contents, maxTokens = 131072) {
 
     const cloned = JSON.parse(JSON.stringify(contents));
 
-    // Pass 1: Aggressively prune tool outputs in historical turns (>400 chars) and even recent turns (>6000 chars)
-    const recentThreshold = Math.max(0, cloned.length - 4);
+    // Pass 1: Prune oversized tool outputs in historical turns (>8000 chars) and recent turns (>30000 chars)
+    const recentThreshold = Math.max(0, cloned.length - 10);
     for (let i = 0; i < cloned.length; i++) {
-        const limit = (i < recentThreshold) ? 400 : 6000;
+        const limit = (i < recentThreshold) ? 8000 : 30000;
         const c = cloned[i];
         for (const p of (c.parts || [])) {
             if (p.functionResponse) {
                 const fr = p.functionResponse;
                 let rawResp = typeof fr.response === 'string' ? fr.response : JSON.stringify(fr.response || '');
                 if (rawResp.length > limit) {
-                    const head = rawResp.slice(0, Math.floor(limit * 0.6));
+                    const head = rawResp.slice(0, Math.floor(limit * 0.7));
                     const tail = rawResp.slice(-Math.floor(limit * 0.3));
                     const pruned = `${head}\n... [Önceki araç çıktısı context tasarrufu için özetlendi (${rawResp.length} karakter)] ...\n${tail}`;
                     fr.response = typeof fr.response === 'string' ? pruned : { output: pruned };
@@ -1791,11 +1821,11 @@ function startInternalProxy() {
                         maxTok = Number(m.contextLength);
                     } else {
                         const mId = (m.modelId || m.id || '').toLowerCase();
-                        if (mId.includes('1m') || mId.includes('gemini-1.5') || mId.includes('gemini-2.0') || mId.includes('gemini-2.5')) {
+                        if (mId.includes('1m') || mId.includes('gemini-1.5') || mId.includes('gemini-2.0') || mId.includes('gemini-2.5') || mId.includes('ultra') || mId.includes('spark') || mId.includes('muse') || mId.includes('ling') || mId.includes('inkling')) {
                             maxTok = 1048576;
                         } else if (mId.includes('2m')) {
                             maxTok = 2097152;
-                        } else if (mId.includes('256k') || mId.includes('nemotron') || mId.includes('qwen') || mId.includes('pro')) {
+                        } else if (mId.includes('256k') || mId.includes('nemotron') || mId.includes('qwen') || mId.includes('pro') || mId.includes('deepseek') || mId.includes('step')) {
                             maxTok = 262144;
                         } else if (mId.includes('64k') || mId.includes('flash') || mId.includes('mini')) {
                             maxTok = 65536;
@@ -2027,9 +2057,9 @@ function startInternalProxy() {
                             modelContextLimit = Number(customModel.contextLength);
                         } else {
                             const mId = (customModel?.modelId || '').toLowerCase();
-                            if (mId.includes('1m') || mId.includes('gemini') || mId.includes('lightning') || mId.includes('ultra')) {
+                            if (mId.includes('1m') || mId.includes('gemini') || mId.includes('lightning') || mId.includes('ultra') || mId.includes('spark') || mId.includes('muse') || mId.includes('ling') || mId.includes('inkling')) {
                                 modelContextLimit = 1000000;
-                            } else if (mId.includes('256k') || mId.includes('pro') || mId.includes('nemotron') || mId.includes('qwen') || mId.includes('step')) {
+                            } else if (mId.includes('256k') || mId.includes('pro') || mId.includes('nemotron') || mId.includes('qwen') || mId.includes('step') || mId.includes('deepseek')) {
                                 modelContextLimit = 262144;
                             } else if (mId.includes('128k') || mId.includes('gpt-4o') || mId.includes('claude-3') || mId.includes('gemma')) {
                                 modelContextLimit = 128000;
@@ -2070,8 +2100,22 @@ function startInternalProxy() {
                             console.log(`[SX PROXY] Groq detected — aggressive ITPM cap to ${historyTokenBudget}`);
                         }
                         const isFreeModel = ((customModel?.modelId || '').toLowerCase().endsWith(':free') || (customModel?.name || '').toLowerCase().endsWith(':free')) || (provider?.name || '').toLowerCase().includes('free');
-                        if (isFreeModel && historyTokenBudget > 70000) {
-                            historyTokenBudget = 70000;
+                        if (isFreeModel) {
+                            let freeCap = 120000;
+                            if (modelContextLimit >= 1000000) {
+                                freeCap = 800000;
+                            } else if (modelContextLimit >= 500000) {
+                                freeCap = 450000;
+                            } else if (modelContextLimit >= 250000) {
+                                freeCap = 220000;
+                            } else if (modelContextLimit >= 120000) {
+                                freeCap = 110000;
+                            } else {
+                                freeCap = Math.max(30000, modelContextLimit - 10000);
+                            }
+                            if (historyTokenBudget > freeCap) {
+                                historyTokenBudget = freeCap;
+                            }
                         }
                         console.log(`[SX PROXY] History budget: ${historyTokenBudget} tokens (freeModel=${isFreeModel})`);
 
@@ -2099,9 +2143,10 @@ function startInternalProxy() {
                         try {
                             const pend = (reqConvKey && loopGuardPending[reqConvKey]) || null;
                             if (pend && Array.isArray(contents)) {
-                                contents.push({ role: 'user', parts: [{ text: makeLoopNudge(pend.name, pend.args, pend.count) }] });
+                                contents.push({ role: 'user', parts: [{ text: makeLoopNudge(pend.name, pend.args, pend.count, pend.type) }] });
                                 console.warn(`[SX PROXY] Loop breaker nudge injected for '${pend.name}' on ${reqConvKey}`);
                                 delete loopGuardPending[reqConvKey];
+                                if (loopGuardReadOnlyCounts && reqConvKey) loopGuardReadOnlyCounts[reqConvKey] = 0;
                             }
                         } catch(e){}
                         const historyCharsAfter = estimateContentChars(contents);
