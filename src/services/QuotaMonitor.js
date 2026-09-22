@@ -316,6 +316,16 @@ export class QuotaMonitor {
         } catch(e) { this._progressFailTs = Date.now(); return null; }
     }
 
+    /** Seconds since last streamed chunk if a stream is active, else 0. */
+    streamElapsedSec() {
+        try {
+            if (this._streamActive && (Date.now() - (this._lastStreamTs || 0) < 45000)) {
+                return Math.max(0, Math.round((Date.now() - this._lastStreamTs) / 1000));
+            }
+        } catch(e) {}
+        return 0;
+    }
+
     async refreshSentEstimate(cleanConvId, modelId) {
         if (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft') return null;
         try {
@@ -534,6 +544,17 @@ export class QuotaMonitor {
                         tokens: fmt(sTok),
                         percent: `${sPct}%`
                     });
+                    const hist = Array.isArray(sentEntry.sent.history) ? sentEntry.sent.history.filter(Number.isFinite) : [];
+                    if (hist.length >= 2) {
+                        const avg = Math.round(hist.reduce((a, b) => a + b, 0) / hist.length);
+                        const aPct = ((avg / data.totalContext) * 100).toFixed(1);
+                        itemsToRender.unshift({
+                            label: `Ortalama gönderim (son ${hist.length})`,
+                            color: '#5eead4',
+                            tokens: fmt(avg),
+                            percent: `${aPct}%`
+                        });
+                    }
                 }
             } catch(e) {}
             if (liveMetrics?.draftTokens > 0) {

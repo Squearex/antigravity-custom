@@ -11,6 +11,7 @@ export class PerfMonitor {
         this._perfStatsCache = {};
         this._latestLivePerf = null;
         this._observer = null;
+        this._perfHistory = {}; // convKey -> [last 20 measured stats] for averages
     }
 
     init() {
@@ -174,6 +175,13 @@ export class PerfMonitor {
         this._perfStatsCache[cleanConvId || 'new'] = measured;
         this._perfStatsCache['last'] = measured;
         this._latestLivePerf = measured;
+        // Rolling history for per-conversation averages
+        try {
+            const hk = cleanConvId || 'new';
+            if (!this._perfHistory[hk]) this._perfHistory[hk] = [];
+            this._perfHistory[hk].push(measured);
+            if (this._perfHistory[hk].length > 20) this._perfHistory[hk].splice(0, this._perfHistory[hk].length - 20);
+        } catch(e) {}
 
         try {
             localStorage.setItem('sx_last_perf_stats', JSON.stringify(measured));
@@ -376,6 +384,22 @@ export class PerfMonitor {
                 tpsBadge.innerText = `${stats.tps || 0} TPS`;
             }
 
+            // Conversation average across measured messages
+            try {
+                const hist = (this._perfHistory[cleanConvId] || []).filter(s => s && s.ttftMs > 0);
+                if (hist.length >= 2) {
+                    const avgTps = (hist.reduce((a, s) => a + (Number(s.tps) || 0), 0) / hist.length).toFixed(1);
+                    const avgTtft = Math.round(hist.reduce((a, s) => a + (Number(s.ttftMs) || 0), 0) / hist.length);
+                    const avgTok = Math.round(hist.reduce((a, s) => a + (Number(s.completionTokens) || 0), 0) / hist.length);
+                    listEl.innerHTML += `
+                        <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;margin-top:4px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);">
+                            <span style="color:#94a3b8;">Sohbet ortalaması (${hist.length} mesaj):</span>
+                            <span style="color:#f8fafc;font-family:ui-monospace,monospace;font-weight:600;">${avgTps} TPS <span style="color:#64748b;font-size:11px;">• ${avgTtft}ms • ~${avgTok} tok</span></span>
+                        </div>
+                    `;
+                }
+            } catch(e) {}
+
             const ttftSec = (stats.ttftMs / 1000).toFixed(2);
             const totalSec = (stats.totalMs / 1000).toFixed(2);
 
@@ -428,10 +452,18 @@ export class PerfMonitor {
         const cleanConvId = (convKey || '').replace(/^conv_/, '');
         const stats = this.getLatestStats(cleanConvId);
 
+        // Live state while the model is streaming (ticks every 1.2s via interval)
+        let liveSuffix = '';
+        try {
+            const elapsed = window.SX_SDK?.quota?.streamElapsedSec?.() || 0;
+            const streaming = elapsed > 0;
+            if (streaming) liveSuffix = ` • Üretiliyor… (${elapsed}sn)`;
+        } catch(e) {}
+
         if (stats && stats.ttftMs) {
-            perfBtn.title = `Model Performansı: ${stats.tps || 0} TPS, TTFT ${stats.ttftMs}ms (Tıkla)`;
+            perfBtn.title = `Model Performansı: ${stats.tps || 0} TPS, TTFT ${stats.ttftMs}ms (Tıkla)${liveSuffix}`;
         } else {
-            perfBtn.title = 'Model Performansı (TTFT, TPS) (Tıkla)';
+            perfBtn.title = `Model Performansı (TTFT, TPS) (Tıkla)${liveSuffix}`;
         }
     }
 }

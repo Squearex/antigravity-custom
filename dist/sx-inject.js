@@ -1527,6 +1527,16 @@
         return null;
       }
     }
+    /** Seconds since last streamed chunk if a stream is active, else 0. */
+    streamElapsedSec() {
+      try {
+        if (this._streamActive && Date.now() - (this._lastStreamTs || 0) < 45e3) {
+          return Math.max(0, Math.round((Date.now() - this._lastStreamTs) / 1e3));
+        }
+      } catch (e) {
+      }
+      return 0;
+    }
     async refreshSentEstimate(cleanConvId, modelId) {
       if (!cleanConvId || cleanConvId === "new" || cleanConvId === "draft") return null;
       try {
@@ -1726,6 +1736,17 @@
               tokens: fmt(sTok),
               percent: `${sPct}%`
             });
+            const hist = Array.isArray(sentEntry.sent.history) ? sentEntry.sent.history.filter(Number.isFinite) : [];
+            if (hist.length >= 2) {
+              const avg = Math.round(hist.reduce((a, b) => a + b, 0) / hist.length);
+              const aPct = (avg / data.totalContext * 100).toFixed(1);
+              itemsToRender.unshift({
+                label: `Ortalama g\xF6nderim (son ${hist.length})`,
+                color: "#5eead4",
+                tokens: fmt(avg),
+                percent: `${aPct}%`
+              });
+            }
           }
         } catch (e) {
         }
@@ -1767,6 +1788,7 @@
       this._perfStatsCache = {};
       this._latestLivePerf = null;
       this._observer = null;
+      this._perfHistory = {};
     }
     init() {
       document.addEventListener("click", (e) => {
@@ -1930,6 +1952,13 @@
       this._perfStatsCache[cleanConvId || "new"] = measured;
       this._perfStatsCache["last"] = measured;
       this._latestLivePerf = measured;
+      try {
+        const hk = cleanConvId || "new";
+        if (!this._perfHistory[hk]) this._perfHistory[hk] = [];
+        this._perfHistory[hk].push(measured);
+        if (this._perfHistory[hk].length > 20) this._perfHistory[hk].splice(0, this._perfHistory[hk].length - 20);
+      } catch (e) {
+      }
       try {
         localStorage.setItem("sx_last_perf_stats", JSON.stringify(measured));
       } catch (e) {
@@ -2107,6 +2136,21 @@
         if (tpsBadge) {
           tpsBadge.innerText = `${stats.tps || 0} TPS`;
         }
+        try {
+          const hist = (this._perfHistory[cleanConvId] || []).filter((s) => s && s.ttftMs > 0);
+          if (hist.length >= 2) {
+            const avgTps = (hist.reduce((a, s) => a + (Number(s.tps) || 0), 0) / hist.length).toFixed(1);
+            const avgTtft = Math.round(hist.reduce((a, s) => a + (Number(s.ttftMs) || 0), 0) / hist.length);
+            const avgTok = Math.round(hist.reduce((a, s) => a + (Number(s.completionTokens) || 0), 0) / hist.length);
+            listEl.innerHTML += `
+                        <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;margin-top:4px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);">
+                            <span style="color:#94a3b8;">Sohbet ortalamas\u0131 (${hist.length} mesaj):</span>
+                            <span style="color:#f8fafc;font-family:ui-monospace,monospace;font-weight:600;">${avgTps} TPS <span style="color:#64748b;font-size:11px;">\u2022 ${avgTtft}ms \u2022 ~${avgTok} tok</span></span>
+                        </div>
+                    `;
+          }
+        } catch (e) {
+        }
         const ttftSec = (stats.ttftMs / 1e3).toFixed(2);
         const totalSec = (stats.totalMs / 1e3).toFixed(2);
         let speedQuality = "Normal";
@@ -2158,10 +2202,17 @@
       const convKey = this.models.getActiveConversationKey();
       const cleanConvId = (convKey || "").replace(/^conv_/, "");
       const stats = this.getLatestStats(cleanConvId);
+      let liveSuffix = "";
+      try {
+        const elapsed = window.SX_SDK?.quota?.streamElapsedSec?.() || 0;
+        const streaming = elapsed > 0;
+        if (streaming) liveSuffix = ` \u2022 \xDCretiliyor\u2026 (${elapsed}sn)`;
+      } catch (e) {
+      }
       if (stats && stats.ttftMs) {
-        perfBtn.title = `Model Performans\u0131: ${stats.tps || 0} TPS, TTFT ${stats.ttftMs}ms (T\u0131kla)`;
+        perfBtn.title = `Model Performans\u0131: ${stats.tps || 0} TPS, TTFT ${stats.ttftMs}ms (T\u0131kla)${liveSuffix}`;
       } else {
-        perfBtn.title = "Model Performans\u0131 (TTFT, TPS) (T\u0131kla)";
+        perfBtn.title = `Model Performans\u0131 (TTFT, TPS) (T\u0131kla)${liveSuffix}`;
       }
     }
   };

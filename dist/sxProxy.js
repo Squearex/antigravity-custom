@@ -66,7 +66,16 @@ function logHit(entry) {
 // Live context-ring support: per-conversation generated chars while streaming,
 // and the last post-trim sent size (what the model actually received).
 const streamProgress = {}; // convKey -> { chars, ts }
-const lastSentEstimate = {}; // convKey -> { tokens, model, ts }
+const lastSentEstimate = {}; // convKey -> { tokens, model, ts, history: [last 10] }
+function recordSentEstimate(convKey, tokens, model) {
+    if (!convKey || !(tokens > 0)) return;
+    try {
+        const prev = lastSentEstimate[convKey];
+        const history = Array.isArray(prev?.history) ? prev.history.slice(-9) : [];
+        history.push(Math.round(tokens));
+        lastSentEstimate[convKey] = { tokens: Math.round(tokens), model: model || '?', ts: Date.now(), history };
+    } catch(e){}
+}
 function bumpStreamProgress(convKey, chars) {
     if (!convKey || !chars) return;
     try {
@@ -1790,11 +1799,7 @@ function startInternalProxy() {
                             budget: historyTokenBudget,
                         });
                         if (reqConvKey) {
-                            lastSentEstimate[reqConvKey] = {
-                                tokens: overheadTokens + historyTokensAfter,
-                                model: customModel?.modelId || customModel?.id || '?',
-                                ts: Date.now(),
-                            };
+                            recordSentEstimate(reqConvKey, overheadTokens + historyTokensAfter, customModel?.modelId || customModel?.id);
                         }
 
                         const proto = (provider.protocol || 'openai').toLowerCase();
@@ -1869,13 +1874,13 @@ function startInternalProxy() {
                                 learnedHistoryBudget[budgetKey] = anthBudget;
                             }
 
-                            if (!apiRes.ok) {
+                            if (!apiRes || !apiRes.ok) {
                                 const errTxt = lastErrTxt || `HTTP ${lastErrStatus}`;
                                 console.error(`[SX PROXY] Anthropic upstream error ${lastErrStatus}:`, errTxt);
                                 const errChunk = JSON.stringify({
                                     response: {
                                         candidates: [{
-                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü (HTTP ${lastErrStatus}): ${errTxt}` }] },
+                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü${lastErrStatus ? ` (HTTP ${lastErrStatus})` : ''}: ${errTxt}` }] },
                                             finishReason: 'STOP'
                                         }]
                                     }
@@ -1995,11 +2000,7 @@ function startInternalProxy() {
                                 finalEstimatedTokens: Math.ceil((finalMsgChars + finalToolsChars) / 1.55),
                             });
                             if (reqConvKey) {
-                                lastSentEstimate[reqConvKey] = {
-                                    tokens: Math.ceil((finalMsgChars + finalToolsChars) / 1.55),
-                                    model: customModel?.modelId || customModel?.id || '?',
-                                    ts: Date.now(),
-                                };
+                                recordSentEstimate(reqConvKey, Math.ceil((finalMsgChars + finalToolsChars) / 1.55), customModel?.modelId || customModel?.id);
                             }
 
                             const cleanBase = (provider.baseUrl || 'https://api.openai.com/v1').replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
@@ -2067,13 +2068,13 @@ function startInternalProxy() {
                                 learnedHistoryBudget[budgetKey] = attemptBudget;
                             }
 
-                            if (!apiRes.ok) {
+                            if (!apiRes || !apiRes.ok) {
                                 const errTxt = lastErrTxt || `HTTP ${lastErrStatus}`;
                                 console.error(`[SX PROXY] OpenAI upstream error ${lastErrStatus}:`, errTxt);
                                 const errChunk = JSON.stringify({
                                     response: {
                                         candidates: [{
-                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü (HTTP ${lastErrStatus}): ${errTxt}` }] },
+                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü${lastErrStatus ? ` (HTTP ${lastErrStatus})` : ''}: ${errTxt}` }] },
                                             finishReason: 'STOP'
                                         }]
                                     }
