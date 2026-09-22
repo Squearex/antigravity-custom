@@ -105,13 +105,13 @@ const LOCAL_KB = {
 };
 
 /**
- * OpenCode Zen metadata — doc-verified facts.
- * Source: https://opencode.ai/docs/tr/zen/  (+ live catalog https://opencode.ai/zen/v1/models, auth-free)
- * - `ctx` tier-verified where the pricing table shows an explicit "(≤ X tokens)" split,
- *   otherwise same-vendor family anchor. ctx:0 = unknown (never faked).
- * - `vis` true only for natively multimodal families or explicit vision variants.
- * - `tools` true for all chat/coding endpoints (/responses, /messages, /chat/completions),
- *   false only for /systemone (jev) which returns state evals, not tool calls.
+ * OpenCode Zen metadata — provider SERVING values win over vendor-native windows.
+ * Source: models.dev `opencode` section (per-provider serving caps) + https://opencode.ai/docs/tr/zen/
+ * Rule: exact Zen IDs (esp. `-free`) are Zen-scoped, so the Zen serving cap is authoritative.
+ *   Vendor-native rows stay only for base IDs usable on other providers.
+ *   Pricing tiers (e.g. "≤272K") are BILLING tiers, not windows — never used as context.
+ * Verified examples: gpt-5.5 serves 1050000 (tier says 272K); grok-4.5 serves 500000 (tier says 200K).
+ * Authenticated GET /v1/models returns id-only records — OpenCode sends no capability fields.
  */
 const ZEN_META = {
     // GPT-5.x / 6 family — ≤272K tier in pricing table
@@ -119,7 +119,7 @@ const ZEN_META = {
     'gpt-5.6-sol': { ctx: 272000, vis: true, tools: true },
     'gpt-5.6-terra': { ctx: 272000, vis: true, tools: true },
     'gpt-5.6-luna': { ctx: 272000, vis: true, tools: true },
-    'gpt-5.5': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.5': { ctx: 1050000, vis: true, tools: true },
     'gpt-5.5-pro': { ctx: 272000, vis: true, tools: true },
     'gpt-5.4': { ctx: 272000, vis: true, tools: true },
     'gpt-5.4-pro': { ctx: 272000, vis: true, tools: true },
@@ -157,34 +157,42 @@ const ZEN_META = {
     'gemini-3.5-flash-lite': { ctx: 1048576, vis: true, tools: true },
     'gemini-3.1-pro': { ctx: 1048576, vis: true, tools: true },
     'gemini-3-flash': { ctx: 1048576, vis: true, tools: true },
-    // Grok — 4.5/4.6/4.7 show ≤200K tiers
+    // Grok — Zen serving caps (models.dev opencode section)
     'grok-4.7': { ctx: 200000, vis: true, tools: true },
-    'grok-4.6': { ctx: 200000, vis: true, tools: true },
-    'grok-4.5': { ctx: 200000, vis: true, tools: true },
-    'grok-build-0.1': { ctx: 131072, vis: true, tools: true },
-    // Xiaomi MiMo — vendor-verified: V2-Flash 256K text-only; V2.5 1M multimodal
-    'mimo-v2.6-flash-free': { ctx: 262144, vis: false, tools: true },
+    'grok-4.6': { ctx: 500000, vis: true, tools: true },
+    'grok-4.5': { ctx: 500000, vis: true, tools: true },
+    'grok-build-0.1': { ctx: 256000, vis: true, tools: true },
+    // Xiaomi MiMo — Zen serving caps (models.dev opencode section); base rows stay vendor-native
+    'mimo-v2.6-flash-free': { ctx: 200000, vis: true, tools: true },
     'mimo-v2.6-flash': { ctx: 262144, vis: false, tools: true },
-    'mimo-v2.5-free': { ctx: 1048576, vis: true, tools: true },
+    'mimo-v2.5-free': { ctx: 200000, vis: true, tools: true },
     'mimo-v2.5': { ctx: 1048576, vis: true, tools: true },
     // Muse Spark (Meta Model API) — 1M multimodal + parallel tool calls
     'muse-spark-1.3': { ctx: 1048576, vis: true, tools: true },
     'muse-spark-1.2': { ctx: 1048576, vis: true, tools: true },
     'muse-spark-1.3-contributor-free': { ctx: 1048576, vis: true, tools: true },
     'muse-spark-1.2-contributor-free': { ctx: 1048576, vis: true, tools: true },
-    // DeepSeek V4 family — official 1M context; text-only except vision-exp
-    'deepseek-v4.1-flash': { ctx: 1048576, vis: false, tools: true },
+    // DeepSeek V4 family — Zen serving caps (free tier capped at 200K)
+    'deepseek-v4.1-flash': { ctx: 1048576, vis: true, tools: true },
     'deepseek-v4-pro': { ctx: 1048576, vis: false, tools: true },
     'deepseek-v4-flash': { ctx: 1048576, vis: false, tools: true },
-    'deepseek-v4-flash-free': { ctx: 1048576, vis: false, tools: true },
+    'deepseek-v4-flash-free': { ctx: 200000, vis: false, tools: true },
     'deepseek-v4-flash-vision-exp': { ctx: 1048576, vis: true, tools: true },
     // Ling-3.0 (AntLing/InclusionAI) — 256K, text in/out
     'ling-3.0-flash-fin-free': { ctx: 262144, vis: false, tools: true },
-    // NVIDIA Nemotron 3 — 1M, text-only variants
+    // NVIDIA Nemotron 3 — Zen serving caps (lightning-free capped at 256K)
     'nemotron-3-ultra-free': { ctx: 1048576, vis: false, tools: true },
-    'nemotron-3.5-lightning-free': { ctx: 1048576, vis: false, tools: true },
+    'nemotron-3.5-lightning-free': { ctx: 262144, vis: false, tools: true },
     // Big Pickle — 200K text-only stealth (models.dev)
     'big-pickle': { ctx: 200000, vis: false, tools: true },
+    // Qwen on Zen — serving caps (models.dev opencode section)
+    'qwen3.8-flash': { ctx: 1000000, vis: true, tools: true },
+    'qwen3.5-plus': { ctx: 262144, vis: true, tools: true },
+    'qwen3.6-plus': { ctx: 262144, vis: true, tools: true },
+    // Kimi / GLM / MiniMax on Zen — serving caps
+    'kimi-k2.5': { ctx: 262144, vis: true, tools: true },
+    'glm-5.2': { ctx: 1000000, vis: false, tools: true },
+    'minimax-m2.7': { ctx: 204800, vis: false, tools: true },
     // Jev — /systemone eval model, no tool calls, no images
     'jev-1.13': { ctx: 0, vis: false, tools: false },
     'jev-1.13-free': { ctx: 0, vis: false, tools: false },
