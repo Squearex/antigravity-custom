@@ -2522,11 +2522,12 @@ function startInternalProxy() {
                                             console.error('[SX PROXY] Upstream SSE error event:', errMsg);
                                 const errMsg429 = (lastErrStatus === 429) ? ' (Günlük kota doldu — yarın sıfırlanır; faklı model deneyin)' : '';
                                 const errMsg429b = (lastErrStatus === 429) ? ' (Günlük kota doldu — yarın sıfırlanır; faklı model deneyin)' : '';
+                                const errMsgOpenRouter429 = (lastErrStatus === 429 && /openrouter|thinkingmachines|inkling/i.test(String(errTxt || '').slice(0, 300))) ? ' (OpenRouter Thinking Machines günlük limiti doldu — bu limit credits ile aşılama; önceki gün sonuna kadar bekleyin veya başka model seçin)' : '';
                                 const errMsg413b = (lastErrStatus === 413 && /ITPM|input tokens per minute/i.test(String(lastErrTxt || '').slice(0, 300))) ? ' (Groq ITPM limiti aşıldı: mesajı kısaltın veya farklı model deneyin)' : '';
                                 const errChunk = JSON.stringify({
                                     response: {
                                         candidates: [{
-                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü${lastErrStatus ? ` (HTTP ${lastErrStatus})` : ''}: ${errTxt}${errMsg429b}${errMsg413b}` }] },
+                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü${lastErrStatus ? ` (HTTP ${lastErrStatus})` : ''}: ${errTxt}${errMsg429b}${errMsg413b}${errMsgOpenRouter429}` }] },
                                             finishReason: 'STOP'
                                         }]
                                     }
