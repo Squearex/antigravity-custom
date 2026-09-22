@@ -4113,7 +4113,11 @@
       return out;
     }
     /**
-     * Fill missing fields on stored models without overwriting user/API values.
+     * Fill missing fields AND refresh stale values on stored models.
+     * - 'manual' / 'api' sourced entries are never touched.
+     * - Missing fields are always filled when resolvable.
+     * - Existing fields are overwritten only when the stored source is refreshable
+     *   (old guesses) and the fresh resolution is authoritative.
      * Returns { list, changed }.
      */
     async backfillStored(models, opts = {}) {
@@ -4125,28 +4129,33 @@
           this.ensureOpenRouterCatalog().catch(() => null)
         ]);
       }
+      const REFRESHABLE = /* @__PURE__ */ new Set([void 0, null, "", "local", "partial", "none", "zen", "modelsdev", "openrouter"]);
       let changed = false;
       const list = models.map((m) => ({ ...m }));
       for (const m of list) {
+        if (m.metaSource === "manual" || m.metaSource === "api") continue;
         const id = m.modelId || m.id || "";
-        const needCtx = !(Number(m.contextLength) > 0);
-        const needVis = typeof m.supportsImages !== "boolean";
-        const needTool = typeof m.supportsTools !== "boolean";
-        if (!needCtx && !needVis && !needTool) continue;
-        const filled = await this.enrichAsync(m, opts);
-        if (Number(filled.contextLength) > 0 && !Number(m.contextLength)) {
-          m.contextLength = Number(filled.contextLength);
-          changed = true;
+        if (!id) continue;
+        const fresh = await this.enrichAsync({ id, name: m.name || id }, opts);
+        const authoritative = fresh.metaSource && fresh.metaSource !== "none" && fresh.metaSource !== "partial";
+        const canOverwrite = REFRESHABLE.has(m.metaSource) && authoritative;
+        let touched = false;
+        if (Number(fresh.contextLength) > 0 && (!Number(m.contextLength) || canOverwrite && Number(m.contextLength) !== Number(fresh.contextLength))) {
+          m.contextLength = Number(fresh.contextLength);
+          touched = true;
         }
-        if (typeof m.supportsImages !== "boolean" && typeof filled.supportsImages === "boolean") {
-          m.supportsImages = filled.supportsImages;
-          changed = true;
+        if (typeof fresh.supportsImages === "boolean" && (typeof m.supportsImages !== "boolean" || canOverwrite && m.supportsImages !== fresh.supportsImages)) {
+          m.supportsImages = fresh.supportsImages;
+          touched = true;
         }
-        if (typeof m.supportsTools !== "boolean" && typeof filled.supportsTools === "boolean") {
-          m.supportsTools = filled.supportsTools;
-          changed = true;
+        if (typeof fresh.supportsTools === "boolean" && (typeof m.supportsTools !== "boolean" || canOverwrite && m.supportsTools !== fresh.supportsTools)) {
+          m.supportsTools = fresh.supportsTools;
+          touched = true;
         }
-        void id;
+        if (touched) {
+          changed = true;
+          if (!m.metaSource || canOverwrite) m.metaSource = fresh.metaSource || m.metaSource;
+        }
       }
       return { list, changed };
     }
