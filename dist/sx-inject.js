@@ -4560,7 +4560,7 @@
   };
 
   // src/index.js
-  var SX_BUILD = "2026.09.22-r11";
+  var SX_BUILD = "2026.09.22-r12";
   (function bootstrapSX() {
     const logger = new Logger("SX");
     logger.info("Core", `Bootstrapping SX Core SDK v2.0 (build ${SX_BUILD})...`);
