@@ -345,6 +345,53 @@
         return null;
       }
     }
+    proxyFetch(targetUrl, method = "GET", headers = {}, body) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${this.baseUrl}/proxy-fetch`, true);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.timeout = 15e3;
+        xhr.onload = () => {
+          const status = xhr.status;
+          const responseText = xhr.responseText;
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            text: () => Promise.resolve(responseText),
+            json: () => {
+              try {
+                return Promise.resolve(JSON.parse(responseText));
+              } catch (e) {
+                return Promise.reject(e);
+              }
+            }
+          });
+        };
+        xhr.onerror = () => reject(new Error("Network error reaching sxProxy"));
+        xhr.ontimeout = () => reject(new Error("Timeout reaching sxProxy"));
+        xhr.send(JSON.stringify({ url: targetUrl, method, headers, body }));
+      });
+    }
+    async fetchModels(baseUrl, apiKey, protocol, modelsPath) {
+      const proto = (protocol || "openai").toLowerCase();
+      const normalBase = (baseUrl || "").replace(/\/chat\/completions\/?$/, "").replace(/\/$/, "");
+      let url, headers;
+      if (proto === "anthropic") {
+        url = (normalBase || "https://api.anthropic.com") + (modelsPath || "/v1/models");
+        headers = { "x-api-key": apiKey || "", "anthropic-version": "2023-06-01" };
+      } else {
+        url = (normalBase || "https://api.openai.com/v1") + (modelsPath || "/models");
+        headers = { "Authorization": "Bearer " + (apiKey || "") };
+      }
+      const resp = await this.proxyFetch(url, "GET", headers);
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const data = await resp.json();
+      const list = data.data || data.models || (Array.isArray(data) ? data : []);
+      return list.map((m) => ({
+        id: m.id || m.name || String(m),
+        name: m.display_name || m.name || m.id || String(m)
+      })).filter((m) => m.id);
+    }
   };
 
   // src/services/ThemeEngine.js
@@ -2583,6 +2630,33 @@
       const provOptions = providers.map(
         (p) => `<option value="${p.id}"${existing && existing.providerId === p.id ? " selected" : ""}>${this.sxEsc(p.name)} (${this.sxEsc(p.protocol)})</option>`
       ).join("");
+      const editFields = `
+            <div class="sx-field">
+                <label class="sx-label">Model ID</label>
+                <input class="sx-input" id="sx-m-id" value="${this.sxEsc(existing?.modelId || "")}" placeholder="\xF6rnek: anthropic/claude-3-7-sonnet" />
+            </div>
+            <div class="sx-field">
+                <label class="sx-label">G\xF6r\xFCnt\xFC Ad\u0131</label>
+                <input class="sx-input" id="sx-m-name" value="${this.sxEsc(existing?.name || "")}" placeholder="\xF6rnek: Claude 3.7 Sonnet" />
+            </div>`;
+      const addFields = `
+            <div class="sx-field">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                    <label class="sx-label" style="margin:0;">Model Listesi</label>
+                    <button type="button" class="sx-btn" id="sx-m-fetch" style="padding:3px 10px;font-size:11px;">&#8595; Listele</button>
+                </div>
+                <input class="sx-input" id="sx-m-filter" placeholder="Model ara..." style="margin-bottom:6px;display:none;" />
+                <div id="sx-m-check-list" style="max-height:200px;overflow-y:auto;border:1px solid rgba(255,255,255,0.09);border-radius:7px;display:none;"></div>
+                <div id="sx-m-bulk-hint" style="font-size:12px;color:rgba(255,255,255,0.3);padding:8px 0 4px 0;">Provider'dan model listesi y\xFCkle veya a\u015Fa\u011F\u0131da manuel gir.</div>
+            </div>
+            <div class="sx-field">
+                <label class="sx-label">Manuel Model ID (opsiyonel)</label>
+                <input class="sx-input" id="sx-m-id" placeholder="\xF6rnek: anthropic/claude-3-7-sonnet" />
+            </div>
+            <div class="sx-field">
+                <label class="sx-label">G\xF6r\xFCnt\xFC Ad\u0131 (opsiyonel)</label>
+                <input class="sx-input" id="sx-m-name" placeholder="\xF6rnek: Claude 3.7 Sonnet" />
+            </div>`;
       overlay.innerHTML = `
             <div class="sx-modal" style="width:500px;">
                 <div class="sx-modal-title">${isEdit ? "Model D\xFCzenle" : "Model Ekle"}</div>
@@ -2590,14 +2664,7 @@
                     <label class="sx-label">Provider</label>
                     <select class="sx-select" id="sx-m-prov">${provOptions}</select>
                 </div>
-                <div class="sx-field">
-                    <label class="sx-label">Model ID</label>
-                    <input class="sx-input" id="sx-m-id" value="${this.sxEsc(existing?.modelId || "")}" placeholder="\xF6rnek: anthropic/claude-3-7-sonnet" />
-                </div>
-                <div class="sx-field">
-                    <label class="sx-label">G\xF6r\xFCnt\xFC Ad\u0131</label>
-                    <input class="sx-input" id="sx-m-name" value="${this.sxEsc(existing?.name || "")}" placeholder="\xF6rnek: Claude 3.7 Sonnet" />
-                </div>
+                ${isEdit ? editFields : addFields}
                 <div class="sx-modal-actions">
                     <button type="button" class="sx-btn" id="sx-m-cancel">\u0130ptal</button>
                     <button type="button" class="sx-btn sx-btn-primary" id="sx-m-save">${isEdit ? "Kaydet" : "Ekle"}</button>
@@ -2605,31 +2672,112 @@
             </div>
         `;
       document.body.appendChild(overlay);
+      let allFetchedModels = [];
+      const checkedIds = /* @__PURE__ */ new Set();
+      const self = this;
+      function renderChecklist(filterText) {
+        const list = overlay.querySelector("#sx-m-check-list");
+        if (!list) return;
+        const filtered = allFetchedModels.filter(
+          (m) => m.id.toLowerCase().includes(filterText) || (m.name || "").toLowerCase().includes(filterText)
+        ).slice(0, 300);
+        if (!filtered.length) {
+          list.innerHTML = '<div style="padding:12px;color:rgba(255,255,255,0.3);font-size:12px;text-align:center;">Sonu\xE7 yok</div>';
+          return;
+        }
+        list.innerHTML = filtered.map(
+          (m) => '<label style="display:flex;align-items:center;gap:9px;padding:7px 12px;cursor:pointer;"><input type="checkbox" data-id="' + self.sxEsc(m.id) + '" data-name="' + self.sxEsc(m.name || m.id) + '"' + (checkedIds.has(m.id) ? " checked" : "") + ' style="width:14px;height:14px;accent-color:#38bdf8;cursor:pointer;flex-shrink:0;" /><span style="min-width:0;overflow:hidden;"><div style="font-family:ui-monospace,monospace;font-size:11.5px;color:rgba(255,255,255,0.88);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + self.sxEsc(m.id) + "</div>" + (m.name && m.name !== m.id ? '<div style="font-size:10px;color:rgba(255,255,255,0.38);">' + self.sxEsc(m.name) + "</div>" : "") + "</span></label>"
+        ).join("");
+        list.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+          cb.onchange = () => {
+            if (cb.checked) checkedIds.add(cb.dataset.id);
+            else checkedIds.delete(cb.dataset.id);
+            const bulkHint = overlay.querySelector("#sx-m-bulk-hint");
+            if (bulkHint && checkedIds.size > 0) {
+              bulkHint.textContent = checkedIds.size + " model se\xE7ildi \u2014 Ekle ile toplu eklenecek.";
+            }
+          };
+        });
+      }
+      const fetchBtn = overlay.querySelector("#sx-m-fetch");
+      if (fetchBtn) fetchBtn.onclick = async () => {
+        const provId = overlay.querySelector("#sx-m-prov").value;
+        const prov = providers.find((p) => p.id === provId);
+        if (!prov) {
+          alert("\xD6nce provider se\xE7in.");
+          return;
+        }
+        fetchBtn.disabled = true;
+        fetchBtn.textContent = "Y\xFCkleniyor...";
+        try {
+          allFetchedModels = await self.network.fetchModels(prov.baseUrl, prov.apiKey, prov.protocol, prov.modelsPath);
+          const hint = overlay.querySelector("#sx-m-bulk-hint");
+          const filterEl2 = overlay.querySelector("#sx-m-filter");
+          const listEl = overlay.querySelector("#sx-m-check-list");
+          if (hint) hint.style.display = "none";
+          if (filterEl2) filterEl2.style.display = "";
+          if (listEl) listEl.style.display = "";
+          renderChecklist("");
+        } catch (e) {
+          alert("Listelenemedi: " + e.message);
+        } finally {
+          fetchBtn.disabled = false;
+          fetchBtn.innerHTML = "&#8595; Listele";
+        }
+      };
+      const filterEl = overlay.querySelector("#sx-m-filter");
+      if (filterEl) filterEl.oninput = (e) => renderChecklist(e.target.value.toLowerCase().trim());
       overlay.querySelector("#sx-m-cancel").onclick = () => overlay.remove();
       overlay.onclick = (e) => {
         if (e.target === overlay) overlay.remove();
       };
       overlay.querySelector("#sx-m-save").onclick = () => {
         const provId = overlay.querySelector("#sx-m-prov").value;
-        const modelId = overlay.querySelector("#sx-m-id").value.trim();
-        const name = overlay.querySelector("#sx-m-name").value.trim();
-        if (!modelId || !name) {
-          alert("Model ID ve ad zorunludur.");
-          return;
-        }
-        const list = this.state.getModels();
-        const entry = { id: existing ? existing.id : "m_" + Date.now(), providerId: provId, name, modelId, directMode: true };
+        const list = self.state.getModels();
         if (isEdit) {
+          const name = overlay.querySelector("#sx-m-name").value.trim();
+          const modelId = overlay.querySelector("#sx-m-id").value.trim();
+          if (!name || !modelId) {
+            alert("Model ID ve ad zorunludur.");
+            return;
+          }
+          const entry = { id: existing.id, providerId: provId, name, modelId, directMode: true };
           const idx = list.findIndex((m) => m.id === existing.id);
           if (idx >= 0) list[idx] = entry;
           else list.push(entry);
-        } else {
-          list.push(entry);
+          self.state.setModels(list);
+          overlay.remove();
+          onSave && onSave();
+          return;
         }
-        this.state.setModels(list);
+        if (checkedIds.size > 0) {
+          checkedIds.forEach((id) => {
+            const fm = allFetchedModels.find((m) => m.id === id);
+            list.push({
+              id: "m_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+              providerId: provId,
+              name: fm ? fm.name || id : id,
+              modelId: id,
+              directMode: true
+            });
+          });
+          self.state.setModels(list);
+          overlay.remove();
+          onSave && onSave();
+          return;
+        }
+        const manualId = (overlay.querySelector("#sx-m-id") || {}).value?.trim();
+        const manualName = (overlay.querySelector("#sx-m-name") || {}).value?.trim();
+        if (!manualId) {
+          alert("Model ID girin veya listeden en az bir model se\xE7in.");
+          return;
+        }
+        list.push({ id: "m_" + Date.now(), providerId: provId, name: manualName || manualId, modelId: manualId, directMode: true });
+        self.state.setModels(list);
         overlay.remove();
         onSave && onSave();
       };
+      setTimeout(() => overlay.querySelector("#sx-m-prov").focus(), 50);
     }
     trySXModelsSettingsInject() {
       const dialog = document.querySelector('[role="dialog"]');

@@ -1043,6 +1043,68 @@ function startInternalProxy() {
                 return;
             }
 
+            // Voice transcription endpoint
+            // POST /sx/transcribe-audio?lang=tr-TR (receives WAV audio binary)
+            if (url.startsWith('/sx/transcribe-audio') && req.method === 'POST') {
+                const u = new URL('http://localhost' + url);
+                const lang = u.searchParams.get('lang') || 'tr-TR';
+
+                let bodyChunks = [];
+                req.on('data', chunk => bodyChunks.push(chunk));
+                req.on('end', () => {
+                    try {
+                        const audioBuffer = Buffer.concat(bodyChunks);
+                        if (audioBuffer.length < 100) {
+                            res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                            res.end(JSON.stringify({ ok: false, error: 'Empty audio buffer' }));
+                            return;
+                        }
+
+                        const tempWav = path.join(require('os').tmpdir(), `sx_rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.wav`);
+                        fs.writeFileSync(tempWav, audioBuffer);
+
+                        const pyCandidates = [
+                            'C:\\Users\\squea\\AppData\\Local\\Programs\\Python\\Python312\\python.exe',
+                            'C:\\Users\\squea\\AppData\\Local\\Programs\\Python\\Python313\\python.exe',
+                            'python.exe',
+                            'python'
+                        ];
+                        let pythonBin = pyCandidates.find(p => {
+                            try { return fs.existsSync(p); } catch(e) { return false; }
+                        }) || 'python';
+
+                        const scriptPath = path.join(__dirname, 'transcribe.py');
+                        const { execFile } = require('child_process');
+
+                        execFile(pythonBin, [scriptPath, tempWav, lang], { timeout: 35000 }, (error, stdout, stderr) => {
+                            try { if (fs.existsSync(tempWav)) fs.unlinkSync(tempWav); } catch(e) {}
+
+                            if (error) {
+                                console.error('[SX PROXY Voice] Transcription exec error:', error, stderr);
+                                res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                                res.end(JSON.stringify({ ok: false, error: error.message }));
+                                return;
+                            }
+
+                            try {
+                                const parsed = JSON.parse(stdout.trim());
+                                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                                res.end(JSON.stringify(parsed));
+                            } catch(e) {
+                                console.error('[SX PROXY Voice] Failed to parse Python output:', stdout);
+                                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                                res.end(JSON.stringify({ ok: true, text: stdout.trim() }));
+                            }
+                        });
+                    } catch(err) {
+                        console.error('[SX PROXY Voice] Request error:', err);
+                        res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ ok: false, error: err.message }));
+                    }
+                });
+                return;
+            }
+
             // CORS proxy: lets the renderer make requests to external APIs without CORS errors
             // POST /sx/proxy-fetch  body: { url, method, headers, body? }
             if (url === '/sx/proxy-fetch' && req.method === 'POST') {

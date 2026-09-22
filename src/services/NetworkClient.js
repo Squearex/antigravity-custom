@@ -96,4 +96,50 @@ export class NetworkClient {
             return null;
         }
     }
+
+    proxyFetch(targetUrl, method = 'GET', headers = {}, body) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${this.baseUrl}/proxy-fetch`, true);
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.timeout = 15000;
+            xhr.onload = () => {
+                const status = xhr.status;
+                const responseText = xhr.responseText;
+                resolve({
+                    ok: status >= 200 && status < 300,
+                    status,
+                    text: () => Promise.resolve(responseText),
+                    json: () => {
+                        try { return Promise.resolve(JSON.parse(responseText)); }
+                        catch(e) { return Promise.reject(e); }
+                    }
+                });
+            };
+            xhr.onerror = () => reject(new Error('Network error reaching sxProxy'));
+            xhr.ontimeout = () => reject(new Error('Timeout reaching sxProxy'));
+            xhr.send(JSON.stringify({ url: targetUrl, method, headers, body }));
+        });
+    }
+
+    async fetchModels(baseUrl, apiKey, protocol, modelsPath) {
+        const proto = (protocol || 'openai').toLowerCase();
+        const normalBase = (baseUrl || '').replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
+        let url, headers;
+        if (proto === 'anthropic') {
+            url = (normalBase || 'https://api.anthropic.com') + (modelsPath || '/v1/models');
+            headers = { 'x-api-key': apiKey || '', 'anthropic-version': '2023-06-01' };
+        } else {
+            url = (normalBase || 'https://api.openai.com/v1') + (modelsPath || '/models');
+            headers = { 'Authorization': 'Bearer ' + (apiKey || '') };
+        }
+        const resp = await this.proxyFetch(url, 'GET', headers);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        const list = data.data || data.models || (Array.isArray(data) ? data : []);
+        return list.map(m => ({
+            id: m.id || m.name || String(m),
+            name: m.display_name || m.name || m.id || String(m)
+        })).filter(m => m.id);
+    }
 }
