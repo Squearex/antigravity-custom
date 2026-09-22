@@ -9,6 +9,16 @@ export class QuotaMonitor {
         this.logger = logger;
         this._contextDetailsCache = {};
         this._inFlightFetches = new Map();
+        this._progressInFlight = null;
+        this._streamActive = false;
+        this._lastStreamTs = 0;
+        this._sentCache = {};
+    }
+
+    _fmt(n) {
+        if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+        if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+        return String(Math.round(n));
     }
 
     init() {
@@ -77,28 +87,65 @@ export class QuotaMonitor {
         const activeId = this.models.getActiveModelForConversation(activeConvKey);
         const activeM = sxModels.find(m => m.id === activeId) || sxModels[0];
         const cleanConvId = (activeConvKey || '').replace(/^conv_/, '');
+        const cacheKey = (cleanConvId || 'new') + '_' + (activeM?.id || '');
 
         const metrics = this.calculateLiveContextMetrics(cleanConvId, activeM);
         this.updateContextRing(metrics);
 
         const pop = document.getElementById('sx-context-popover');
         if (pop && pop.isConnected) {
-            const cacheKey = (cleanConvId || 'new') + '_' + (activeM?.id || '');
-            const currentData = this._contextDetailsCache[cacheKey]?.data;
-            if (currentData) {
-                this.renderPopoverDetails(pop, currentData, metrics);
+            if (pop.dataset.convKey && pop.dataset.convKey !== cacheKey) {
+                // Conversation switched while popover open: rebind, never show stale conv data
+                pop.dataset.convKey = cacheKey;
+                this.refreshContextDetails(cleanConvId, activeM);
+                this.refreshSentEstimate(cleanConvId);
+            } else {
+                pop.dataset.convKey = cacheKey;
+                const currentData = this._contextDetailsCache[cacheKey]?.data;
+                if (currentData) {
+                    this.renderPopoverDetails(pop, currentData, metrics);
+                }
             }
         }
 
         // Proactive background fetch if not fresh chat and (cache missing or older than 12s)
         const isFresh = (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft');
         if (!isFresh) {
-            const cacheKey = cleanConvId + '_' + (activeM?.id || '');
             const cached = this._contextDetailsCache[cacheKey];
             const isStale = !cached || (Date.now() - (cached._time || 0) > 12000);
             if (isStale) {
                 this.refreshContextDetails(cleanConvId, activeM);
             }
+            const sentKey = 'sent_' + cleanConvId;
+            const sentCached = this._sentCache[sentKey];
+            if (!sentCached || (Date.now() - (sentCached._time || 0) > 30000)) {
+                this.refreshSentEstimate(cleanConvId);
+            }
+        }
+
+        // Live generation progress: moves the ring while the model streams
+        const wantLive = (pop && pop.isConnected) || this._streamActive || (Date.now() - (this._lastStreamTs || 0) < 45000);
+        if (wantLive && !isFresh && !this._progressInFlight) {
+            this._progressInFlight = this.fetchStreamProgress(cleanConvId).then(p => {
+                this._progressInFlight = null;
+                if (!p) { this._streamActive = false; return; }
+                this._streamActive = !!p.streaming;
+                if (p.streaming) this._lastStreamTs = Date.now();
+                const gen = p.genTokens || 0;
+                if (gen > 0 && (p.streaming || (Date.now() - this._lastStreamTs < 45000))) {
+                    const cur = this.calculateLiveContextMetrics(cleanConvId, activeM);
+                    const totalUsed = cur.totalUsed + gen;
+                    const pct = Math.min(100, (totalUsed / cur.totalContext) * 100);
+                    const live = { ...cur, totalUsed, percentExact: pct, percentNum: Math.round(pct), genTokens: gen,
+                        tooltip: cur.tooltip + ` [+${this._fmt(gen)} üretiliyor]` };
+                    this.updateContextRing(live);
+                    const popNow = document.getElementById('sx-context-popover');
+                    if (popNow && popNow.isConnected && popNow.dataset.convKey === cacheKey) {
+                        const d = this._contextDetailsCache[cacheKey]?.data;
+                        if (d) this.renderPopoverDetails(popNow, d, live);
+                    }
+                }
+            }).catch(() => { this._progressInFlight = null; this._streamActive = false; });
         }
     }
 
@@ -173,7 +220,8 @@ export class QuotaMonitor {
 
     calculateLiveContextMetrics(cleanConvId, targetModel) {
         const cacheKey = (cleanConvId || 'new') + '_' + (targetModel?.id || '');
-        const cached = this._contextDetailsCache[cacheKey]?.data;
+        const cacheEntry = this._contextDetailsCache[cacheKey];
+        const cached = cacheEntry?.data;
 
         const totalContext = cached ? cached.totalContext : (targetModel?.contextLength ? Number(targetModel.contextLength) : 262144);
         const baseUsed = (cached && !cached.isFreshChat) ? cached.usedTokens : 0;
@@ -214,8 +262,30 @@ export class QuotaMonitor {
             percentDisplay,
             tooltip,
             baseUsed,
-            cachedData: cached
+            cachedData: cached,
+            cacheAgeMs: cacheEntry ? (Date.now() - (cacheEntry._time || 0)) : null,
+            convId: cleanConvId || null
         };
+    }
+
+    async fetchStreamProgress(cleanConvId) {
+        if (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft') return null;
+        try {
+            const r = await this.network.get(`/get-stream-progress?convId=${encodeURIComponent(cleanConvId)}`);
+            return (r && r.ok) ? r : null;
+        } catch(e) { return null; }
+    }
+
+    async refreshSentEstimate(cleanConvId) {
+        if (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft') return null;
+        try {
+            const r = await this.network.get(`/get-sent-estimate?convId=${encodeURIComponent(cleanConvId)}`);
+            if (r && r.ok && r.sent) {
+                this._sentCache['sent_' + cleanConvId] = { sent: r.sent, _time: Date.now() };
+                return r.sent;
+            }
+        } catch(e) {}
+        return null;
     }
 
     async fetchContextDetails(cleanConvId, targetModel) {
@@ -284,6 +354,7 @@ export class QuotaMonitor {
         `;
 
         document.body.appendChild(pop);
+        pop.dataset.convKey = (cleanConvId || 'new') + '_' + (targetModel?.id || '');
 
         pop.querySelector('#sx-ctx-popover-header').onclick = () => {
             pop.remove();
@@ -318,6 +389,23 @@ export class QuotaMonitor {
             return String(Math.round(n));
         }
 
+        // Conversation identity + freshness line (proves per-conv isolation)
+        let convLine = pop.querySelector('#sx-ctx-convline');
+        if (!convLine) {
+            convLine = document.createElement('div');
+            convLine.id = 'sx-ctx-convline';
+            convLine.style.cssText = 'font-size:10.5px;color:rgba(255,255,255,0.35);font-family:ui-monospace,monospace;margin:-6px 0 10px 0;';
+            const bar = pop.querySelector('#sx-ctx-progress-bar')?.parentElement;
+            if (bar && bar.parentElement) bar.parentElement.insertBefore(convLine, bar.nextSibling);
+            else pop.appendChild(convLine);
+        }
+        try {
+            const shortConv = String(data.convId || liveMetrics?.convId || '').slice(0, 8) || '?';
+            const ageMs = liveMetrics?.cacheAgeMs;
+            const ageTxt = (ageMs == null) ? 'ölçülüyor' : (ageMs < 2000 ? 'az önce' : `${Math.round(ageMs / 1000)} sn önce`);
+            convLine.textContent = `sohbet ${shortConv} • ${ageTxt} güncellendi`;
+        } catch(e) {}
+
         const totalUsed = liveMetrics?.draftTokens > 0 ? liveMetrics.totalUsed : data.usedTokens;
         const pctNum = liveMetrics?.draftTokens > 0 ? liveMetrics.percentNum : data.percentNum;
         const pctExact = liveMetrics?.draftTokens > 0 ? liveMetrics.percentExact : (data.percentNum || 0);
@@ -338,6 +426,29 @@ export class QuotaMonitor {
         if (itemsList) {
             let html = '';
             const itemsToRender = [...data.items];
+            if (liveMetrics?.genTokens > 0) {
+                const genPct = ((liveMetrics.genTokens / data.totalContext) * 100).toFixed(1);
+                itemsToRender.unshift({
+                    label: 'Üretiliyor (canlı)',
+                    color: '#22d3ee',
+                    tokens: `+${fmt(liveMetrics.genTokens)}`,
+                    percent: `+${genPct}%`
+                });
+            }
+            try {
+                const convForSent = String(data.convId || liveMetrics?.convId || '');
+                const sentEntry = convForSent ? this._sentCache['sent_' + convForSent] : null;
+                if (sentEntry?.sent?.tokens > 0) {
+                    const sTok = sentEntry.sent.tokens;
+                    const sPct = ((sTok / data.totalContext) * 100).toFixed(1);
+                    itemsToRender.unshift({
+                        label: 'Son gönderim (modele giden)',
+                        color: '#2dd4bf',
+                        tokens: fmt(sTok),
+                        percent: `${sPct}%`
+                    });
+                }
+            } catch(e) {}
             if (liveMetrics?.draftTokens > 0) {
                 const draftPct = ((liveMetrics.draftTokens / data.totalContext) * 100).toFixed(1);
                 itemsToRender.unshift({

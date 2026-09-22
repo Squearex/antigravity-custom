@@ -63,6 +63,19 @@ function logHit(entry) {
     } catch(e) {}
 }
 
+// Live context-ring support: per-conversation generated chars while streaming,
+// and the last post-trim sent size (what the model actually received).
+const streamProgress = {}; // convKey -> { chars, ts }
+const lastSentEstimate = {}; // convKey -> { tokens, model, ts }
+function bumpStreamProgress(convKey, chars) {
+    if (!convKey || !chars) return;
+    try {
+        const p = streamProgress[convKey] || { chars: 0 };
+        p.chars += chars; p.ts = Date.now();
+        streamProgress[convKey] = p;
+    } catch(e){}
+}
+
 function getConvPerfFile() {
     try {
         return path.join(app.getPath('userData'), 'sx_conv_perf.json');
@@ -895,6 +908,35 @@ function startInternalProxy() {
                 return;
             }
 
+            if (url.startsWith('/sx/get-stream-progress') && req.method === 'GET') {
+                try {
+                    const u = new URL('http://localhost' + url);
+                    const convId = (u.searchParams.get('convId') || '').replace(/^conv_/, '');
+                    const p = streamProgress['conv_' + convId];
+                    const age = p ? (Date.now() - p.ts) : 999999;
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ ok: true, streaming: !!p && age < 15000, genTokens: p ? Math.round(p.chars / 3.5) : 0, ageMs: age }));
+                } catch(e) {
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ ok: false, streaming: false, genTokens: 0 }));
+                }
+                return;
+            }
+
+            if (url.startsWith('/sx/get-sent-estimate') && req.method === 'GET') {
+                try {
+                    const u = new URL('http://localhost' + url);
+                    const convId = (u.searchParams.get('convId') || '').replace(/^conv_/, '');
+                    const s = lastSentEstimate['conv_' + convId] || null;
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ ok: true, sent: s }));
+                } catch(e) {
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ ok: false, sent: null }));
+                }
+                return;
+            }
+
             if (url.startsWith('/sx/get-chat-context-details') && req.method === 'GET') {
                 try {
                     const u = new URL('http://localhost' + url);
@@ -1499,6 +1541,13 @@ function startInternalProxy() {
                             estTok: overheadTokens + historyTokensAfter,
                             budget: historyTokenBudget,
                         });
+                        if (reqConvKey) {
+                            lastSentEstimate[reqConvKey] = {
+                                tokens: overheadTokens + historyTokensAfter,
+                                model: customModel?.modelId || customModel?.id || '?',
+                                ts: Date.now(),
+                            };
+                        }
 
                         const proto = (provider.protocol || 'openai').toLowerCase();
                         res.writeHead(200, {
@@ -1509,7 +1558,10 @@ function startInternalProxy() {
                         });
                         // Always release upstream timers when our response closes.
                         let upCleanup = null;
-                        res.on('close', () => { try { if (upCleanup) upCleanup(); } catch(e){} });
+                        res.on('close', () => {
+                            try { if (upCleanup) upCleanup(); } catch(e){}
+                            try { if (reqConvKey) delete streamProgress[reqConvKey]; } catch(e){}
+                        });
 
                         if (proto === 'anthropic') {
                             const anthropicTools = convertGeminiToolsToAnthropic(rawTools);
@@ -1604,6 +1656,7 @@ function startInternalProxy() {
                                         const ev = JSON.parse(raw);
                                         if (ev.type === 'content_block_delta') {
                                             if (ev.delta?.type === 'text_delta') {
+                                                bumpStreamProgress(reqConvKey, (ev.delta.text || '').length);
                                                 const chunk = JSON.stringify({
                                                     response: {
                                                         candidates: [{
@@ -1613,6 +1666,7 @@ function startInternalProxy() {
                                                 });
                                                 res.write(`data: ${chunk}\n\n`);
                                             } else if (ev.delta?.type === 'thinking_delta') {
+                                                bumpStreamProgress(reqConvKey, (ev.delta.thinking || '').length);
                                                 const chunk = JSON.stringify({
                                                     response: {
                                                         candidates: [{
@@ -1691,6 +1745,13 @@ function startInternalProxy() {
                                 finalToolsChars,
                                 finalEstimatedTokens: Math.ceil((finalMsgChars + finalToolsChars) / 1.55),
                             });
+                            if (reqConvKey) {
+                                lastSentEstimate[reqConvKey] = {
+                                    tokens: Math.ceil((finalMsgChars + finalToolsChars) / 1.55),
+                                    model: customModel?.modelId || customModel?.id || '?',
+                                    ts: Date.now(),
+                                };
+                            }
 
                             const cleanBase = (provider.baseUrl || 'https://api.openai.com/v1').replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
                             const apiUrl = cleanBase + '/chat/completions';
@@ -1830,6 +1891,7 @@ function startInternalProxy() {
                                         if (rc) {
                                             if (!firstTokenTime) firstTokenTime = Date.now();
                                             totalGeneratedChars += rc.length;
+                                            bumpStreamProgress(reqConvKey, rc.length);
                                             console.log('[SX PROXY THOUGHT]', rc.replace(/\n/g, ' ').slice(0, 30));
                                             const chunk = JSON.stringify({
                                                 response: {
@@ -1841,6 +1903,8 @@ function startInternalProxy() {
                                             res.write(`data: ${chunk}\n\n`);
                                             totalChunksSent++;
                                         }
+
+                                        if (delta.content) bumpStreamProgress(reqConvKey, delta.content.length);
 
                                         // Content (handling potential embedded <think>, <thought>, or [THINK] tags)
                                         let textStream = delta.content || '';
