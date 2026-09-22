@@ -104,7 +104,7 @@ export class UIInjector {
 
     async checkForUpdates() {
         try {
-            const r = await this.network.get('/sx/versions');
+            const r = await this.network.get('/versions');
             if (!r || !r.ok) return;
             const curInject = window.__SX_BUILD || '';
             if (r.injectBuild && curInject && r.injectBuild !== curInject) {

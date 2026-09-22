@@ -1632,7 +1632,7 @@
         if (this._allCtxCache && Date.now() - this._allCtxCache._time < 3e4) {
           return this._allCtxCache.data;
         }
-        const r = await this.network.get("/sx/get-all-contexts");
+        const r = await this.network.get("/get-all-contexts");
         if (r && r.ok && Array.isArray(r.convs)) {
           this._allCtxCache = { data: r.convs, _time: Date.now() };
           return r.convs;
@@ -3035,7 +3035,7 @@
     }
     async checkForUpdates() {
       try {
-        const r = await this.network.get("/sx/versions");
+        const r = await this.network.get("/versions");
         if (!r || !r.ok) return;
         const curInject = window.__SX_BUILD || "";
         if (r.injectBuild && curInject && r.injectBuild !== curInject) {

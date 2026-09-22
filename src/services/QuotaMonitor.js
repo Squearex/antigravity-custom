@@ -341,7 +341,7 @@ export class QuotaMonitor {
             if (this._allCtxCache && (Date.now() - this._allCtxCache._time < 30000)) {
                 return this._allCtxCache.data;
             }
-            const r = await this.network.get('/sx/get-all-contexts');
+            const r = await this.network.get('/get-all-contexts');
             if (r && r.ok && Array.isArray(r.convs)) {
                 this._allCtxCache = { data: r.convs, _time: Date.now() };
                 return r.convs;
