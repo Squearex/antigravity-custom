@@ -94,6 +94,7 @@ function bumpStreamProgress(convKey, chars) {
     if (!convKey || !chars) return;
     try {
         const p = streamProgress[convKey] || { chars: 0 };
+        if (!p.firstTs) p.firstTs = Date.now();
         p.chars += chars; p.ts = Date.now();
         streamProgress[convKey] = p;
     } catch(e){}
@@ -1836,6 +1837,7 @@ function startInternalProxy() {
                         if (proto === 'anthropic') {
                             const anthropicTools = convertGeminiToolsToAnthropic(rawTools);
                             const apiUrl = (provider.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '') + '/v1/messages';
+                            const anthStartTime = Date.now();
                             const payload = {
                                 model: customModel.modelId,
                                 max_tokens: 16000,
@@ -1983,6 +1985,26 @@ function startInternalProxy() {
                                     } catch(e) {}
                                 }
                             }
+                            // Anthropic perf stats (mirrors OpenAI tail; shared fin below terminates)
+                            try {
+                                const sp = (reqConvKey && streamProgress[reqConvKey]) || null;
+                                const genChars = sp ? (sp.chars || 0) : 0;
+                                const firstTs = (sp && sp.firstTs) || anthStartTime;
+                                const totalMsA = Date.now() - anthStartTime;
+                                const ttftMsA = Math.max(0, firstTs - anthStartTime);
+                                const compToksA = Math.max(1, Math.round(genChars / 3.5));
+                                const genMsA = Math.max(1, totalMsA - ttftMsA);
+                                const perfDataA = {
+                                    ttftMs: ttftMsA, totalMs: totalMsA, generationMs: genMsA,
+                                    completionTokens: compToksA,
+                                    tps: Number((compToksA / (genMsA / 1000)).toFixed(1)),
+                                    modelName: customModel?.name || customModel?.modelId || 'Custom Model',
+                                    timestamp: new Date().toISOString()
+                                };
+                                if (reqConvKey) convPerfStats[reqConvKey] = perfDataA;
+                                convPerfStats['last'] = perfDataA;
+                                saveConvPerfToDisk();
+                            } catch(e) {}
                         } else {
                             // OpenAI protocol (OpenRouter, OpenAI, Kilo, Kira, etc.)
                             // Convert first so we can measure ACTUAL payload sizes (Gemini format estimates are 2-3x off)
