@@ -404,6 +404,8 @@ function getActiveModelFile() {
     }
 }
 
+let lastUsedModelId = null;
+
 function loadActiveModelFromDisk() {
     try {
         const p = getActiveModelFile();
@@ -413,6 +415,9 @@ function loadActiveModelFromDisk() {
             if (data && data.activeModelId) {
                 currentActiveModelId = data.activeModelId;
                 console.log('[SX PROXY] Restored active model from disk:', currentActiveModelId);
+            }
+            if (data && data.lastUsedModelId) {
+                lastUsedModelId = data.lastUsedModelId;
             }
         }
     } catch(e) {
@@ -424,11 +429,36 @@ function saveActiveModelToDisk(modelId) {
     try {
         const p = getActiveModelFile();
         if (p) {
-            fs.writeFileSync(p, JSON.stringify({ activeModelId: modelId }), 'utf8');
+            if (modelId) lastUsedModelId = modelId;
+            fs.writeFileSync(p, JSON.stringify({ activeModelId: currentActiveModelId || modelId, lastUsedModelId: lastUsedModelId || modelId }), 'utf8');
         }
     } catch(e) {
         console.error('[SX Proxy] Error saving active model:', e);
     }
+}
+
+// Resolve a stored conv-model ref (string id or {id,providerId,modelId} object)
+// against the current model list; survives list rebuilds.
+function findModelByRef(ref) {
+    try {
+        const list = inMemoryConfig.models || [];
+        if (!ref || !list.length) return null;
+        if (typeof ref === 'string') {
+            return list.find(m => m.id === ref) || null;
+        }
+        if (ref.id) {
+            const byId = list.find(m => m.id === ref.id);
+            if (byId) return byId;
+        }
+        if (ref.providerId && ref.modelId) {
+            const byPair = list.find(m => m.providerId === ref.providerId && m.modelId === ref.modelId);
+            if (byPair) return byPair;
+        }
+        if (ref.modelId) {
+            return list.find(m => m.modelId === ref.modelId) || null;
+        }
+    } catch(e) {}
+    return null;
 }
 
 function loadConfigFromDisk() {
@@ -1127,9 +1157,12 @@ function startInternalProxy() {
                         if (data.modelId) {
                             currentActiveModelId = data.modelId;
                             saveActiveModelToDisk(currentActiveModelId);
-                            // Also save per-conversation mapping if convKey provided
+                            // Also save per-conversation mapping if convKey provided.
+                            // Stored enriched (id+provider+model) so bindings survive list rebuilds.
                             if (data.convKey && data.convKey !== 'conv_global') {
-                                convModels[data.convKey] = data.modelId;
+                                convModels[data.convKey] = (data.meta && data.meta.modelId)
+                                    ? { id: data.modelId, providerId: data.meta.providerId || '', modelId: data.meta.modelId }
+                                    : data.modelId;
                                 capMapSize(convModels, 200);
                                 saveConvModelsToDisk();
                                 console.log(`[SX PROXY] Conv model saved: ${data.convKey} -> ${data.modelId}`);
@@ -1148,7 +1181,7 @@ function startInternalProxy() {
 
             if (url === '/sx/get-conv-models' && req.method === 'GET') {
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-                res.end(JSON.stringify({ ok: true, convModels, activeModelId: currentActiveModelId }));
+                res.end(JSON.stringify({ ok: true, convModels, activeModelId: currentActiveModelId, lastUsedModelId: lastUsedModelId || currentActiveModelId || null }));
                 return;
             }
 
@@ -1335,10 +1368,18 @@ function startInternalProxy() {
                     const convId = u.searchParams.get('convId') || '';
                     const cleanConvId = (convId || '').replace(/^conv_/, '');
                     const convKey = 'conv_' + cleanConvId;
-                    let modelId = u.searchParams.get('modelId') || (convKey && convModels[convKey]) || currentActiveModelId || '';
+                    const queryModelId = u.searchParams.get('modelId') || '';
 
                     loadConfigFromDisk();
-                    let targetModel = inMemoryConfig.models.find(m => m.id === modelId || m.modelId === modelId);
+                    // convModels values may be enriched refs -> resolve robustly
+                    let targetModel = null;
+                    if (!queryModelId && convKey && convModels[convKey]) {
+                        targetModel = findModelByRef(convModels[convKey]);
+                    }
+                    if (!targetModel) {
+                        const modelId = queryModelId || currentActiveModelId || '';
+                        if (modelId) targetModel = inMemoryConfig.models.find(m => m.id === modelId || m.modelId === modelId);
+                    }
                     if (!targetModel && currentActiveModelId) {
                         targetModel = inMemoryConfig.models.find(m => m.id === currentActiveModelId || m.modelId === currentActiveModelId);
                     }
@@ -1449,10 +1490,14 @@ function startInternalProxy() {
                     ];
 
                     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    const convModelRef = (convKey && convModels[convKey]) || null;
+                    const convModelId = convModelRef
+                        ? ((findModelByRef(convModelRef) || {}).id || (typeof convModelRef === 'string' ? convModelRef : null))
+                        : null;
                     res.end(JSON.stringify({
                         ok: true,
                         convId: cleanConvId,
-                        detectedModelId: detectedModelId || convModels[convKey] || null,
+                        detectedModelId: detectedModelId || convModelId || null,
                         isFreshChat,
                         totalContext,
                         totalContextFormatted: fmt(totalContext),
@@ -1786,10 +1831,9 @@ function startInternalProxy() {
                             customModel = inMemoryConfig.models.find(m => m.id === headerModelId);
                         }
 
-                        // 2. Per-conversation saved model mapping by unique ID
+                        // 2. Per-conversation saved model mapping (string id or enriched ref)
                         if (!customModel && reqConvKey && convModels[reqConvKey]) {
-                            const cModelId = convModels[reqConvKey];
-                            customModel = inMemoryConfig.models.find(m => m.id === cModelId);
+                            customModel = findModelByRef(convModels[reqConvKey]);
                             if (customModel) {
                                 console.log(`[SX PROXY] Using per-conversation model for ${reqConvKey}: ${customModel.name} (${customModel.id})`);
                             }

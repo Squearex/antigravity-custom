@@ -63,11 +63,22 @@ export class NetworkClient {
         }
     }
 
-    async setActiveModel(modelId, convKey) {
+    async setActiveModel(modelId, convKey, meta = null) {
         try {
-            return await this.post('/set-active-model', { modelId, convKey });
+            const body = { modelId, convKey };
+            if (meta && (meta.providerId || meta.modelId)) body.meta = meta;
+            return await this.post('/set-active-model', body);
         } catch(e) {
             this.logger.warn('NetworkClient', 'Failed to notify active model', e.message);
+        }
+    }
+
+    async fetchConvModels() {
+        try {
+            const res = await this.get('/get-conv-models');
+            return (res && res.ok) ? res : null;
+        } catch(e) {
+            return null;
         }
     }
 

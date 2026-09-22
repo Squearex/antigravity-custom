@@ -192,8 +192,60 @@ export class ModelManager {
         }];
     }
 
-    getActiveConversationKey() {
+        /**
+     * Stored model reference: enriched with provider+model so bindings survive
+     * list rebuilds (internal m_xxx ids change on re-add; provider+modelId don't).
+     * Backward compatible: plain id strings still read fine.
+     */
+    writeModelRef(key, entryOrId) {
         try {
+            if (!entryOrId) { localStorage.removeItem(key); return; }
+            const entry = typeof entryOrId === 'string'
+                ? (this.state.getModels() || []).find(m => m.id === entryOrId)
+                : entryOrId;
+            if (entry && entry.id) {
+                localStorage.setItem(key, JSON.stringify({ id: entry.id, providerId: entry.providerId || '', modelId: entry.modelId || '' }));
+            } else {
+                localStorage.setItem(key, typeof entryOrId === 'string' ? entryOrId : String(entryOrId?.id || ''));
+            }
+        } catch(e) {}
+    }
+
+    readModelRef(key) {
+        try {
+            const raw = localStorage.getItem(key);
+            if (!raw) return null;
+            if (raw.startsWith('{')) {
+                const o = JSON.parse(raw);
+                if (o && (o.id || o.modelId)) return o;
+                return null;
+            }
+            return { id: raw };
+        } catch(e) { return null; }
+    }
+
+    /** Resolve a stored ref against the CURRENT list: id first, then provider+model. */
+    resolveModelRef(ref) {
+        try {
+            const list = this.state.getModels() || [];
+            if (!ref || !list.length) return null;
+            if (ref.id) {
+                const byId = list.find(m => m.id === ref.id);
+                if (byId) return byId;
+            }
+            if (ref.providerId && ref.modelId) {
+                const byPair = list.find(m => m.providerId === ref.providerId && m.modelId === ref.modelId);
+                if (byPair) return byPair;
+            }
+            if (ref.modelId) {
+                const byModel = list.find(m => m.modelId === ref.modelId);
+                if (byModel) return byModel;
+            }
+        } catch(e) {}
+        return null;
+    }
+
+    getActiveConversationKey() {        try {
             const m = window.location.pathname.match(/\/c\/([a-zA-Z0-9_-]+)/);
             if (m && m[1]) return 'conv_' + m[1];
         } catch(e) {}
@@ -220,29 +272,46 @@ export class ModelManager {
 
     getActiveModelForConversation(convKey = null) {
         const key = convKey || this.getActiveConversationKey();
-        let modelId = null;
+        let ref = null;
         if (key && key !== 'conv_new') {
-            modelId = localStorage.getItem('sx_active_model_' + key);
+            ref = this.readModelRef('sx_active_model_' + key);
         }
-        if (!modelId) {
-            modelId = localStorage.getItem('sx_last_used_model_id') || localStorage.getItem('sx_active_model_id');
+        let found = ref ? this.resolveModelRef(ref) : null;
+        if (!found) {
+            const lastRef = this.readModelRef('sx_last_used_model_id') || this.readModelRef('sx_active_model_id');
+            found = lastRef ? this.resolveModelRef(lastRef) : null;
         }
         const sxModels = this.state.getModels();
-        if (sxModels.length > 0) {
-            const found = sxModels.find(m => m.id === modelId);
-            return found ? found.id : sxModels[0].id;
+        if (found) {
+            this._logResolution(key, found, ref ? 'stored' : 'last-used');
+            return found.id;
         }
-        return modelId;
+        if (sxModels.length > 0) {
+            this._logResolution(key, sxModels[0], 'fallback-first');
+            return sxModels[0].id;
+        }
+        return null;
+    }
+
+    _logResolution(convKey, model, source) {
+        try {
+            const k = (convKey || 'conv_new') + ' -> ' + (model ? model.id : 'none');
+            if (this._lastResolutionLog !== k) {
+                this._lastResolutionLog = k;
+                this.logger?.debug?.('ModelManager', `Model for ${convKey || 'conv_new'}: ${model?.name || model?.modelId || '?'} (via ${source})`);
+            }
+        } catch(e) {}
     }
 
     setActiveModelForConversation(modelId, convKey = null, explicitUserChoice = false) {
         if (!modelId) return;
         const key = convKey || this.getActiveConversationKey();
+        const entry = (this.state.getModels() || []).find(m => m.id === modelId) || null;
         if (explicitUserChoice && key && key !== 'conv_new') {
-            localStorage.setItem('sx_active_model_' + key, modelId);
+            this.writeModelRef('sx_active_model_' + key, entry || modelId);
         }
-        localStorage.setItem('sx_last_used_model_id', modelId);
-        localStorage.setItem('sx_active_model_id', modelId);
+        this.writeModelRef('sx_last_used_model_id', entry || modelId);
+        this.writeModelRef('sx_active_model_id', entry || modelId);
         this.notifyActiveModel(modelId, false, key, explicitUserChoice);
     }
 
@@ -250,6 +319,7 @@ export class ModelManager {
         if (!modelId) return;
         const convKey = specificConvKey || this.getActiveConversationKey();
         this.state.setActiveModelId(modelId, forceGlobal ? null : convKey, persistConv);
-        this.network.setActiveModel(modelId, forceGlobal ? 'conv_global' : convKey);
+        const entry = (this.state.getModels() || []).find(m => m.id === modelId) || null;
+        this.network.setActiveModel(modelId, forceGlobal ? 'conv_global' : convKey, entry ? { providerId: entry.providerId, modelId: entry.modelId } : null);
     }
 }

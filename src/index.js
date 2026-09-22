@@ -78,7 +78,37 @@ export const SX_BUILD = '2026.09.22-r13';
                 state.setModels(cfg.models);
             }
         }
-        // 4b. Guarantee metadata for stored models (offline KB + OpenRouter catalog)
+        // 4b. Restore per-conversation model bindings from proxy disk.
+        // Proxy disk is the durable source of truth: fills localStorage keys that
+        // are missing (wiped storage, first boot) but never overwrites existing ones.
+        network.fetchConvModels().then(cm => {
+            try {
+                if (!cm) return;
+                const map = cm.convModels || {};
+                for (const convKey of Object.keys(map)) {
+                    const localKey = 'sx_active_model_' + convKey;
+                    if (!localStorage.getItem(localKey)) {
+                        const ref = map[convKey];
+                        const entry = (state.getModels() || []).find(m =>
+                            (ref && typeof ref === 'object' && ref.id && m.id === ref.id) ||
+                            (ref && typeof ref === 'object' && ref.providerId && ref.modelId && m.providerId === ref.providerId && m.modelId === ref.modelId) ||
+                            (typeof ref === 'string' && (m.id === ref || m.modelId === ref)));
+                        if (entry) {
+                            localStorage.setItem(localKey, JSON.stringify({ id: entry.id, providerId: entry.providerId || '', modelId: entry.modelId || '' }));
+                        } else if (typeof ref === 'string' && ref) {
+                            localStorage.setItem(localKey, ref);
+                        }
+                    }
+                }
+                if (!localStorage.getItem('sx_active_model_id') && cm.activeModelId) {
+                    localStorage.setItem('sx_active_model_id', cm.activeModelId);
+                }
+                if (!localStorage.getItem('sx_last_used_model_id') && (cm.lastUsedModelId || cm.activeModelId)) {
+                    localStorage.setItem('sx_last_used_model_id', cm.lastUsedModelId || cm.activeModelId);
+                }
+            } catch(e) { logger.warn('Core', 'conv-model restore failed', e.message); }
+        }).catch(() => {});
+        // 4c. Guarantee metadata for stored models (offline KB + OpenRouter catalog)
         metaResolver.backfillStored(state.getModels()).then(({ list, changed }) => {
             if (changed) {
                 state.setModels(list);
