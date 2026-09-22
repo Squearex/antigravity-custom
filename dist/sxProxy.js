@@ -9,6 +9,18 @@ let convModels = {}; // convKey -> modelId
 let convPerfStats = {}; // convKey -> { ttftMs, totalMs, completionTokens, tps, modelName, timestamp }
 let _dbgLastStats = null; // last request debug stats
 
+// Session memory: modelKey -> last known working history budget after a context overflow.
+// Prevents repeating the same oversized request within one proxy lifetime.
+const learnedHistoryBudget = {};
+
+// Detect upstream "context too big" rejections across vendors/gateways.
+const CONTEXT_OVERFLOW_RE = /context|too many tokens|maximum context|context_length|context length|input.*too (long|large)|prompt.*too long|token.*(limit|exceed)|exceed.*token|too_large|request.*too large/i;
+function isContextOverflow(status, text) {
+    if (status === 413) return true;
+    if (status !== 400 && status !== 422) return false;
+    return CONTEXT_OVERFLOW_RE.test(String(text || '').slice(0, 2000));
+}
+
 function getConvPerfFile() {
     try {
         return path.join(app.getPath('userData'), 'sx_conv_perf.json');
@@ -1448,35 +1460,60 @@ function startInternalProxy() {
                         });
 
                         if (proto === 'anthropic') {
-                            const anthropicMessages = sanitizeAnthropicMessages(geminiContentsToAnthropic(contents));
                             const anthropicTools = convertGeminiToolsToAnthropic(rawTools);
                             const apiUrl = (provider.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '') + '/v1/messages';
                             const payload = {
                                 model: customModel.modelId,
                                 max_tokens: 16000,
                                 stream: true,
-                                messages: anthropicMessages
+                                messages: []
                             };
                             if (systemText) payload.system = systemText;
                             if (anthropicTools) payload.tools = anthropicTools;
 
-                            const apiRes = await fetch(apiUrl, {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'x-api-key': provider.apiKey || '',
-                                    'anthropic-version': '2023-06-01'
-                                },
-                                body: JSON.stringify(payload)
-                            });
+                            const budgetKey = `${provider?.name || provider?.baseUrl || ''}|${customModel?.modelId || customModel?.id || ''}`;
+                            let anthBudget = historyTokenBudget;
+                            if (learnedHistoryBudget[budgetKey]) {
+                                anthBudget = Math.min(anthBudget, learnedHistoryBudget[budgetKey]);
+                            }
+
+                            let apiRes = null;
+                            let lastErrTxt = '';
+                            let lastErrStatus = 0;
+                            for (let attempt = 0; attempt < 3; attempt++) {
+                                const slim = compactContentsForContext(contents, anthBudget);
+                                payload.messages = sanitizeAnthropicMessages(geminiContentsToAnthropic(slim));
+                                apiRes = await fetch(apiUrl, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'x-api-key': provider.apiKey || '',
+                                        'anthropic-version': '2023-06-01'
+                                    },
+                                    body: JSON.stringify(payload)
+                                });
+                                if (apiRes.ok) break;
+                                lastErrStatus = apiRes.status;
+                                lastErrTxt = await apiRes.text().catch(() => `HTTP ${apiRes.status}`);
+                                if (attempt < 2 && isContextOverflow(apiRes.status, lastErrTxt)) {
+                                    anthBudget = Math.max(3000, Math.floor(anthBudget * 0.45));
+                                    learnedHistoryBudget[budgetKey] = anthBudget;
+                                    console.warn(`[SX PROXY] Context overflow on ${customModel?.modelId} (attempt ${attempt + 1}/3). Shrinking history budget to ${anthBudget} and retrying...`);
+                                    continue;
+                                }
+                                break;
+                            }
+                            if (apiRes && apiRes.ok) {
+                                learnedHistoryBudget[budgetKey] = anthBudget;
+                            }
 
                             if (!apiRes.ok) {
-                                const errTxt = await apiRes.text().catch(() => `HTTP ${apiRes.status}`);
-                                console.error(`[SX PROXY] Anthropic upstream error ${apiRes.status}:`, errTxt);
+                                const errTxt = lastErrTxt || `HTTP ${lastErrStatus}`;
+                                console.error(`[SX PROXY] Anthropic upstream error ${lastErrStatus}:`, errTxt);
                                 const errChunk = JSON.stringify({
                                     response: {
                                         candidates: [{
-                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü (HTTP ${apiRes.status}): ${errTxt}` }] },
+                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü (HTTP ${lastErrStatus}): ${errTxt}` }] },
                                             finishReason: 'STOP'
                                         }]
                                     }
@@ -1598,7 +1635,7 @@ function startInternalProxy() {
                             const payload = {
                                 model: customModel.modelId,
                                 stream: true,
-                                messages: oaMsgs,
+                                messages: [],
                                 include_reasoning: true
                             };
                             if (oaTools) payload.tools = oaTools;
@@ -1607,22 +1644,54 @@ function startInternalProxy() {
                             let firstTokenTime = null;
                             let totalGeneratedChars = 0;
 
-                            const apiRes = await fetch(apiUrl, {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': 'Bearer ' + (provider.apiKey || '')
-                                },
-                                body: JSON.stringify(payload)
-                            });
+                            // Session-learned cap: a previous overflow for this model starts smaller.
+                            const budgetKey = `${provider?.name || provider?.baseUrl || ''}|${customModel?.modelId || customModel?.id || ''}`;
+                            if (learnedHistoryBudget[budgetKey]) {
+                                const capped = Math.min(realHistoryBudget, learnedHistoryBudget[budgetKey]);
+                                if (capped < realHistoryBudget) {
+                                    console.log(`[SX PROXY] Applying learned history budget for ${customModel?.modelId}: ${realHistoryBudget} -> ${capped}`);
+                                    realHistoryBudget = capped;
+                                }
+                            }
+
+                            // Self-healing loop: on context overflow, shrink history and retry (max 3 attempts).
+                            let apiRes = null;
+                            let lastErrTxt = '';
+                            let lastErrStatus = 0;
+                            let attemptBudget = realHistoryBudget;
+                            for (let attempt = 0; attempt < 3; attempt++) {
+                                payload.messages = trimOpenAIMessages(sanitizedOaMsgs, attemptBudget);
+                                apiRes = await fetch(apiUrl, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'Authorization': 'Bearer ' + (provider.apiKey || '')
+                                    },
+                                    body: JSON.stringify(payload)
+                                });
+                                if (apiRes.ok) break;
+                                lastErrStatus = apiRes.status;
+                                lastErrTxt = await apiRes.text().catch(() => `HTTP ${apiRes.status}`);
+                                if (attempt < 2 && isContextOverflow(apiRes.status, lastErrTxt)) {
+                                    attemptBudget = Math.max(3000, Math.floor(attemptBudget * 0.45));
+                                    learnedHistoryBudget[budgetKey] = attemptBudget;
+                                    console.warn(`[SX PROXY] Context overflow on ${customModel?.modelId} (attempt ${attempt + 1}/3). Shrinking history budget to ${attemptBudget} and retrying...`);
+                                    continue;
+                                }
+                                break;
+                            }
+                            // Remember the working budget for this session.
+                            if (apiRes && apiRes.ok) {
+                                learnedHistoryBudget[budgetKey] = attemptBudget;
+                            }
 
                             if (!apiRes.ok) {
-                                const errTxt = await apiRes.text().catch(() => `HTTP ${apiRes.status}`);
-                                console.error(`[SX PROXY] OpenAI upstream error ${apiRes.status}:`, errTxt);
+                                const errTxt = lastErrTxt || `HTTP ${lastErrStatus}`;
+                                console.error(`[SX PROXY] OpenAI upstream error ${lastErrStatus}:`, errTxt);
                                 const errChunk = JSON.stringify({
                                     response: {
                                         candidates: [{
-                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü (HTTP ${apiRes.status}): ${errTxt}` }] },
+                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü (HTTP ${lastErrStatus}): ${errTxt}` }] },
                                             finishReason: 'STOP'
                                         }]
                                     }

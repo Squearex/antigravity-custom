@@ -3667,22 +3667,32 @@
     "grok-4.6": { ctx: 2e5, vis: true, tools: true },
     "grok-4.5": { ctx: 2e5, vis: true, tools: true },
     "grok-build-0.1": { ctx: 131072, vis: true, tools: true },
-    // Muse Spark (Meta) — tools via /responses endpoint; ctx/vision not documented
-    "muse-spark-1.3": { ctx: 0, tools: true },
-    "muse-spark-1.2": { ctx: 0, tools: true },
-    "muse-spark-1.3-contributor-free": { ctx: 0, tools: true },
-    "muse-spark-1.2-contributor-free": { ctx: 0, tools: true },
-    // DeepSeek V4 on Zen — explicit vision variant only; rest via OpenRouter layer
-    "deepseek-v4-flash-vision-exp": { ctx: 0, vis: true, tools: true },
-    "deepseek-v4.1-flash": { ctx: 0, tools: true },
-    "deepseek-v4-pro": { ctx: 0, tools: true },
-    "deepseek-v4-flash": { ctx: 0, tools: true },
-    "deepseek-v4-flash-free": { ctx: 0, tools: true },
+    // Xiaomi MiMo — vendor-verified: V2-Flash 256K text-only; V2.5 1M multimodal
+    "mimo-v2.6-flash-free": { ctx: 262144, vis: false, tools: true },
+    "mimo-v2.6-flash": { ctx: 262144, vis: false, tools: true },
+    "mimo-v2.5-free": { ctx: 1048576, vis: true, tools: true },
+    "mimo-v2.5": { ctx: 1048576, vis: true, tools: true },
+    // Muse Spark (Meta Model API) — 1M multimodal + parallel tool calls
+    "muse-spark-1.3": { ctx: 1048576, vis: true, tools: true },
+    "muse-spark-1.2": { ctx: 1048576, vis: true, tools: true },
+    "muse-spark-1.3-contributor-free": { ctx: 1048576, vis: true, tools: true },
+    "muse-spark-1.2-contributor-free": { ctx: 1048576, vis: true, tools: true },
+    // DeepSeek V4 family — official 1M context; text-only except vision-exp
+    "deepseek-v4.1-flash": { ctx: 1048576, vis: false, tools: true },
+    "deepseek-v4-pro": { ctx: 1048576, vis: false, tools: true },
+    "deepseek-v4-flash": { ctx: 1048576, vis: false, tools: true },
+    "deepseek-v4-flash-free": { ctx: 1048576, vis: false, tools: true },
+    "deepseek-v4-flash-vision-exp": { ctx: 1048576, vis: true, tools: true },
+    // Ling-3.0 (AntLing/InclusionAI) — 256K, text in/out
+    "ling-3.0-flash-fin-free": { ctx: 262144, vis: false, tools: true },
+    // NVIDIA Nemotron 3 — 1M, text-only variants
+    "nemotron-3-ultra-free": { ctx: 1048576, vis: false, tools: true },
+    "nemotron-3.5-lightning-free": { ctx: 1048576, vis: false, tools: true },
+    // Big Pickle — 200K text-only stealth (models.dev)
+    "big-pickle": { ctx: 2e5, vis: false, tools: true },
     // Jev — /systemone eval model, no tool calls, no images
     "jev-1.13": { ctx: 0, vis: false, tools: false },
-    "jev-1.13-free": { ctx: 0, vis: false, tools: false },
-    // Big Pickle — undisclosed; chat endpoint
-    "big-pickle": { ctx: 0, tools: true }
+    "jev-1.13-free": { ctx: 0, vis: false, tools: false }
   };
   var VISION_NAME_RE = /(?:^|[\/\-_.])(?:vl|vision|4o|omni|gemini|gemma|pixtral|llava|paligemma|vision[-_]?pro|llama[-_]?3\.2[-_].*vision)/i;
   var NO_VISION_NAME_RE = /(?:^|[\/\-_.])(?:code|coder|embedding|audio|transcribe|tts|whisper|rerank)/i;
