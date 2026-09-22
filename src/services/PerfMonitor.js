@@ -289,7 +289,6 @@ export class PerfMonitor {
                     footerEl.appendChild(badge);
                 }
 
-                const splitStr = (stats.normalTokens != null || stats.thinkingTokens != null) ? ` N${stats.normalTokens || 0}/T${stats.thinkingTokens || 0}` : '';
                 const safeColor = stats ? (stats.tps < 20 ? '#f43f5e' : stats.tps < 40 ? '#eab308' : stats.tps < 80 ? '#38bdf8' : '#10b981') : '#38bdf8';
                 badge.innerHTML = `
                     <span style="color: #64748b; font-size: 10px;">•</span>

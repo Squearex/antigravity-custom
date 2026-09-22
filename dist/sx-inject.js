@@ -2195,9 +2195,13 @@
           if (!/\b\d{1,2}:\d{2}\b/.test(timeText)) return;
           const isLast = idx === footers.length - 1;
           const stats = this.getStatsForMessage(footerEl, isLast);
-          if (!stats || !stats.completionTokens) return;
-          const ttftSec = (stats.ttftMs / 1e3).toFixed(2);
-          const ttftStr = stats.ttftMs >= 1e3 ? `${ttftSec}s` : `${stats.ttftMs}ms`;
+          if (!stats && !isLast) return;
+          const hasData = stats && (stats.ttftMs || stats.tps || stats.completionTokens > 0);
+          const ttftSec = stats ? (stats.ttftMs / 1e3).toFixed(2) : "--";
+          const ttftStr = stats ? stats.ttftMs >= 1e3 ? `${ttftSec}s` : `${stats.ttftMs}ms` : "--ms";
+          const tpsStr = stats ? stats.tps || 0 : 0;
+          const tokDisp = stats ? `~${stats.completionTokens || 0} tok` : "--";
+          const splitStr = stats && (stats.normalTokens != null || stats.thinkingTokens != null) ? ` N${stats.normalTokens || 0}/T${stats.thinkingTokens || 0}` : "";
           let speedColor = "#10b981";
           if (stats.tps < 20) speedColor = "#f43f5e";
           else if (stats.tps < 40) speedColor = "#eab308";
@@ -2219,14 +2223,14 @@
                     `;
             footerEl.appendChild(badge);
           }
-          const splitStr = stats.normalTokens != null || stats.thinkingTokens != null ? ` N${stats.normalTokens || 0}/T${stats.thinkingTokens || 0}` : "";
+          const safeColor = stats ? stats.tps < 20 ? "#f43f5e" : stats.tps < 40 ? "#eab308" : stats.tps < 80 ? "#38bdf8" : "#10b981" : "#38bdf8";
           badge.innerHTML = `
                     <span style="color: #64748b; font-size: 10px;">\u2022</span>
-                    <span style="color: ${speedColor}; font-weight: 700;" title="\u0130nferans H\u0131z\u0131: ${stats.tps} Token/Saniye">\u26A1 ${stats.tps} TPS</span>
+                    <span style="color: ${safeColor}; font-weight: 700;" title="\u0130nferans H\u0131z\u0131: ${tpsStr} Token/Saniye">\u26A1 ${tpsStr} TPS</span>
                     <span style="color: #64748b; font-size: 10px;">\u2022</span>
-                    <span style="color: #38bdf8; font-weight: 600;" title="\u0130lk Yan\u0131t S\xFCresi (TTFT): ${stats.ttftMs}ms">\u23F1\uFE0F ${ttftStr}</span>
+                    <span style="color: #38bdf8; font-weight: 600;" title="\u0130lk Yan\u0131t S\xFCresi (TTFT): ${stats ? stats.ttftMs + "ms" : "--"}">\u23F1\uFE0F ${ttftStr}</span>
                     <span style="color: #64748b; font-size: 10px;">\u2022</span>
-                    <span style="color: #94a3b8;" title="Bu Mesaj \u0130\xE7in \xDCretilen Token: ~${stats.completionTokens} tok${splitStr}">~${stats.completionTokens} tok${splitStr}</span>
+                    <span style="color: #94a3b8;" title="Bu Mesaj \u0130\xE7in \xDCretilen Token: ${tokDisp}${splitStr}">${tokDisp}${splitStr}</span>
                 `;
         });
       } catch (e) {
