@@ -2045,6 +2045,10 @@ function startInternalProxy() {
                         const systemInst = innerReq.systemInstruction || reqJson.systemInstruction;
                         const systemParts = systemInst?.parts || [];
                         let systemText = systemParts.map(p => p.text || '').filter(Boolean).join('\n');
+                        // Professional agent mode: remind model to manage context continuously
+                        if (systemText && !systemText.includes('Otomatik Bağlam')) {
+                            systemText += '\n\n[Profesyonel Mod] Uzun bağlamda önceki kararları özetleyip devam edin. Kırpma sonrası referansı kaybetmeyin; önceki kullanıcı isteğini hatırlayın.';
+                        }
                         const rawTools = innerReq.tools || reqJson.tools || [];
 
                         // Estimate chars consumed by system prompt + tool schemas
