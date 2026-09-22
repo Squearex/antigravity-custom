@@ -1091,13 +1091,15 @@ function startInternalProxy() {
                 req.on('data', chunk => rawBody += chunk);
                 req.on('end', () => {
                     try {
-                        const data = JSON.parse(rawBody);
+                        const data = parseJsonBody(rawBody);
+                        if (!data) throw new Error('Invalid JSON body');
                         if (data.modelId) {
                             currentActiveModelId = data.modelId;
                             saveActiveModelToDisk(currentActiveModelId);
                             // Also save per-conversation mapping if convKey provided
                             if (data.convKey && data.convKey !== 'conv_global') {
                                 convModels[data.convKey] = data.modelId;
+                                capMapSize(convModels, 200);
                                 saveConvModelsToDisk();
                                 console.log(`[SX PROXY] Conv model saved: ${data.convKey} -> ${data.modelId}`);
                             }
@@ -1285,6 +1287,7 @@ function startInternalProxy() {
                     if (detectedModelId && cleanConvId && cleanConvId !== 'new') {
                         if (!convModels[convKey]) {
                             convModels[convKey] = detectedModelId;
+                            capMapSize(convModels, 200);
                             saveConvModelsToDisk();
                         }
                     }
