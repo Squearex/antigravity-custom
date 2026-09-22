@@ -1205,6 +1205,13 @@ function startInternalProxy() {
             const url = req.url || '';
             console.log('[SX PROXY REQ]', req.method, url);
 
+            // GET /sx/quota-status — basic rate-limit / usage hint for UI
+            if (url === '/sx/quota-status' && req.method === 'GET') {
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end(JSON.stringify({ ok: true, status: 'ok', note: '429 durumunda günlük kota dolmuştur — farklı model veya yarın deneyin.' }));
+                return;
+            }
+
             // Endpoint to get config from proxy / disk
             if (url === '/sx/get-config' && req.method === 'GET') {
                 loadConfigFromDisk();
@@ -2047,7 +2054,7 @@ function startInternalProxy() {
 
                         // Reserve: overhead + 16k safety (generation budget + MCP overhead buffer)
                         let historyTokenBudget = Math.max(4000, modelContextLimit - overheadTokens - 16000);
-                        const isFreeModel = (customModel?.modelId || '').toLowerCase().includes(':free') || (customModel?.name || '').toLowerCase().includes('free');
+                        const isFreeModel = ((customModel?.modelId || '').toLowerCase().endsWith(':free') || (customModel?.name || '').toLowerCase().endsWith(':free')) || (provider?.name || '').toLowerCase().includes('free');
                         if (isFreeModel && historyTokenBudget > 70000) {
                             historyTokenBudget = 70000;
                         }
@@ -2184,6 +2191,13 @@ function startInternalProxy() {
                                     anthBudget = Math.max(3000, Math.floor(anthBudget * 0.45));
                                     learnedHistoryBudget[budgetKey] = anthBudget;
                                     console.warn(`[SX PROXY] Context overflow on ${customModel?.modelId} (attempt ${attempt + 1}/3). Shrinking history budget to ${anthBudget} and retrying...`);
+                                    continue;
+                                }
+                                // Tools-only retry: 400 with active tools -> retry once without tools
+                                if (attempt < 2 && apiRes.status === 400 && (anthropicTools || payload.tools) && !lastErrTxt.includes('context')) {
+                                    console.warn(`[SX PROXY] Tools 400 on ${customModel?.modelId} — retrying without tools (attempt ${attempt + 1}/3)`);
+                                    payload.tools = undefined;
+                                    payload.messages = sanitizeAnthropicMessages(geminiContentsToAnthropic(slim));
                                     continue;
                                 }
                                 break;
@@ -2334,7 +2348,7 @@ function startInternalProxy() {
                             const sysMsgChars = systemText ? (systemText.length + 20) : 0; // +20 for role/wrapper JSON
                             const oaToolsChars = oaTools ? JSON.stringify(oaTools).length : 0;
                             // Real per-token char ratio for mixed content is ~1.55 for OpenAI JSON with code & tools
-                            const actualOverheadTokens = Math.ceil((sysMsgChars + oaToolsChars) / 1.55);
+                            const actualOverheadTokens = Math.ceil((sysMsgChars + oaToolsChars) / 3.5);
                             // Real history budget based on actual OpenAI overhead measurement (reserve overhead + 16k buffer)
                             let realHistoryBudget = Math.max(3000, modelContextLimit - actualOverheadTokens - 16000);
                             if (isFreeModel && realHistoryBudget > 70000) {
@@ -2356,7 +2370,7 @@ function startInternalProxy() {
                                 realHistoryBudget,
                                 finalMsgChars,
                                 finalToolsChars,
-                                finalEstimatedTokens: Math.ceil((finalMsgChars + finalToolsChars) / 1.55),
+                                finalEstimatedTokens: Math.ceil((finalMsgChars + finalToolsChars) / 3.5),
                                 intentRescued: !!intentRescued,
                             });
                             if (reqConvKey) {
@@ -2479,14 +2493,16 @@ function startInternalProxy() {
                                             const errObj = ev.error;
                                             const errMsg = typeof errObj === 'string' ? errObj : (errObj.message || JSON.stringify(errObj));
                                             console.error('[SX PROXY] Upstream SSE error event:', errMsg);
-                                            const errChunk = JSON.stringify({
-                                                response: {
-                                                    candidates: [{
-                                                        content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü: ${errMsg}` }] },
-                                                        finishReason: 'STOP'
-                                                    }]
-                                                }
-                                            });
+                                const errMsg429 = (lastErrStatus === 429) ? ' (Günlük kota doldu — yarın sıfırlanır; faklı model deneyin)' : '';
+                                const errMsg429b = (lastErrStatus === 429) ? ' (Günlük kota doldu — yarın sıfırlanır; faklı model deneyin)' : '';
+                                const errChunk = JSON.stringify({
+                                    response: {
+                                        candidates: [{
+                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü${lastErrStatus ? ` (HTTP ${lastErrStatus})` : ''}: ${errTxt}${errMsg429b}` }] },
+                                            finishReason: 'STOP'
+                                        }]
+                                    }
+                                });
                                             res.write(`data: ${errChunk}\n\n`);
                                             totalChunksSent++;
                                             break;
@@ -2692,7 +2708,7 @@ function startInternalProxy() {
                                 completionTokens: estimatedCompTokens,
                                 normalTokens: sxEstToks(openNormalChars),
                                 thinkingTokens: sxEstToks(openThinkChars),
-                                promptTokens: (openUsagePrompt > 0 ? openUsagePrompt : Math.round(finalMsgChars / 1.55) + Math.round(finalToolsChars / 1.55)),
+                                promptTokens: (openUsagePrompt > 0 ? openUsagePrompt : Math.round(finalMsgChars / 3.5) + Math.round(finalToolsChars / 3.5)),
                                 outputTokens: (openUsageComplete > 0 ? openUsageComplete : estimatedCompTokens),
                                 toolCalls: openMsgTools.length,
                                 toolCallNames: openMsgTools,
@@ -2701,7 +2717,7 @@ function startInternalProxy() {
                                 modelName: customModel?.name || customModel?.modelId || 'Custom Model',
                                 timestamp: new Date().toISOString()
                             };
-                            if (reqConvKey) recordMsgPerf(reqConvKey, perfData, Math.round(finalMsgChars / 1.55) + Math.round(finalToolsChars / 1.55));
+                            if (reqConvKey) recordMsgPerf(reqConvKey, perfData, Math.round(finalMsgChars / 3.5) + Math.round(finalToolsChars / 3.5));
                             console.log(`[SX PROXY PERF] ${reqConvKey || 'last'}: TTFT=${ttftMs}ms, Total=${totalRequestMs}ms, CompToks=${estimatedCompTokens}, Normal=${perfData.normalTokens}, Think=${perfData.thinkingTokens}, Tools=${perfData.toolCalls}, Stop=${perfData.stopReason || '-'}`);
 
                             // If model sent absolutely nothing (empty stream), emit a fallback to avoid
@@ -2758,7 +2774,15 @@ function startInternalProxy() {
             delete fwdHeaders['content-length'];
 
             let bodyChunks = [];
-            req.on('data', chunk => bodyChunks.push(chunk));
+            req.on('data', chunk => {
+                bodyChunks.push(chunk);
+                if (Buffer.concat(bodyChunks).length > 2 * 1024 * 1024) {
+                    console.error('[SX PROXY] Request body exceeded 2MB — aborting');
+                    res.writeHead(413, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ error: 'Body too large (max 2MB)' }));
+                    req.destroy();
+                }
+            });
             req.on('end', async () => {
                 const ctrl = new AbortController();
                 const timer = setTimeout(() => { try { ctrl.abort(); } catch(e){} }, 60000);
