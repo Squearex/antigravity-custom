@@ -2404,8 +2404,7 @@ function startInternalProxy() {
                                 stream: true,
                                 messages: [],
                                 include_reasoning: true,
-                                service_tier: (isGroq ? 'auto' : undefined),
-                                truncation: (isGroq ? 'auto' : undefined)
+                                service_tier: (isGroq ? 'auto' : undefined)
                             };
                             if (oaTools) payload.tools = oaTools;
 
