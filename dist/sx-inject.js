@@ -2207,7 +2207,7 @@
             badge = document.createElement("span");
             badge.className = "sx-msg-perf-metrics";
             badge.style.cssText = `
-                        margin-left: 8px;
+                        margin-left: auto;
                         display: inline-flex;
                         align-items: center;
                         gap: 5px;
@@ -2217,7 +2217,7 @@
                         vertical-align: middle;
                         line-height: 1;
                     `;
-            footerEl.insertBefore(badge, footerEl.childNodes[1] || footerEl.firstChild.nextSibling || footerEl.firstChild);
+            footerEl.appendChild(badge);
           }
           const splitStr = stats.normalTokens != null || stats.thinkingTokens != null ? ` N${stats.normalTokens || 0}/T${stats.thinkingTokens || 0}` : "";
           badge.innerHTML = `
