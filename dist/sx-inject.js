@@ -1262,6 +1262,7 @@
       this._lastGen = null;
       this._lastPollTs = 0;
       this._allCtxCache = null;
+      this._lastRingModel = null;
     }
     _fmt(n) {
       if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -1327,6 +1328,11 @@
       const activeM = sxModels.find((m) => m.id === activeId) || sxModels[0];
       const cleanConvId = (activeConvKey || "").replace(/^conv_/, "");
       const cacheKey = (cleanConvId || "new") + "_" + (activeM?.id || "");
+      const modelKey = activeM?.id || "";
+      if (this._lastRingModel && this._lastRingModel !== modelKey) {
+        this.refreshSentEstimate(cleanConvId, activeM?.id);
+      }
+      this._lastRingModel = modelKey;
       const metrics = this.calculateLiveContextMetrics(cleanConvId, activeM);
       this.updateContextRing(metrics);
       const pop = document.getElementById("sx-context-popover");
@@ -2874,6 +2880,8 @@
     }
     init() {
       this.injectGlobalStyles();
+      setInterval(() => this.checkForUpdates(), 6e4);
+      setTimeout(() => this.checkForUpdates(), 2e4);
       setInterval(() => this.checkUrlChange(), 90);
       const origPushState = history.pushState;
       if (origPushState) {
@@ -2937,6 +2945,36 @@
     }
     sxEsc(str) {
       return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+    async checkForUpdates() {
+      try {
+        const r = await this.network.get("/sx/versions");
+        if (!r || !r.ok) return;
+        const curInject = window.__SX_BUILD || "";
+        if (r.injectBuild && curInject && r.injectBuild !== curInject) {
+          if (this._updateNotified !== r.injectBuild) {
+            this._updateNotified = r.injectBuild;
+            this.logger?.info?.("UIInjector", `New inject build ${r.injectBuild} available (running ${curInject})`);
+          }
+          if (this._isIdleForReload()) {
+            this.logger?.info?.("UIInjector", "Auto-reloading to new build while idle.");
+            window.location.reload();
+          }
+        }
+      } catch (e) {
+      }
+    }
+    _isIdleForReload() {
+      try {
+        if (document.querySelector(".sx-modal-overlay")) return false;
+        if (this.quota && (this.quota._streamActive || Date.now() - (this.quota._lastStreamTs || 0) < 6e4)) return false;
+        const ed = document.querySelector('[contenteditable="true"], textarea');
+        const txt = (ed?.innerText || ed?.textContent || ed?.value || "").trim();
+        if (txt) return false;
+        return true;
+      } catch (e) {
+        return false;
+      }
     }
     injectGlobalStyles() {
       if (document.getElementById("sx-custom-styles")) return;
@@ -4560,7 +4598,7 @@
   };
 
   // src/index.js
-  var SX_BUILD = "2026.09.22-r12";
+  var SX_BUILD = "2026.09.22-r13";
   (function bootstrapSX() {
     const logger = new Logger("SX");
     logger.info("Core", `Bootstrapping SX Core SDK v2.0 (build ${SX_BUILD})...`);

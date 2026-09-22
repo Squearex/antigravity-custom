@@ -18,6 +18,7 @@ export class QuotaMonitor {
         this._lastGen = null;
         this._lastPollTs = 0;
         this._allCtxCache = null;
+        this._lastRingModel = null;
     }
 
     _fmt(n) {
@@ -93,6 +94,14 @@ export class QuotaMonitor {
         const activeM = sxModels.find(m => m.id === activeId) || sxModels[0];
         const cleanConvId = (activeConvKey || '').replace(/^conv_/, '');
         const cacheKey = (cleanConvId || 'new') + '_' + (activeM?.id || '');
+
+        // Model switched: sent cache belongs to the old model — refresh immediately
+        // instead of showing stale/transcript numbers for up to 30s.
+        const modelKey = activeM?.id || '';
+        if (this._lastRingModel && this._lastRingModel !== modelKey) {
+            this.refreshSentEstimate(cleanConvId, activeM?.id);
+        }
+        this._lastRingModel = modelKey;
 
         const metrics = this.calculateLiveContextMetrics(cleanConvId, activeM);
         this.updateContextRing(metrics);

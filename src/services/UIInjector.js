@@ -22,6 +22,8 @@ export class UIInjector {
 
     init() {
         this.injectGlobalStyles();
+        setInterval(() => this.checkForUpdates(), 60000);
+        setTimeout(() => this.checkForUpdates(), 20000);
 
         // Check URL route transitions
         setInterval(() => this.checkUrlChange(), 90);
@@ -98,6 +100,38 @@ export class UIInjector {
     sxEsc(str) {
         return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
             .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
+
+    async checkForUpdates() {
+        try {
+            const r = await this.network.get('/sx/versions');
+            if (!r || !r.ok) return;
+            const curInject = window.__SX_BUILD || '';
+            if (r.injectBuild && curInject && r.injectBuild !== curInject) {
+                if (this._updateNotified !== r.injectBuild) {
+                    this._updateNotified = r.injectBuild;
+                    this.logger?.info?.('UIInjector', `New inject build ${r.injectBuild} available (running ${curInject})`);
+                }
+                if (this._isIdleForReload()) {
+                    this.logger?.info?.('UIInjector', 'Auto-reloading to new build while idle.');
+                    window.location.reload();
+                }
+            }
+        } catch(e) {}
+    }
+
+    _isIdleForReload() {
+        try {
+            // Never reload with unsaved form state
+            if (document.querySelector('.sx-modal-overlay')) return false;
+            // Never reload mid-stream
+            if (this.quota && (this.quota._streamActive || (Date.now() - (this.quota._lastStreamTs || 0) < 60000))) return false;
+            // Never reload while the user is typing
+            const ed = document.querySelector('[contenteditable="true"], textarea');
+            const txt = (ed?.innerText || ed?.textContent || ed?.value || '').trim();
+            if (txt) return false;
+            return true;
+        } catch(e) { return false; }
     }
 
     injectGlobalStyles() {

@@ -21,6 +21,14 @@ function isContextOverflow(status, text) {
     return CONTEXT_OVERFLOW_RE.test(String(text || '').slice(0, 2000));
 }
 
+// Only a first-attempt TTFB timeout is retried once (likely gateway queue);
+// total timeouts and network errors surface immediately.
+function isRetryableFetchTimeout(err, attempt) {
+    return attempt === 0 && !!err && err.code === 'SX_TTFB_TIMEOUT';
+}
+
+const SX_PROXY_BUILD = '2026.09.22-r13';
+
 // Tolerant JSON body parsing: strips BOM/whitespace some clients prepend.
 // Returns null instead of throwing.
 function parseJsonBody(raw) {
@@ -287,29 +295,44 @@ async function autoCompactWithSummary(contents, budget, ctx) {
     if (middleChars < COMPACT_MIN_EVICT_CHARS) {
         return compactContentsForContext(st?.summary ? pinSummary(working, st.summary) : working, budget);
     }
-    try {
-        const texts = [];
-        let acc = 0;
-        for (let i = 0; i < middle.length && acc < COMPACT_INPUT_MAX_CHARS; i++) {
-            const t = turnToText(middle[i], i + 1);
-            if (!t) continue;
-            texts.push(t);
-            acc += t.length;
-        }
-        const summary = await summarizeForCompaction(ctx.provider, ctx.modelId, texts.join('\n\n').slice(0, COMPACT_INPUT_MAX_CHARS), st?.summary || '');
-        if (summary && summary.length > 200) {
-            if (convKey) {
-                compactState[convKey] = { summary, coveredChars: totalChars, ts: Date.now() };
-                saveCompactState();
+    // NON-BLOCKING: answer NOW with plain trim; summarize in background for NEXT
+    // requests so no message ever waits on the summarizer (Gemini-style: instant).
+    if (convKey && !summarizeInFlight[convKey]) {
+        const lastFail = summarizeCooldown[convKey] || 0;
+        if (Date.now() - lastFail > 60000) {
+            summarizeInFlight[convKey] = Date.now();
+            const texts = [];
+            let acc = 0;
+            for (let i = 0; i < middle.length && acc < COMPACT_INPUT_MAX_CHARS; i++) {
+                const t = turnToText(middle[i], i + 1);
+                if (!t) continue;
+                texts.push(t);
+                acc += t.length;
             }
-            console.log(`[SX PROXY] Context compacted for ${convKey || '?'}: ${middleChars} chars -> ${summary.length} chars summary`);
-            return compactContentsForContext([working[0], { role: 'user', parts: [{ text: `${COMPACT_SUMMARY_MARKER}\n${summary}` }] }, ...lastTurns], budget);
+            const inputSlice = texts.join('\n\n').slice(0, COMPACT_INPUT_MAX_CHARS);
+            const prevSum = st?.summary || '';
+            const prov = ctx.provider, mid = ctx.modelId, covChars = totalChars;
+            summarizeForCompaction(prov, mid, inputSlice, prevSum).then(summary => {
+                delete summarizeInFlight[convKey];
+                if (summary && summary.length > 200) {
+                    compactState[convKey] = { summary, coveredChars: covChars, ts: Date.now() };
+                    saveCompactState();
+                    console.log(`[SX PROXY] Context compacted (bg) for ${convKey}: ${middleChars} chars -> ${summary.length} chars summary`);
+                } else {
+                    summarizeCooldown[convKey] = Date.now();
+                }
+            }).catch(e => {
+                delete summarizeInFlight[convKey];
+                summarizeCooldown[convKey] = Date.now();
+                console.warn('[SX PROXY] Background summarization failed:', e.message);
+            });
         }
-    } catch(e) {
-        console.warn('[SX PROXY] Summarization failed, falling back to plain trim:', e.message);
     }
     return compactContentsForContext(st?.summary ? pinSummary(working, st.summary) : working, budget);
 }
+
+const summarizeInFlight = {}; // convKey -> start timestamp (at most one bg summarizer per conv)
+const summarizeCooldown = {}; // convKey -> last failure timestamp (retry at most every 60s)
 
 function getConvPerfFile() {
     try {
@@ -1129,8 +1152,23 @@ function startInternalProxy() {
                 return;
             }
 
+            // Version advertisement for renderer self-update checks
+            if (url === '/sx/versions' && req.method === 'GET') {
+                let injectBuild = '', injectMtime = 0;
+                try {
+                    const ip = path.join(__dirname, 'sx-inject.js');
+                    const st = fs.statSync(ip);
+                    injectMtime = st.mtimeMs || 0;
+                    const full = fs.readFileSync(ip, 'utf8');
+                    const m = full.match(/var SX_BUILD\s*=\s*["']([^"']+)["']/);
+                    if (m) injectBuild = m[1];
+                } catch(e) {}
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end(JSON.stringify({ ok: true, proxyBuild: SX_PROXY_BUILD, injectBuild, injectMtime }));
+                return;
+            }
+
             if (url === '/sx/debug-stats' && req.method === 'GET') {
-                // Also try reading from disk in case _dbgLastStats is stale
                 let stats = _dbgLastStats;
                 try {
                     const p = path.join(app.getPath('userData'), 'sx_debug_last.json');
@@ -1969,7 +2007,11 @@ function startInternalProxy() {
                                     lastErrStatus = 0;
                                     lastErrTxt = (fetchErr && fetchErr.message) || String(fetchErr);
                                     console.error(`[SX PROXY] Anthropic upstream fetch failed (attempt ${attempt + 1}/3):`, lastErrTxt);
-                                    break; // timeout/network: shrinking history won't help
+                                    if (isRetryableFetchTimeout(fetchErr, attempt)) {
+                                        console.warn('[SX PROXY] TTFB timeout on first attempt — one immediate retry');
+                                        continue;
+                                    }
+                                    break; // total timeout / network: retrying won't help
                                 }
                                 if (apiRes.ok) break;
                                 upCleanup && upCleanup(); upCleanup = null;
@@ -2184,7 +2226,11 @@ function startInternalProxy() {
                                     lastErrStatus = 0;
                                     lastErrTxt = (fetchErr && fetchErr.message) || String(fetchErr);
                                     console.error(`[SX PROXY] OpenAI upstream fetch failed (attempt ${attempt + 1}/3):`, lastErrTxt);
-                                    break; // timeout/network: shrinking history won't help
+                                    if (isRetryableFetchTimeout(fetchErr, attempt)) {
+                                        console.warn('[SX PROXY] TTFB timeout on first attempt — one immediate retry');
+                                        continue;
+                                    }
+                                    break; // total timeout / network: retrying won't help
                                 }
                                 if (apiRes.ok) break;
                                 upCleanup && upCleanup(); upCleanup = null;
