@@ -26,10 +26,12 @@ function isContextOverflow(status, text) {
 // total timer bounds the whole attempt including long streams.
 const SX_TTFB_TIMEOUT_MS = 180000;
 const SX_TOTAL_TIMEOUT_MS = 12 * 60 * 1000;
-async function fetchUpstream(url, opts) {
+async function fetchUpstream(url, opts, timeouts) {
     const ctrl = new AbortController();
     let totalFired = false, ttfbFired = false;
-    const ttfbTimer = setTimeout(() => { ttfbFired = true; try { ctrl.abort(); } catch(e){} }, SX_TTFB_TIMEOUT_MS);
+    const ttfbMs = (timeouts && timeouts.ttfbMs) || SX_TTFB_TIMEOUT_MS;
+    const totalMs = (timeouts && timeouts.totalMs) || SX_TOTAL_TIMEOUT_MS;
+    const ttfbTimer = setTimeout(() => { ttfbFired = true; try { ctrl.abort(); } catch(e){} }, ttfbMs);
     const totalTimer = setTimeout(() => { totalFired = true; try { ctrl.abort(); } catch(e){} }, totalMs);
     const done = () => { clearTimeout(ttfbTimer); clearTimeout(totalTimer); };
     try {
