@@ -709,10 +709,28 @@ function sanitizeOpenAIMessages(messages) {
 
 function sanitizeAnthropicMessages(messages) {
     if (!Array.isArray(messages) || messages.length === 0) return [{ role: 'user', content: 'Hello' }];
+    // Pass 1: normalize string user content to blocks so roles can merge
+    const normalized = messages.map(msg => {
+        if (msg && msg.role === 'user' && typeof msg.content === 'string') {
+            return { role: 'user', content: [{ type: 'text', text: msg.content }] };
+        }
+        return msg;
+    });
+    // Pass 2: merge consecutive same-role messages (Anthropic requires alternation)
+    const merged = [];
+    for (const msg of normalized) {
+        const prev = merged[merged.length - 1];
+        if (prev && msg && prev.role === msg.role && Array.isArray(prev.content) && Array.isArray(msg.content)) {
+            prev.content = prev.content.concat(msg.content);
+        } else {
+            merged.push(msg);
+        }
+    }
+    // Pass 3: drop orphan tool_results (existing pairing logic)
     const cleaned = [];
     const pendingUses = new Set();
 
-    for (const msg of messages) {
+    for (const msg of merged) {
         if (msg.role === 'assistant') {
             if (Array.isArray(msg.content)) {
                 msg.content.forEach(it => {
@@ -743,7 +761,11 @@ function sanitizeAnthropicMessages(messages) {
             cleaned.push(msg);
         }
     }
-    return cleaned;
+    // Pass 4: first message must be user role (Anthropic requirement)
+    if (cleaned.length && cleaned[0].role !== 'user') {
+        cleaned.unshift({ role: 'user', content: [{ type: 'text', text: 'Devam et' }] });
+    }
+    return cleaned.length ? cleaned : [{ role: 'user', content: 'Hello' }];
 }
 
 function geminiContentsToOpenAI(contents, systemText) {
@@ -770,7 +792,7 @@ function geminiContentsToOpenAI(contents, systemText) {
                 const fargs = fc.args || {};
                 callIdCounter++;
                 const cid = fc.id || `call_${callIdCounter}_${fname.slice(0, 10)}`;
-                pendingCallIds[fname] = cid;
+                (pendingCallIds[fname] = pendingCallIds[fname] || []).push(cid);
                 toolCalls.push({
                     id: cid,
                     type: 'function',
@@ -783,7 +805,8 @@ function geminiContentsToOpenAI(contents, systemText) {
                 const fr = p.functionResponse;
                 const fname = fr.name || 'tool';
                 const fresp = fr.response || {};
-                const cid = fr.id || pendingCallIds[fname] || `call_${fname}`;
+                const q = pendingCallIds[fname];
+                const cid = fr.id || (Array.isArray(q) ? (q.shift() || `call_${fname}`) : (q || `call_${fname}`));
                 toolResponses.push({
                     role: 'tool',
                     tool_call_id: cid,
@@ -838,7 +861,7 @@ function geminiContentsToAnthropic(contents) {
                 const fargs = fc.args || {};
                 callIdCounter++;
                 const cid = fc.id || `call_${callIdCounter}_${fname.slice(0, 10)}`;
-                pendingCallIds[fname] = cid;
+                (pendingCallIds[fname] = pendingCallIds[fname] || []).push(cid);
                 assistantItems.push({
                     type: 'tool_use',
                     id: cid,
@@ -849,7 +872,8 @@ function geminiContentsToAnthropic(contents) {
                 const fr = p.functionResponse;
                 const fname = fr.name || 'tool';
                 const fresp = fr.response || {};
-                const cid = fr.id || pendingCallIds[fname] || `call_${fname}`;
+                const q = pendingCallIds[fname];
+                const cid = fr.id || (Array.isArray(q) ? (q.shift() || `call_${fname}`) : (q || `call_${fname}`));
                 toolResults.push({
                     type: 'tool_result',
                     tool_use_id: cid,
@@ -887,6 +911,26 @@ function loadTranscriptContents(convId) {
     }
     if (!filePath) return [];
 
+    // Stat cache: skip re-reading/parsing multi-MB transcripts when unchanged.
+    // Always return a copy — callers may push notes into the array.
+    try {
+        const st = fs.statSync(filePath);
+        const hit = transcriptCache[filePath];
+        if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.contents.slice();
+    } catch(e) {}
+    const parsed = parseTranscriptFile(filePath);
+    try {
+        const st = fs.statSync(filePath);
+        transcriptCache[filePath] = { size: st.size, mtimeMs: st.mtimeMs, contents: parsed };
+        const keys = Object.keys(transcriptCache);
+        if (keys.length > 50) delete transcriptCache[keys[0]];
+    } catch(e) {}
+    return parsed.slice();
+}
+
+const transcriptCache = {}; // filePath -> { size, mtimeMs, contents }
+
+function parseTranscriptFile(filePath) {
     try {
         const lines = fs.readFileSync(filePath, 'utf8').split('\n');
         const contents = [];
@@ -1398,19 +1442,23 @@ function startInternalProxy() {
                 let rawBody = '';
                 req.on('data', chunk => rawBody += chunk);
                 req.on('end', async () => {
+                    const ctrl = new AbortController();
+                    const timer = setTimeout(() => { try { ctrl.abort(); } catch(e){} }, 30000);
                     try {
                         const { url: targetUrl, method = 'GET', headers = {}, body: fetchBody } = JSON.parse(rawBody);
                         if (!targetUrl || !targetUrl.startsWith('http')) throw new Error('Invalid URL');
-                        const fetchOpts = { method, headers };
+                        const fetchOpts = { method, headers, signal: ctrl.signal };
                         if (fetchBody) fetchOpts.body = fetchBody;
                         const upstream = await fetch(targetUrl, fetchOpts);
                         const upstreamText = await upstream.text();
+                        clearTimeout(timer);
                         res.writeHead(upstream.status, {
                             'Content-Type': upstream.headers.get('content-type') || 'application/json',
                             'Access-Control-Allow-Origin': '*'
                         });
                         res.end(upstreamText);
                     } catch(e) {
+                        clearTimeout(timer);
                         res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                         res.end(JSON.stringify({ error: e.message }));
                     }
@@ -1604,7 +1652,7 @@ function startInternalProxy() {
                         
                         // 3. Fallback to placeholder index
                         if (!customModel) {
-                            const match = requestedModel.match(/MODEL_PLACEHOLDER_M(\d+)/i);
+                            const match = String(requestedModel || '').match(/MODEL_PLACEHOLDER_M(\d+)/i);
                             if (match) {
                                 modelIdx = parseInt(match[1], 10) - 1;
                             } else {
@@ -2324,13 +2372,17 @@ function startInternalProxy() {
             let bodyChunks = [];
             req.on('data', chunk => bodyChunks.push(chunk));
             req.on('end', async () => {
+                const ctrl = new AbortController();
+                const timer = setTimeout(() => { try { ctrl.abort(); } catch(e){} }, 60000);
                 try {
                     const upstream = await fetch(targetUrl, {
                         method: req.method,
                         headers: fwdHeaders,
+                        signal: ctrl.signal,
                         body: req.method !== 'GET' && req.method !== 'HEAD' ? Buffer.concat(bodyChunks) : undefined
                     });
                     const respBuffer = await upstream.arrayBuffer();
+                    clearTimeout(timer);
                     const respHeaders = {};
                     upstream.headers.forEach((val, key) => {
                         if (key !== 'transfer-encoding' && key !== 'content-encoding') {
@@ -2341,6 +2393,7 @@ function startInternalProxy() {
                     res.writeHead(upstream.status, respHeaders);
                     res.end(Buffer.from(respBuffer));
                 } catch(e) {
+                    clearTimeout(timer);
                     res.writeHead(502);
                     res.end(e.message);
                 }

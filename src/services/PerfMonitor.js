@@ -39,7 +39,12 @@ export class PerfMonitor {
         try {
             if (this._observer) this._observer.disconnect();
             this._observer = new MutationObserver(() => {
-                this.injectMetricsToMessageFooters();
+                // Debounced: streaming fires mutations per chunk; rescan at most ~1.5/s
+                if (this._obsTimer) return;
+                this._obsTimer = setTimeout(() => {
+                    this._obsTimer = null;
+                    this.injectMetricsToMessageFooters();
+                }, 650);
             });
             this._observer.observe(document.body, {
                 childList: true,
@@ -82,14 +87,20 @@ export class PerfMonitor {
     }
 
     /**
-     * Retrieves or generates distinct metrics for a specific message
+     * Retrieves real measured metrics for a specific message.
+     * Returns null when no measurement exists — never fabricates numbers.
      */
     getStatsForMessage(footerEl, isLastMessage = false) {
+        this._pruneStoredStats();
         const sig = this.getMessageSignature(footerEl);
         if (sig) {
             try {
                 const saved = localStorage.getItem('sx_msg_perf_' + sig);
-                if (saved) return JSON.parse(saved);
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    // Only trust entries that came from real measurements
+                    if (parsed && parsed.measured === true) return parsed;
+                }
             } catch(e) {}
         }
 
@@ -99,55 +110,58 @@ export class PerfMonitor {
             this._latestLivePerf = null;
             if (sig) {
                 try {
-                    localStorage.setItem('sx_msg_perf_' + sig, JSON.stringify(live));
+                    localStorage.setItem('sx_msg_perf_' + sig, JSON.stringify({ ...live, measured: true }));
                 } catch(e) {}
             }
-            return live;
+            return { ...live, measured: true };
         }
 
-        // Generate distinct, accurate metrics derived from the message's actual text and thought duration
-        const group = footerEl.closest('.flex.flex-col.gap-0\\.5.group.w-full.scroll-mt-4') || 
-                      footerEl.closest('[class*="group"]');
-        const textEl = group ? (group.querySelector('.prose, .break-words, .leading-relaxed, p') || group) : null;
-        const rawText = textEl ? textEl.innerText.trim() : '';
-        const tokens = this.countTokens(rawText);
+        return null;
+    }
 
-        // Extract thought time if present (e.g. "Thought for 1s", "Worked for 24s")
-        let ttftMs = 850;
-        const groupText = group ? group.innerText : '';
-        const thoughtMatch = groupText.match(/(?:Thought|Worked) for (\d+(?:\.\d+)?)\s*s/i);
-        if (thoughtMatch) {
-            const thoughtSec = parseFloat(thoughtMatch[1]);
-            ttftMs = Math.round(thoughtSec * 1000 + 120);
-        } else {
-            // Natural network latency variance
-            const variance = (tokens * 17) % 300;
-            ttftMs = 680 + variance;
-        }
-
-        // Realistic generation speed based on token volume (35 - 110 TPS)
-        const baseSpeed = 55 + ((tokens * 13) % 45);
-        const genMs = Math.max(150, Math.round(tokens * (1000 / baseSpeed)));
-        const totalMs = ttftMs + genMs;
-        const tps = Number((tokens / (genMs / 1000)).toFixed(1));
-
-        const derivedStats = {
-            ttftMs,
-            totalMs,
-            generationMs: genMs,
-            completionTokens: tokens,
-            tps,
-            modelName: this._perfStatsCache['last']?.modelName || 'Active Model',
-            timestamp: new Date().toISOString()
-        };
-
-        if (sig && tokens > 0) {
-            try {
-                localStorage.setItem('sx_msg_perf_' + sig, JSON.stringify(derivedStats));
-            } catch(e) {}
-        }
-
-        return derivedStats;
+    /**
+     * Caps stored per-message stats so localStorage can't fill up over time.
+     * Throttled: runs at most once every 120s.
+     */
+    _pruneStoredStats() {
+        try {
+            const now = Date.now();
+            // One-time purge of pre-v2 fabricated entries (never measured)
+            if (!localStorage.getItem('sx_perf_purged_v2')) {
+                const del = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    if (k && k.startsWith('sx_msg_perf_')) {
+                        try {
+                            const v = JSON.parse(localStorage.getItem(k) || '{}');
+                            if (!v || v.measured !== true) del.push(k);
+                        } catch(e) { del.push(k); }
+                    }
+                }
+                del.forEach(k => { try { localStorage.removeItem(k); } catch(e){} });
+                try { localStorage.setItem('sx_perf_purged_v2', '1'); } catch(e){}
+            }
+            if (this._lastPruneTs && (now - this._lastPruneTs < 120000)) return;
+            this._lastPruneTs = now;
+            const keys = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const k = localStorage.key(i);
+                if (k && k.startsWith('sx_msg_perf_')) keys.push(k);
+            }
+            const MAX_KEYS = 300;
+            if (keys.length <= MAX_KEYS) return;
+            const withTs = keys.map(k => {
+                let ts = 0;
+                try {
+                    const v = JSON.parse(localStorage.getItem(k) || '{}');
+                    ts = Date.parse(v.timestamp || '') || 0;
+                } catch(e) {}
+                return { k, ts };
+            });
+            withTs.sort((a, b) => a.ts - b.ts);
+            const drop = withTs.slice(0, withTs.length - MAX_KEYS);
+            drop.forEach(({ k }) => { try { localStorage.removeItem(k); } catch(e){} });
+        } catch(e) {}
     }
 
     /**
@@ -156,12 +170,13 @@ export class PerfMonitor {
     recordLiveMessagePerf(convKey, perfData) {
         if (!perfData) return;
         const cleanConvId = (convKey || '').replace(/^conv_/, '');
-        this._perfStatsCache[cleanConvId || 'new'] = perfData;
-        this._perfStatsCache['last'] = perfData;
-        this._latestLivePerf = perfData;
+        const measured = { ...perfData, measured: true };
+        this._perfStatsCache[cleanConvId || 'new'] = measured;
+        this._perfStatsCache['last'] = measured;
+        this._latestLivePerf = measured;
 
         try {
-            localStorage.setItem('sx_last_perf_stats', JSON.stringify(perfData));
+            localStorage.setItem('sx_last_perf_stats', JSON.stringify(measured));
         } catch(e) {}
 
         // Bind immediately to the newest message
@@ -171,7 +186,7 @@ export class PerfMonitor {
             const sig = this.getMessageSignature(lastFooter);
             if (sig) {
                 try {
-                    localStorage.setItem('sx_msg_perf_' + sig, JSON.stringify(perfData));
+                    localStorage.setItem('sx_msg_perf_' + sig, JSON.stringify(measured));
                 } catch(e) {}
             }
         }
@@ -205,10 +220,11 @@ export class PerfMonitor {
             const raw = await this.network.fetchPerfStats(cleanConvId);
             const stats = raw?.stats || raw;
             if (stats && stats.ttftMs) {
-                this._perfStatsCache[cleanConvId || 'new'] = stats;
-                this._perfStatsCache['last'] = stats;
+                const measured = { ...stats, measured: true };
+                this._perfStatsCache[cleanConvId || 'new'] = measured;
+                this._perfStatsCache['last'] = measured;
                 this.updatePerfButtonUI();
-                return stats;
+                return measured;
             }
         } catch(e) {}
         return this.getLatestStats(convId);
@@ -219,6 +235,9 @@ export class PerfMonitor {
      */
     injectMetricsToMessageFooters() {
         try {
+            const now = Date.now();
+            if (this._lastScanTs && (now - this._lastScanTs < 600)) return;
+            this._lastScanTs = now;
             const footers = Array.from(document.querySelectorAll('.flex.w-full.items-start.gap-1 > .grow'));
             if (!footers || footers.length === 0) return;
 

@@ -101,7 +101,7 @@ export class ModelManager {
     isVisionModel(m) {
         if (typeof m.supportsImages === 'boolean') return m.supportsImages;
         const str = `${m.modelId || ''} ${m.name || ''} ${m.id || ''}`.toLowerCase();
-        if (/(?:vl|vision|omni|4o|gemini|gemma|inkling|nex-n|pixtral|llava|paligemma|content-safety|qwen.*vl|qwen3\.8)/i.test(str)) {
+        if (/(?:vl|vision|omni|4o|gemini|gemma|inkling|nex-n|pixtral|llava|paligemma|qwen.*vl|qwen3\.8)/i.test(str)) {
             if (/(?:code|sante|fin|super|ultra|lightning)/i.test(str) && !/(?:vl|vision|omni)/i.test(str)) {
                 return false;
             }
@@ -118,7 +118,9 @@ export class ModelManager {
     }
 
     buildSXModelConfig(m, index = 0) {
-        const placeholderEnum = 'MODEL_PLACEHOLDER_M1';
+        // Slot enum must match the proxy's fetchAvailableModels mapping (MODEL_PLACEHOLDER_M{idx+1})
+        const slotNum = Number(index) + 1;
+        const placeholderEnum = 'MODEL_PLACEHOLDER_M' + slotNum;
         const hasVision = this.isVisionModel(m);
         const hasTools = this.supportsTools(m);
         return {

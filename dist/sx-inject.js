@@ -1089,7 +1089,7 @@
     isVisionModel(m) {
       if (typeof m.supportsImages === "boolean") return m.supportsImages;
       const str = `${m.modelId || ""} ${m.name || ""} ${m.id || ""}`.toLowerCase();
-      if (/(?:vl|vision|omni|4o|gemini|gemma|inkling|nex-n|pixtral|llava|paligemma|content-safety|qwen.*vl|qwen3\.8)/i.test(str)) {
+      if (/(?:vl|vision|omni|4o|gemini|gemma|inkling|nex-n|pixtral|llava|paligemma|qwen.*vl|qwen3\.8)/i.test(str)) {
         if (/(?:code|sante|fin|super|ultra|lightning)/i.test(str) && !/(?:vl|vision|omni)/i.test(str)) {
           return false;
         }
@@ -1104,7 +1104,8 @@
       return true;
     }
     buildSXModelConfig(m, index = 0) {
-      const placeholderEnum = "MODEL_PLACEHOLDER_M1";
+      const slotNum = Number(index) + 1;
+      const placeholderEnum = "MODEL_PLACEHOLDER_M" + slotNum;
       const hasVision = this.isVisionModel(m);
       const hasTools = this.supportsTools(m);
       return {
@@ -1779,7 +1780,11 @@
       try {
         if (this._observer) this._observer.disconnect();
         this._observer = new MutationObserver(() => {
-          this.injectMetricsToMessageFooters();
+          if (this._obsTimer) return;
+          this._obsTimer = setTimeout(() => {
+            this._obsTimer = null;
+            this.injectMetricsToMessageFooters();
+          }, 650);
         });
         this._observer.observe(document.body, {
           childList: true,
@@ -1818,14 +1823,19 @@
       return `${timeText}__${textSnippet}`;
     }
     /**
-     * Retrieves or generates distinct metrics for a specific message
+     * Retrieves real measured metrics for a specific message.
+     * Returns null when no measurement exists — never fabricates numbers.
      */
     getStatsForMessage(footerEl, isLastMessage = false) {
+      this._pruneStoredStats();
       const sig = this.getMessageSignature(footerEl);
       if (sig) {
         try {
           const saved = localStorage.getItem("sx_msg_perf_" + sig);
-          if (saved) return JSON.parse(saved);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed && parsed.measured === true) return parsed;
+          }
         } catch (e) {
         }
       }
@@ -1834,46 +1844,73 @@
         this._latestLivePerf = null;
         if (sig) {
           try {
-            localStorage.setItem("sx_msg_perf_" + sig, JSON.stringify(live));
+            localStorage.setItem("sx_msg_perf_" + sig, JSON.stringify({ ...live, measured: true }));
           } catch (e) {
           }
         }
-        return live;
+        return { ...live, measured: true };
       }
-      const group = footerEl.closest(".flex.flex-col.gap-0\\.5.group.w-full.scroll-mt-4") || footerEl.closest('[class*="group"]');
-      const textEl = group ? group.querySelector(".prose, .break-words, .leading-relaxed, p") || group : null;
-      const rawText = textEl ? textEl.innerText.trim() : "";
-      const tokens = this.countTokens(rawText);
-      let ttftMs = 850;
-      const groupText = group ? group.innerText : "";
-      const thoughtMatch = groupText.match(/(?:Thought|Worked) for (\d+(?:\.\d+)?)\s*s/i);
-      if (thoughtMatch) {
-        const thoughtSec = parseFloat(thoughtMatch[1]);
-        ttftMs = Math.round(thoughtSec * 1e3 + 120);
-      } else {
-        const variance = tokens * 17 % 300;
-        ttftMs = 680 + variance;
-      }
-      const baseSpeed = 55 + tokens * 13 % 45;
-      const genMs = Math.max(150, Math.round(tokens * (1e3 / baseSpeed)));
-      const totalMs = ttftMs + genMs;
-      const tps = Number((tokens / (genMs / 1e3)).toFixed(1));
-      const derivedStats = {
-        ttftMs,
-        totalMs,
-        generationMs: genMs,
-        completionTokens: tokens,
-        tps,
-        modelName: this._perfStatsCache["last"]?.modelName || "Active Model",
-        timestamp: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      if (sig && tokens > 0) {
-        try {
-          localStorage.setItem("sx_msg_perf_" + sig, JSON.stringify(derivedStats));
-        } catch (e) {
+      return null;
+    }
+    /**
+     * Caps stored per-message stats so localStorage can't fill up over time.
+     * Throttled: runs at most once every 120s.
+     */
+    _pruneStoredStats() {
+      try {
+        const now = Date.now();
+        if (!localStorage.getItem("sx_perf_purged_v2")) {
+          const del = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith("sx_msg_perf_")) {
+              try {
+                const v = JSON.parse(localStorage.getItem(k) || "{}");
+                if (!v || v.measured !== true) del.push(k);
+              } catch (e) {
+                del.push(k);
+              }
+            }
+          }
+          del.forEach((k) => {
+            try {
+              localStorage.removeItem(k);
+            } catch (e) {
+            }
+          });
+          try {
+            localStorage.setItem("sx_perf_purged_v2", "1");
+          } catch (e) {
+          }
         }
+        if (this._lastPruneTs && now - this._lastPruneTs < 12e4) return;
+        this._lastPruneTs = now;
+        const keys = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith("sx_msg_perf_")) keys.push(k);
+        }
+        const MAX_KEYS = 300;
+        if (keys.length <= MAX_KEYS) return;
+        const withTs = keys.map((k) => {
+          let ts = 0;
+          try {
+            const v = JSON.parse(localStorage.getItem(k) || "{}");
+            ts = Date.parse(v.timestamp || "") || 0;
+          } catch (e) {
+          }
+          return { k, ts };
+        });
+        withTs.sort((a, b) => a.ts - b.ts);
+        const drop = withTs.slice(0, withTs.length - MAX_KEYS);
+        drop.forEach(({ k }) => {
+          try {
+            localStorage.removeItem(k);
+          } catch (e) {
+          }
+        });
+      } catch (e) {
       }
-      return derivedStats;
     }
     /**
      * Called by FetchInterceptor when a live message finishes streaming
@@ -1881,11 +1918,12 @@
     recordLiveMessagePerf(convKey, perfData) {
       if (!perfData) return;
       const cleanConvId = (convKey || "").replace(/^conv_/, "");
-      this._perfStatsCache[cleanConvId || "new"] = perfData;
-      this._perfStatsCache["last"] = perfData;
-      this._latestLivePerf = perfData;
+      const measured = { ...perfData, measured: true };
+      this._perfStatsCache[cleanConvId || "new"] = measured;
+      this._perfStatsCache["last"] = measured;
+      this._latestLivePerf = measured;
       try {
-        localStorage.setItem("sx_last_perf_stats", JSON.stringify(perfData));
+        localStorage.setItem("sx_last_perf_stats", JSON.stringify(measured));
       } catch (e) {
       }
       const footers = Array.from(document.querySelectorAll(".flex.w-full.items-start.gap-1 > .grow"));
@@ -1894,7 +1932,7 @@
         const sig = this.getMessageSignature(lastFooter);
         if (sig) {
           try {
-            localStorage.setItem("sx_msg_perf_" + sig, JSON.stringify(perfData));
+            localStorage.setItem("sx_msg_perf_" + sig, JSON.stringify(measured));
           } catch (e) {
           }
         }
@@ -1924,10 +1962,11 @@
         const raw = await this.network.fetchPerfStats(cleanConvId);
         const stats = raw?.stats || raw;
         if (stats && stats.ttftMs) {
-          this._perfStatsCache[cleanConvId || "new"] = stats;
-          this._perfStatsCache["last"] = stats;
+          const measured = { ...stats, measured: true };
+          this._perfStatsCache[cleanConvId || "new"] = measured;
+          this._perfStatsCache["last"] = measured;
           this.updatePerfButtonUI();
-          return stats;
+          return measured;
         }
       } catch (e) {
       }
@@ -1938,6 +1977,9 @@
      */
     injectMetricsToMessageFooters() {
       try {
+        const now = Date.now();
+        if (this._lastScanTs && now - this._lastScanTs < 600) return;
+        this._lastScanTs = now;
         const footers = Array.from(document.querySelectorAll(".flex.w-full.items-start.gap-1 > .grow"));
         if (!footers || footers.length === 0) return;
         footers.forEach((footerEl, idx) => {
@@ -3098,7 +3140,22 @@
       const provSel = overlay.querySelector("#sx-m-prov");
       if (provSel) provSel.onchange = () => {
         checkedIds.clear();
-        renderChecklist((filterEl?.value || "").toLowerCase().trim());
+        allFetchedModels = [];
+        const listEl = overlay.querySelector("#sx-m-check-list");
+        const fEl = overlay.querySelector("#sx-m-filter");
+        const hint = overlay.querySelector("#sx-m-bulk-hint");
+        if (listEl) {
+          listEl.style.display = "none";
+          listEl.innerHTML = "";
+        }
+        if (fEl) {
+          fEl.style.display = "none";
+          fEl.value = "";
+        }
+        if (hint) {
+          hint.style.display = "";
+          hint.textContent = "Provider'dan model listesi y\xFCkle veya a\u015Fa\u011F\u0131da manuel gir.";
+        }
       };
       overlay.querySelector("#sx-m-cancel").onclick = () => overlay.remove();
       overlay.onclick = (e) => {
@@ -3214,6 +3271,9 @@
         });
         return;
       }
+      const scanTs = Date.now();
+      if (this._lastSettingsScan && scanTs - this._lastSettingsScan < 2e3) return;
+      this._lastSettingsScan = scanTs;
       let rightPanel = null;
       const MARKERS = ["Gemini Models", "Model Credits", "Your Plan"];
       outer: for (const marker of MARKERS) {
@@ -3386,6 +3446,9 @@
       }
     }
     hookDOM() {
+      const nowTs = Date.now();
+      if (this._lastHookTs && nowTs - this._lastHookTs < 250) return;
+      this._lastHookTs = nowTs;
       try {
         const currentPreset = localStorage.getItem("theme-preset-dark");
         const foundPreset = this.theme.currentThemeId || currentPreset?.startsWith("SX ");

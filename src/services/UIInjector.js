@@ -453,7 +453,17 @@ export class UIInjector {
         const filterEl = overlay.querySelector('#sx-m-filter');
         if (filterEl) filterEl.oninput = e => renderChecklist(e.target.value.toLowerCase().trim());
         const provSel = overlay.querySelector('#sx-m-prov');
-        if (provSel) provSel.onchange = () => { checkedIds.clear(); renderChecklist((filterEl?.value || '').toLowerCase().trim()); };
+        if (provSel) provSel.onchange = () => {
+            // Provider changed: fetched list belongs to the old provider — reset
+            checkedIds.clear();
+            allFetchedModels = [];
+            const listEl = overlay.querySelector('#sx-m-check-list');
+            const fEl = overlay.querySelector('#sx-m-filter');
+            const hint = overlay.querySelector('#sx-m-bulk-hint');
+            if (listEl) { listEl.style.display = 'none'; listEl.innerHTML = ''; }
+            if (fEl) { fEl.style.display = 'none'; fEl.value = ''; }
+            if (hint) { hint.style.display = ''; hint.textContent = "Provider'dan model listesi yükle veya aşağıda manuel gir."; }
+        };
 
         overlay.querySelector('#sx-m-cancel').onclick = () => overlay.remove();
         overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
@@ -561,6 +571,12 @@ export class UIInjector {
             });
             return;
         }
+
+        // Throttle the expensive full-tree marker scan while the dialog is open
+        // without our wrapper yet (hookDOM ticks every ~250ms).
+        const scanTs = Date.now();
+        if (this._lastSettingsScan && (scanTs - this._lastSettingsScan < 2000)) return;
+        this._lastSettingsScan = scanTs;
 
         let rightPanel = null;
         const MARKERS = ['Gemini Models', 'Model Credits', 'Your Plan'];
@@ -731,6 +747,11 @@ export class UIInjector {
     }
 
     hookDOM() {
+        // Dedupe: hookDOM is driven by overlapping intervals (200ms + 350ms);
+        // running at most ~4x/sec is plenty and halves redundant DOM scans.
+        const nowTs = Date.now();
+        if (this._lastHookTs && (nowTs - this._lastHookTs < 250)) return;
+        this._lastHookTs = nowTs;
         // 1. Ensure theme classes
         try {
             const currentPreset = localStorage.getItem('theme-preset-dark');
