@@ -16,7 +16,12 @@ const learnedHistoryBudget = {};
 // Detect upstream "context too big" rejections across vendors/gateways.
 const CONTEXT_OVERFLOW_RE = /context|too many tokens|maximum context|context_length|context length|input.*too (long|large)|prompt.*too long|token.*(limit|exceed)|exceed.*token|too_large|request.*too large/i;
 function isContextOverflow(status, text) {
-    if (status === 413) return true;
+    if (status === 413) {
+        // Groq / some gateways use 413 for rate limits (ITPM / token/min), not context overflow
+        const rateKeywords = /ITPM|input tokens per minute|rate_limit_exceeded|rate limit|per minute/i;
+        if (rateKeywords.test(String(text || '').slice(0, 500))) return false;
+        return true;
+    }
     if (status !== 400 && status !== 422) return false;
     return CONTEXT_OVERFLOW_RE.test(String(text || '').slice(0, 2000));
 }
@@ -2495,10 +2500,11 @@ function startInternalProxy() {
                                             console.error('[SX PROXY] Upstream SSE error event:', errMsg);
                                 const errMsg429 = (lastErrStatus === 429) ? ' (Günlük kota doldu — yarın sıfırlanır; faklı model deneyin)' : '';
                                 const errMsg429b = (lastErrStatus === 429) ? ' (Günlük kota doldu — yarın sıfırlanır; faklı model deneyin)' : '';
+                                const errMsg413b = (lastErrStatus === 413 && /ITPM|input tokens per minute/i.test(String(lastErrTxt || '').slice(0, 300))) ? ' (Groq ITPM limiti aşıldı: mesajı kısaltın veya farklı model deneyin)' : '';
                                 const errChunk = JSON.stringify({
                                     response: {
                                         candidates: [{
-                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü${lastErrStatus ? ` (HTTP ${lastErrStatus})` : ''}: ${errTxt}${errMsg429b}` }] },
+                                            content: { role: 'model', parts: [{ text: `Model servisi hata döndürdü${lastErrStatus ? ` (HTTP ${lastErrStatus})` : ''}: ${errTxt}${errMsg429b}${errMsg413b}` }] },
                                             finishReason: 'STOP'
                                         }]
                                     }
