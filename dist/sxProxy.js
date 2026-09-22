@@ -36,7 +36,7 @@ function parseJsonBody(raw) {
 // Upstream watchdog: free-tier gateways can queue/hang forever leaving the UI
 // stuck on "Working". TTFB aborts when no response headers arrive in time;
 // total timer bounds the whole attempt including long streams.
-const SX_TTFB_TIMEOUT_MS = 180000;
+const SX_TTFB_TIMEOUT_MS = 300000;
 const SX_TOTAL_TIMEOUT_MS = 12 * 60 * 1000;
 async function fetchUpstream(url, opts, timeouts) {
     const ctrl = new AbortController();
@@ -53,7 +53,7 @@ async function fetchUpstream(url, opts, timeouts) {
     } catch (e) {
         done();
         if (ttfbFired && !totalFired) {
-            const err = new Error('Upstream zaman aşımı: 3 dakika içinde yanıt başlamadı (gateway kuyruğu ya da sunucu yanıt vermiyor).');
+            const err = new Error('Upstream zaman aşımı: 5 dakika içinde yanıt başlamadı (gateway kuyruğu ya da sunucu yanıt vermiyor).');
             err.code = 'SX_TTFB_TIMEOUT'; throw err;
         }
         if (totalFired) {
@@ -74,6 +74,14 @@ function logHit(entry) {
         }
         lines.push(JSON.stringify({ ts: new Date().toISOString(), ...entry }));
         fs.writeFileSync(p, lines.join('\n'), 'utf8');
+    } catch(e) {}
+}
+
+// Completion log: records how each chat request ENDED (done/error/timeout) so
+// stuck subagents can be diagnosed per conversation.
+function logDone(entry) {
+    try {
+        logHit({ event: 'done', ...entry });
     } catch(e) {}
 }
 
@@ -1128,8 +1136,78 @@ function startInternalProxy() {
                     const p = path.join(app.getPath('userData'), 'sx_debug_last.json');
                     if (fs.existsSync(p)) stats = JSON.parse(fs.readFileSync(p, 'utf8'));
                 } catch(e) {}
+                let guard = {};
+                try {
+                    guard = {
+                        loopTrackedConvs: Object.keys(loopGuardCalls).length,
+                        loopPending: Object.keys(loopGuardPending).length,
+                        compactConvs: Object.keys(compactState).length,
+                        streamingNow: Object.keys(streamProgress).length,
+                    };
+                } catch(e) {}
                 res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-                res.end(JSON.stringify({ ok: true, stats }));
+                res.end(JSON.stringify({ ok: true, stats, guard }));
+                return;
+            }
+
+            // Per-conversation context overview (main chat + subagents) for the context UI.
+            if (url === '/sx/get-all-contexts' && req.method === 'GET') {
+                try {
+                    loadConfigFromDisk();
+                    const homedir = require('os').homedir();
+                    const roots = [
+                        path.join(homedir, '.gemini-custom', 'antigravity-custom', 'brain'),
+                        path.join(homedir, '.gemini', 'antigravity', 'brain')
+                    ];
+                    const seen = {};
+                    const nowTs = Date.now();
+                    const consider = (id, mtimeMs) => {
+                        if (!id || seen[id]) {
+                            if (id && mtimeMs && (!seen[id] || mtimeMs > seen[id].mtime)) seen[id] = { mtime: mtimeMs };
+                            return;
+                        }
+                        seen[id] = { mtime: mtimeMs || 0 };
+                    };
+                    for (const root of roots) {
+                        try {
+                            if (!fs.existsSync(root)) continue;
+                            const dirs = fs.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory());
+                            for (const d of dirs.slice(0, 60)) {
+                                let mt = 0;
+                                try { mt = fs.statSync(path.join(root, d.name)).mtimeMs || 0; } catch(e) {}
+                                consider(d.name, mt);
+                            }
+                        } catch(e) {}
+                    }
+                    for (const k of Object.keys(convModels)) consider(String(k).replace(/^conv_/, ''), 0);
+                    for (const k of Object.keys(streamProgress)) consider(String(k).replace(/^conv_/, ''), nowTs);
+                    for (const k of Object.keys(lastSentEstimate)) consider(String(k).replace(/^conv_/, ''), 0);
+                    const ids = Object.keys(seen).sort((a, b) => (seen[b].mtime || 0) - (seen[a].mtime || 0)).slice(0, 25);
+                    const convs = ids.map(id => {
+                        let turns = 0, estTok = 0;
+                        try {
+                            const contents = loadTranscriptContents(id);
+                            turns = contents.length;
+                            estTok = Math.round(estimateContentChars(contents) / 3.5);
+                        } catch(e) {}
+                        let modelId = '', modelName = '', ctx = 0;
+                        try {
+                            const m = inMemoryConfig.models.find(x => x.id === convModels['conv_' + id]);
+                            if (m) {
+                                modelId = m.id || ''; modelName = m.name || m.modelId || '';
+                                if (Number(m.contextLength) > 0) ctx = Number(m.contextLength);
+                            }
+                        } catch(e) {}
+                        const sp = streamProgress['conv_' + id];
+                        const streaming = !!(sp && (nowTs - sp.ts < 15000));
+                        return { id, modelId, modelName, ctx, turns, estTok, mtime: seen[id].mtime || 0, streaming };
+                    });
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ ok: true, convs }));
+                } catch(e) {
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ ok: false, convs: [] }));
+                }
                 return;
             }
 
@@ -1830,6 +1908,7 @@ function startInternalProxy() {
                             turns: contents.length,
                             estTok: overheadTokens + historyTokensAfter,
                             budget: historyTokenBudget,
+                            sub: !!(req.headers['x-sx-conv-key'] && reqConvKey && req.headers['x-sx-conv-key'] !== reqConvKey) || undefined,
                         });
                         if (reqConvKey) {
                             recordSentEstimate(reqConvKey, overheadTokens + historyTokensAfter, customModel?.modelId || customModel?.id);
@@ -1911,6 +1990,7 @@ function startInternalProxy() {
                             if (!apiRes || !apiRes.ok) {
                                 const errTxt = lastErrTxt || `HTTP ${lastErrStatus}`;
                                 console.error(`[SX PROXY] Anthropic upstream error ${lastErrStatus}:`, errTxt);
+                                try { logDone({ conv: reqConvKey || null, event: 'error', proto: 'anthropic', status: lastErrStatus, err: String(errTxt).slice(0, 200) }); } catch(e){}
                                 const errChunk = JSON.stringify({
                                     response: {
                                         candidates: [{
@@ -2126,6 +2206,7 @@ function startInternalProxy() {
                             if (!apiRes || !apiRes.ok) {
                                 const errTxt = lastErrTxt || `HTTP ${lastErrStatus}`;
                                 console.error(`[SX PROXY] OpenAI upstream error ${lastErrStatus}:`, errTxt);
+                                try { logDone({ conv: reqConvKey || null, event: 'error', proto: 'openai', status: lastErrStatus, err: String(errTxt).slice(0, 200) }); } catch(e){}
                                 const errChunk = JSON.stringify({
                                     response: {
                                         candidates: [{
@@ -2393,6 +2474,7 @@ function startInternalProxy() {
                         }
 
                         // Send finish STOP frame (without empty text to avoid validation errors)
+                        try { logDone({ conv: reqConvKey || null, event: 'done', proto, model: customModel?.modelId || customModel?.id || '?' }); } catch(e){}
                         const fin = JSON.stringify({
                             response: {
                                 candidates: [{
@@ -2404,6 +2486,7 @@ function startInternalProxy() {
                         res.end();
                     } catch(err) {
                         console.error('[SX PROXY ERROR]', err);
+                        try { logDone({ conv: (typeof reqConvKey !== 'undefined' ? reqConvKey : null), event: 'error', err: String((err && err.message) || err).slice(0, 200) }); } catch(e){}
                         const errChunk = JSON.stringify({
                             response: {
                                 candidates: [{

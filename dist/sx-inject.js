@@ -1261,6 +1261,7 @@
       this._detailsFailTs = {};
       this._lastGen = null;
       this._lastPollTs = 0;
+      this._allCtxCache = null;
     }
     _fmt(n) {
       if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -1537,6 +1538,69 @@
       }
       return 0;
     }
+    async fetchAllContexts() {
+      try {
+        if (this._allCtxCache && Date.now() - this._allCtxCache._time < 3e4) {
+          return this._allCtxCache.data;
+        }
+        const r = await this.network.get("/sx/get-all-contexts");
+        if (r && r.ok && Array.isArray(r.convs)) {
+          this._allCtxCache = { data: r.convs, _time: Date.now() };
+          return r.convs;
+        }
+        this._allCtxCache = { data: [], _time: Date.now(), failed: true };
+        return [];
+      } catch (e) {
+        this._allCtxCache = { data: [], _time: Date.now(), failed: true };
+        return [];
+      }
+    }
+    renderAllContextsSection(pop, currentConvId) {
+      try {
+        let sec = pop.querySelector("#sx-ctx-subagents");
+        const convs = (this._allCtxCache?.data || []).filter((c) => c && c.id && c.id !== currentConvId).slice(0, 8);
+        if (!convs.length) {
+          if (sec) sec.remove();
+          return;
+        }
+        const fmt = (n) => {
+          if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+          if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+          return String(Math.round(n));
+        };
+        const rows = convs.map((c) => {
+          const total = Number(c.ctx) > 0 ? Number(c.ctx) : 262144;
+          const pct = Math.min(100, (Number(c.estTok) || 0) / total * 100);
+          const color = pct > 85 ? "#f43f5e" : pct > 60 ? "#fbbf24" : "#38bdf8";
+          const label = `${String(c.id).slice(0, 8)}${c.streaming ? " \u2022 \xFCretiyor" : ""}`;
+          const model = String(c.modelName || c.modelId || "?").slice(0, 20);
+          return `
+                    <div style="display:flex;align-items:center;justify-content:space-between;font-size:11.5px;line-height:1.5;" title="${this._escAttr(c.modelName || c.modelId || "")}">
+                        <div style="display:flex;align-items:center;gap:7px;min-width:0;">
+                            <div style="width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0;"></div>
+                            <span style="color:#cbd5e1;font-family:ui-monospace,monospace;">${label}</span>
+                            <span style="color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${model}</span>
+                        </div>
+                        <div style="font-family:ui-monospace,monospace;font-size:11px;color:#94a3b8;flex-shrink:0;margin-left:8px;">${fmt(c.estTok || 0)} (${Math.round(pct)}%)</div>
+                    </div>`;
+        }).join("");
+        const html = `
+                <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.7px;margin:14px 0 8px 0;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06);">Di\u011Fer Sohbetler</div>
+                <div style="display:flex;flex-direction:column;gap:7px;">${rows}</div>`;
+        if (sec) {
+          sec.innerHTML = html;
+        } else {
+          sec = document.createElement("div");
+          sec.id = "sx-ctx-subagents";
+          sec.innerHTML = html;
+          pop.appendChild(sec);
+        }
+      } catch (e) {
+      }
+    }
+    _escAttr(s) {
+      return String(s || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    }
     async refreshSentEstimate(cleanConvId, modelId) {
       if (!cleanConvId || cleanConvId === "new" || cleanConvId === "draft") return null;
       try {
@@ -1669,6 +1733,17 @@
           this.updateContextRing(updatedLive);
         }
       });
+      this.fetchAllContexts().then(() => {
+        try {
+          if (!pop.isConnected) return;
+          const curKey = this.models.getActiveConversationKey();
+          const curClean = (curKey || "").replace(/^conv_/, "");
+          const cacheKey2 = (curClean || "new") + "_" + (targetModel?.id || "");
+          const d = this._contextDetailsCache[cacheKey2]?.data;
+          if (d) this.renderAllContextsSection(pop, String(d.convId || curClean || ""));
+        } catch (e) {
+        }
+      });
     }
     renderPopoverDetails(pop, data, liveMetrics) {
       if (!data || !data.items) return;
@@ -1775,6 +1850,10 @@
                 `;
         });
         itemsList.innerHTML = html;
+      }
+      try {
+        this.renderAllContextsSection(pop, String(data.convId || liveMetrics?.convId || ""));
+      } catch (e) {
       }
     }
   };
