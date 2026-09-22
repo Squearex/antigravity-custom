@@ -295,12 +295,44 @@ export class QuotaMonitor {
                 this._sentCache['sent_' + cleanConvId] = { sent: r.sent, _time: Date.now() };
                 return r.sent;
             }
-            // Negative cache so 404s (old proxy) don't spam every tick
-            this._sentCache['sent_' + cleanConvId] = { sent: null, failed: true, _time: Date.now() };
-        } catch(e) {
-            this._sentCache['sent_' + cleanConvId] = { sent: null, failed: true, _time: Date.now() };
+        } catch(e) {}
+        // Fallback for old proxy without the endpoint: replicate the post-trim
+        // sent-size math client-side so the button stays truthful regardless.
+        const fb = this.estimateSentFallback(cleanConvId);
+        if (fb) {
+            const sent = { ...fb, fallback: true };
+            this._sentCache['sent_' + cleanConvId] = { sent, _time: Date.now() };
+            return sent;
         }
+        // Negative cache so failures don't spam every tick
+        this._sentCache['sent_' + cleanConvId] = { sent: null, failed: true, _time: Date.now() };
         return null;
+    }
+
+    estimateSentFallback(cleanConvId) {
+        try {
+            const prefix = cleanConvId + '_';
+            let data = null, modelId = '';
+            for (const k of Object.keys(this._contextDetailsCache)) {
+                if (k.startsWith(prefix) && this._contextDetailsCache[k]?.data) {
+                    data = this._contextDetailsCache[k].data;
+                    modelId = k.slice(prefix.length);
+                    break;
+                }
+            }
+            if (!data || !data.totalContext || !(data.usedTokens > 0)) return null;
+            const total = Number(data.totalContext);
+            const OVERHEAD_CONST = 6000 + 11800 + 682; // sys prompt + sys tools + skills (same as proxy endpoint)
+            let budget = Math.max(4000, total - OVERHEAD_CONST - 16000);
+            try {
+                const m = (this.models.state.getModels() || []).find(x => x.id === modelId);
+                const mid = `${m?.modelId || ''} ${m?.name || ''}`.toLowerCase();
+                if (mid.includes(':free') || mid.includes('free')) budget = Math.min(budget, 70000);
+            } catch(e) {}
+            const historyPart = Math.max(0, Number(data.usedTokens) - OVERHEAD_CONST);
+            const tokens = Math.round(OVERHEAD_CONST + Math.min(historyPart, budget));
+            return { tokens, model: modelId || undefined, ts: Date.now() };
+        } catch(e) { return null; }
     }
 
     async fetchContextDetails(cleanConvId, targetModel) {
@@ -457,7 +489,7 @@ export class QuotaMonitor {
                     const sTok = sentEntry.sent.tokens;
                     const sPct = ((sTok / data.totalContext) * 100).toFixed(1);
                     itemsToRender.unshift({
-                        label: 'Son gönderim (modele giden)',
+                        label: sentEntry.sent.fallback ? 'Son gönderim (tahmini)' : 'Son gönderim (modele giden)',
                         color: '#2dd4bf',
                         tokens: fmt(sTok),
                         percent: `${sPct}%`

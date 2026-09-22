@@ -1509,11 +1509,44 @@
           this._sentCache["sent_" + cleanConvId] = { sent: r.sent, _time: Date.now() };
           return r.sent;
         }
-        this._sentCache["sent_" + cleanConvId] = { sent: null, failed: true, _time: Date.now() };
       } catch (e) {
-        this._sentCache["sent_" + cleanConvId] = { sent: null, failed: true, _time: Date.now() };
       }
+      const fb = this.estimateSentFallback(cleanConvId);
+      if (fb) {
+        const sent = { ...fb, fallback: true };
+        this._sentCache["sent_" + cleanConvId] = { sent, _time: Date.now() };
+        return sent;
+      }
+      this._sentCache["sent_" + cleanConvId] = { sent: null, failed: true, _time: Date.now() };
       return null;
+    }
+    estimateSentFallback(cleanConvId) {
+      try {
+        const prefix = cleanConvId + "_";
+        let data = null, modelId = "";
+        for (const k of Object.keys(this._contextDetailsCache)) {
+          if (k.startsWith(prefix) && this._contextDetailsCache[k]?.data) {
+            data = this._contextDetailsCache[k].data;
+            modelId = k.slice(prefix.length);
+            break;
+          }
+        }
+        if (!data || !data.totalContext || !(data.usedTokens > 0)) return null;
+        const total = Number(data.totalContext);
+        const OVERHEAD_CONST = 6e3 + 11800 + 682;
+        let budget = Math.max(4e3, total - OVERHEAD_CONST - 16e3);
+        try {
+          const m = (this.models.state.getModels() || []).find((x) => x.id === modelId);
+          const mid = `${m?.modelId || ""} ${m?.name || ""}`.toLowerCase();
+          if (mid.includes(":free") || mid.includes("free")) budget = Math.min(budget, 7e4);
+        } catch (e) {
+        }
+        const historyPart = Math.max(0, Number(data.usedTokens) - OVERHEAD_CONST);
+        const tokens = Math.round(OVERHEAD_CONST + Math.min(historyPart, budget));
+        return { tokens, model: modelId || void 0, ts: Date.now() };
+      } catch (e) {
+        return null;
+      }
     }
     async fetchContextDetails(cleanConvId, targetModel) {
       return await this.refreshContextDetails(cleanConvId, targetModel);
@@ -1653,7 +1686,7 @@
             const sTok = sentEntry.sent.tokens;
             const sPct = (sTok / data.totalContext * 100).toFixed(1);
             itemsToRender.unshift({
-              label: "Son g\xF6nderim (modele giden)",
+              label: sentEntry.sent.fallback ? "Son g\xF6nderim (tahmini)" : "Son g\xF6nderim (modele giden)",
               color: "#2dd4bf",
               tokens: fmt(sTok),
               percent: `${sPct}%`
