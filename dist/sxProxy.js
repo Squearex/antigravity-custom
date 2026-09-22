@@ -76,6 +76,43 @@ function bumpStreamProgress(convKey, chars) {
     } catch(e){}
 }
 
+// Agent loop breaker: models sometimes call the same tool with identical args
+// over and over (e.g. view_file with bad params), burning the whole context.
+// Completed tool calls are tracked per conversation; on 5 consecutive identical
+// calls a nudge is queued and injected into the NEXT request instead of looping.
+const LOOP_GUARD_THRESHOLD = 5;
+const LOOP_GUARD_REWARN_EVERY = 10;
+const loopGuardCalls = {}; // convKey -> [{ key, ts }] (capped)
+const loopGuardPending = {}; // convKey -> { name, args, count }
+function toolCallKey(name, argsStr) {
+    const a = String(argsStr || '');
+    return String(name || '') + '|' + (a.length > 500 ? a.slice(0, 500) : a);
+}
+function recordToolCall(convKey, name, argsStr) {
+    if (!convKey || !name) return null;
+    try {
+        const key = toolCallKey(name, argsStr);
+        if (!loopGuardCalls[convKey]) loopGuardCalls[convKey] = [];
+        const arr = loopGuardCalls[convKey];
+        arr.push({ key, ts: Date.now() });
+        if (arr.length > 50) arr.splice(0, arr.length - 50);
+        const tail = arr.slice(-LOOP_GUARD_THRESHOLD);
+        if (tail.length === LOOP_GUARD_THRESHOLD && tail.every(e => e.key === key)) {
+            const total = arr.reduce((n, e) => n + (e.key === key ? 1 : 0), 0);
+            if (total === LOOP_GUARD_THRESHOLD || (total > LOOP_GUARD_THRESHOLD && (total - LOOP_GUARD_THRESHOLD) % LOOP_GUARD_REWARN_EVERY === 0)) {
+                loopGuardPending[convKey] = { name: String(name), args: String(argsStr || '').slice(0, 300), count: total };
+                console.warn(`[SX PROXY] Loop breaker: '${name}' x${total} identical calls on ${convKey} — nudge queued`);
+                return { loop: true, key, name, count: total };
+            }
+        }
+    } catch(e){}
+    return null;
+}
+function makeLoopNudge(name, argsStr, count) {
+    const shortArgs = String(argsStr || '').slice(0, 300);
+    return `[Sistem Uyarısı: '${name}' aracını aynı parametrelerle art arda ${count} kez çağırdın ve ilerleme yok — bu bir döngü. Aynı çağrıyı tekrarlama. Şunları dene: (1) bir önceki hata mesajındaki parametreyi düzelt, (2) önce listele/ara araçlarıyla doğru yolu bul, (3) farklı bir dosya ya da yönteme geç. Parametreler: ${shortArgs}]`;
+}
+
 function getConvPerfFile() {
     try {
         return path.join(app.getPath('userData'), 'sx_conv_perf.json');
@@ -1517,6 +1554,15 @@ function startInternalProxy() {
                         // Auto-compact conversation history using real available budget
                         const contentsBeforeCompact = contents.length;
                         contents = compactContentsForContext(contents, historyTokenBudget);
+                        // Agent loop breaker: inject pending nudge from the previous streamed response
+                        try {
+                            const pend = (reqConvKey && loopGuardPending[reqConvKey]) || null;
+                            if (pend && Array.isArray(contents)) {
+                                contents.push({ role: 'user', parts: [{ text: makeLoopNudge(pend.name, pend.args, pend.count) }] });
+                                console.warn(`[SX PROXY] Loop breaker nudge injected for '${pend.name}' on ${reqConvKey}`);
+                                delete loopGuardPending[reqConvKey];
+                            }
+                        } catch(e){}
                         const historyCharsAfter = estimateContentChars(contents);
                         const historyTokensAfter = Math.ceil(historyCharsAfter / 3.5);
 
@@ -1706,6 +1752,7 @@ function startInternalProxy() {
                                                     }
                                                 });
                                                 res.write(`data: ${chunk}\n\n`);
+                                                try { recordToolCall(reqConvKey, currentToolCall.name, currentToolCall.arguments); } catch(e){}
                                                 currentToolCall = null;
                                             }
                                         }
@@ -2024,6 +2071,7 @@ function startInternalProxy() {
                             for (const idx of Object.keys(activeToolCalls).sort()) {
                                 const tc = activeToolCalls[idx];
                                 if (!tc.name) continue;
+                                try { recordToolCall(reqConvKey, tc.name, tc.arguments); } catch(e){}
                                 let parsedArgs = {};
                                 try { parsedArgs = JSON.parse(tc.arguments || '{}'); } catch(e) { parsedArgs = { raw: tc.arguments }; }
                                 fcParts.push({
