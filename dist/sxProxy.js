@@ -2403,7 +2403,9 @@ function startInternalProxy() {
                                 model: customModel.modelId,
                                 stream: true,
                                 messages: [],
-                                include_reasoning: true
+                                include_reasoning: true,
+                                service_tier: (isGroq ? 'auto' : undefined),
+                                truncation: (isGroq ? 'auto' : undefined)
                             };
                             if (oaTools) payload.tools = oaTools;
 
