@@ -2178,7 +2178,9 @@ function startInternalProxy() {
                                         headers: {
                                             'Content-Type': 'application/json',
                                             'x-api-key': provider.apiKey || '',
-                                            'anthropic-version': '2023-06-01'
+                                            'anthropic-version': '2023-06-01',
+                                            'HTTP-Referer': 'https://antigravity.google',
+                                            'X-Title': 'Antigravity Pro - SX Custom Engine'
                                         },
                                         body: JSON.stringify(payload)
                                     });
@@ -2434,7 +2436,9 @@ function startInternalProxy() {
                                         method: 'POST',
                                         headers: {
                                             'Content-Type': 'application/json',
-                                            'Authorization': 'Bearer ' + (provider.apiKey || '')
+                                            'Authorization': 'Bearer ' + (provider.apiKey || ''),
+                                            'HTTP-Referer': 'https://antigravity.google',
+                                            'X-Title': 'Antigravity Pro - SX Custom Engine'
                                         },
                                         body: JSON.stringify(payload)
                                     });
