@@ -81,6 +81,15 @@ function logHit(entry) {
 // and the last post-trim sent size (what the model actually received).
 const streamProgress = {}; // convKey -> { chars, ts }
 const lastSentEstimate = {}; // convKey -> { tokens, model, ts, history: [last 10] }
+// Generic LRU-ish cap for per-conversation maps (prevents unbounded growth).
+function capMapSize(obj, max, protect) {
+    try {
+        const keys = Object.keys(obj).filter(k => k !== protect);
+        if (keys.length > max) {
+            for (let i = 0; i < keys.length - max; i++) delete obj[keys[i]];
+        }
+    } catch(e){}
+}
 function recordSentEstimate(convKey, tokens, model) {
     if (!convKey || !(tokens > 0)) return;
     try {
@@ -88,6 +97,7 @@ function recordSentEstimate(convKey, tokens, model) {
         const history = Array.isArray(prev?.history) ? prev.history.slice(-9) : [];
         history.push(Math.round(tokens));
         lastSentEstimate[convKey] = { tokens: Math.round(tokens), model: model || '?', ts: Date.now(), history };
+        capMapSize(lastSentEstimate, 60);
     } catch(e){}
 }
 function bumpStreamProgress(convKey, chars) {
@@ -120,6 +130,8 @@ function recordToolCall(convKey, name, argsStr) {
         const arr = loopGuardCalls[convKey];
         arr.push({ key, ts: Date.now() });
         if (arr.length > 50) arr.splice(0, arr.length - 50);
+        capMapSize(loopGuardCalls, 100);
+        capMapSize(loopGuardPending, 100);
         const tail = arr.slice(-LOOP_GUARD_THRESHOLD);
         if (tail.length === LOOP_GUARD_THRESHOLD && tail.every(e => e.key === key)) {
             const total = arr.reduce((n, e) => n + (e.key === key ? 1 : 0), 0);
@@ -2001,9 +2013,10 @@ function startInternalProxy() {
                                     modelName: customModel?.name || customModel?.modelId || 'Custom Model',
                                     timestamp: new Date().toISOString()
                                 };
-                                if (reqConvKey) convPerfStats[reqConvKey] = perfDataA;
-                                convPerfStats['last'] = perfDataA;
-                                saveConvPerfToDisk();
+                            if (reqConvKey) convPerfStats[reqConvKey] = perfDataA;
+                            convPerfStats['last'] = perfDataA;
+                            capMapSize(convPerfStats, 60, 'last');
+                            saveConvPerfToDisk();
                             } catch(e) {}
                         } else {
                             // OpenAI protocol (OpenRouter, OpenAI, Kilo, Kira, etc.)
@@ -2355,6 +2368,7 @@ function startInternalProxy() {
 
                             if (reqConvKey) convPerfStats[reqConvKey] = perfData;
                             convPerfStats['last'] = perfData;
+                            capMapSize(convPerfStats, 60, 'last');
                             saveConvPerfToDisk();
                             console.log(`[SX PROXY PERF] ${reqConvKey || 'last'}: TTFT=${ttftMs}ms, Total=${totalRequestMs}ms, CompToks=${estimatedCompTokens}, TPS=${tps}`);
 
