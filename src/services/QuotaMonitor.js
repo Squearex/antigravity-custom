@@ -100,7 +100,7 @@ export class QuotaMonitor {
                 // Conversation switched while popover open: rebind, never show stale conv data
                 pop.dataset.convKey = cacheKey;
                 this.refreshContextDetails(cleanConvId, activeM);
-                this.refreshSentEstimate(cleanConvId);
+                this.refreshSentEstimate(cleanConvId, activeM?.id);
             } else {
                 pop.dataset.convKey = cacheKey;
                 const currentData = this._contextDetailsCache[cacheKey]?.data;
@@ -122,7 +122,7 @@ export class QuotaMonitor {
             const sentKey = 'sent_' + cleanConvId;
             const sentCached = this._sentCache[sentKey];
             if (!sentCached || (Date.now() - (sentCached._time || 0) > 30000)) {
-                this.refreshSentEstimate(cleanConvId);
+                this.refreshSentEstimate(cleanConvId, activeM?.id);
             }
         }
 
@@ -213,6 +213,7 @@ export class QuotaMonitor {
         const activeId = this.models.getActiveModelForConversation('conv_' + cleanConvId);
         const targetModel = this.models.state.getModels().find(m => m.id === activeId);
         this.refreshContextDetails(cleanConvId, targetModel);
+        this.refreshSentEstimate(cleanConvId, targetModel?.id);
     }
 
     getDraftPromptText() {
@@ -230,8 +231,24 @@ export class QuotaMonitor {
         const cacheEntry = this._contextDetailsCache[cacheKey];
         const cached = cacheEntry?.data;
 
+        // Primary number = what the model actually receives (post-trim sent size).
+        // Transcript debt is shown separately; it only ever grows and would pin the ring at 100%.
+        let sentTok = 0;
+        try {
+            const sentEntry = this._sentCache['sent_' + (cleanConvId || 'new')];
+            const s = sentEntry?.sent;
+            if (s && s.tokens > 0) {
+                // Guard: ignore sent values recorded under a different model
+                const sentModel = String(s.model || '');
+                const curModelIds = [targetModel?.id, targetModel?.modelId].filter(Boolean).map(String);
+                if (!sentModel || curModelIds.includes(sentModel) || sentModel === (targetModel?.name || '')) {
+                    sentTok = Number(s.tokens);
+                }
+            }
+        } catch(e) {}
+        const transcriptUsed = (cached && !cached.isFreshChat) ? cached.usedTokens : 0;
         const totalContext = cached ? cached.totalContext : (targetModel?.contextLength ? Number(targetModel.contextLength) : 262144);
-        const baseUsed = (cached && !cached.isFreshChat) ? cached.usedTokens : 0;
+        const baseUsed = sentTok > 0 ? sentTok : transcriptUsed;
 
         const draftText = this.getDraftPromptText();
         const draftChars = draftText.length;
@@ -249,12 +266,13 @@ export class QuotaMonitor {
 
         let tooltip = '';
         const percentDisplay = (pct > 0 && pct < 1) ? '<1%' : `${Math.round(pct)}%`;
+        const transcriptNote = (sentTok > 0 && transcriptUsed > totalUsed) ? ` • transkript ${fmt(transcriptUsed)}` : '';
         if (isFresh) {
             tooltip = `Context: Yeni Sohbet (0 / ${fmt(totalContext)})`;
         } else if (draftTokens > 0) {
-            tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay}) [+${fmt(draftTokens)} taslak]`;
+            tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay}) [+${fmt(draftTokens)} taslak]${transcriptNote}`;
         } else {
-            tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay})`;
+            tooltip = `Context: ${fmt(totalUsed)} / ${fmt(totalContext)} (${percentDisplay})${transcriptNote}`;
         }
 
         return {
@@ -271,7 +289,9 @@ export class QuotaMonitor {
             baseUsed,
             cachedData: cached,
             cacheAgeMs: cacheEntry ? (Date.now() - (cacheEntry._time || 0)) : null,
-            convId: cleanConvId || null
+            convId: cleanConvId || null,
+            sentBased: sentTok > 0,
+            transcriptUsed
         };
     }
 
@@ -287,7 +307,7 @@ export class QuotaMonitor {
         } catch(e) { this._progressFailTs = Date.now(); return null; }
     }
 
-    async refreshSentEstimate(cleanConvId) {
+    async refreshSentEstimate(cleanConvId, modelId) {
         if (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft') return null;
         try {
             const r = await this.network.get(`/get-sent-estimate?convId=${encodeURIComponent(cleanConvId)}`);
@@ -298,7 +318,7 @@ export class QuotaMonitor {
         } catch(e) {}
         // Fallback for old proxy without the endpoint: replicate the post-trim
         // sent-size math client-side so the button stays truthful regardless.
-        const fb = this.estimateSentFallback(cleanConvId);
+        const fb = this.estimateSentFallback(cleanConvId, modelId);
         if (fb) {
             const sent = { ...fb, fallback: true };
             this._sentCache['sent_' + cleanConvId] = { sent, _time: Date.now() };
@@ -309,29 +329,38 @@ export class QuotaMonitor {
         return null;
     }
 
-    estimateSentFallback(cleanConvId) {
+    estimateSentFallback(cleanConvId, modelId) {
         try {
             const prefix = cleanConvId + '_';
-            let data = null, modelId = '';
+            let data = null, keyModelId = '';
             for (const k of Object.keys(this._contextDetailsCache)) {
                 if (k.startsWith(prefix) && this._contextDetailsCache[k]?.data) {
-                    data = this._contextDetailsCache[k].data;
-                    modelId = k.slice(prefix.length);
-                    break;
+                    // Prefer the entry matching the active model
+                    if (modelId && k === prefix + modelId) {
+                        data = this._contextDetailsCache[k].data;
+                        keyModelId = modelId;
+                        break;
+                    }
+                    if (!data) {
+                        data = this._contextDetailsCache[k].data;
+                        keyModelId = k.slice(prefix.length);
+                    }
                 }
             }
             if (!data || !data.totalContext || !(data.usedTokens > 0)) return null;
             const total = Number(data.totalContext);
             const OVERHEAD_CONST = 6000 + 11800 + 682; // sys prompt + sys tools + skills (same as proxy endpoint)
             let budget = Math.max(4000, total - OVERHEAD_CONST - 16000);
+            let effModelId = modelId || keyModelId;
             try {
-                const m = (this.models.state.getModels() || []).find(x => x.id === modelId);
+                const m = (this.models.state.getModels() || []).find(x => x.id === effModelId);
                 const mid = `${m?.modelId || ''} ${m?.name || ''}`.toLowerCase();
                 if (mid.includes(':free') || mid.includes('free')) budget = Math.min(budget, 70000);
+                if (m?.modelId) effModelId = m.modelId;
             } catch(e) {}
             const historyPart = Math.max(0, Number(data.usedTokens) - OVERHEAD_CONST);
             const tokens = Math.round(OVERHEAD_CONST + Math.min(historyPart, budget));
-            return { tokens, model: modelId || undefined, ts: Date.now() };
+            return { tokens, model: effModelId || undefined, ts: Date.now() };
         } catch(e) { return null; }
     }
 
@@ -450,7 +479,10 @@ export class QuotaMonitor {
             const shortConv = String(data.convId || liveMetrics?.convId || '').slice(0, 8) || '?';
             const ageMs = liveMetrics?.cacheAgeMs;
             const ageTxt = (ageMs == null) ? 'ölçülüyor' : (ageMs < 2000 ? 'az önce' : `${Math.round(ageMs / 1000)} sn önce`);
-            convLine.textContent = `sohbet ${shortConv} • ${ageTxt} güncellendi`;
+            const basisTxt = liveMetrics?.sentBased ? ' • gönderilen bazlı' : '';
+            const trTxt = (liveMetrics?.sentBased && liveMetrics?.transcriptUsed > 0)
+                ? ` • transkript ${fmt(liveMetrics.transcriptUsed)}` : '';
+            convLine.textContent = `sohbet ${shortConv} • ${ageTxt} güncellendi${basisTxt}${trTxt}`;
         } catch(e) {}
 
         const totalUsed = liveMetrics?.draftTokens > 0 ? liveMetrics.totalUsed : data.usedTokens;
