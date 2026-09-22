@@ -73,6 +73,21 @@ export class UIInjector {
             }
         }, true);
 
+        // Fast settings injection observer (avoids 200ms poll delay for dialog)
+        try {
+            const sObs = new MutationObserver((muts) => {
+                for (const mut of muts) {
+                    for (const n of mut.addedNodes) {
+                        if (n.nodeType === 1 && (n.matches?.('[role="dialog"]') || n.querySelector?.('[role="dialog"]'))) {
+                            this.trySXModelsSettingsInject();
+                        }
+                    }
+                }
+            });
+            sObs.observe(document.body, { childList: true, subtree: true });
+            this._settingsObserver = sObs;
+        } catch(e) {}
+
         // Core DOM hook loop
         window.addEventListener('DOMContentLoaded', () => {
             setInterval(() => this.hookDOM(), 200);
@@ -608,7 +623,7 @@ export class UIInjector {
 
         // Throttle looser: allow rapid retries when settings dialog just opened
         const scanTs = Date.now();
-        if (this._lastSettingsScan && (scanTs - this._lastSettingsScan < 250) && !document.querySelector('#sx-content-wrapper')) return;
+        if (this._lastSettingsScan && (scanTs - this._lastSettingsScan < 50) && !document.querySelector('#sx-content-wrapper')) return;
         this._lastSettingsScan = scanTs;
 
         let rightPanel = null;

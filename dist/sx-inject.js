@@ -3010,6 +3010,20 @@
           setTimeout(() => this.hookDOM(), 120);
         }
       }, true);
+      try {
+        const sObs = new MutationObserver((muts) => {
+          for (const mut of muts) {
+            for (const n of mut.addedNodes) {
+              if (n.nodeType === 1 && (n.matches?.('[role="dialog"]') || n.querySelector?.('[role="dialog"]'))) {
+                this.trySXModelsSettingsInject();
+              }
+            }
+          }
+        });
+        sObs.observe(document.body, { childList: true, subtree: true });
+        this._settingsObserver = sObs;
+      } catch (e) {
+      }
       window.addEventListener("DOMContentLoaded", () => {
         setInterval(() => this.hookDOM(), 200);
       });
@@ -3532,7 +3546,7 @@
         return;
       }
       const scanTs = Date.now();
-      if (this._lastSettingsScan && scanTs - this._lastSettingsScan < 250 && !document.querySelector("#sx-content-wrapper")) return;
+      if (this._lastSettingsScan && scanTs - this._lastSettingsScan < 50 && !document.querySelector("#sx-content-wrapper")) return;
       this._lastSettingsScan = scanTs;
       let rightPanel = null;
       const MARKERS = ["Gemini Models", "Model Credits", "Your Plan"];
