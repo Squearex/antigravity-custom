@@ -2059,7 +2059,7 @@ function startInternalProxy() {
 
                         // Reserve: overhead + 16k safety (generation budget + MCP overhead buffer)
                         let historyTokenBudget = Math.max(4000, modelContextLimit - overheadTokens - 16000);
-                        const isGroq = (provider?.name || '').toLowerCase().includes('groq') || (provider?.baseUrl || '').toLowerCase().includes('groq');
+                        const isGroq = (provider?.name || '').toLowerCase().includes('groq') || (provider?.baseUrl || '').toLowerCase().includes('groq') || /groq|qwen.*gguf|gpt-oss/i.test(String(customModel?.modelId || customModel?.id || '')) || /groq/i.test(String(customModel?.name || ''));
                         if (isGroq) {
                             // Groq on-demand ITPM hard cap ~7000/min total input — keep single request well under
                             historyTokenBudget = Math.min(historyTokenBudget, 1500);
@@ -2219,6 +2219,11 @@ function startInternalProxy() {
 
                             if (!apiRes || !apiRes.ok) {
                                 const errTxt = lastErrTxt || `HTTP ${lastErrStatus}`;
+                                if (lastErrStatus === 413 && /ITPM|TPM|input tokens per minute|rate_limit_exceeded/i.test(String(errTxt || '').slice(0, 300))) {
+                                    const budgetKey = `${provider?.name || provider?.baseUrl || ''}|${customModel?.modelId || customModel?.id || ''}`;
+                                    learnedHistoryBudget[budgetKey] = 500;
+                                    console.warn(`[SX PROXY] Rate-limit 413 on ${budgetKey} — emergency budget 500 set for next request`);
+                                }
                                 console.error(`[SX PROXY] Anthropic upstream error ${lastErrStatus}:`, errTxt);
                                 try { logDone({ conv: reqConvKey || null, event: 'error', proto: 'anthropic', status: lastErrStatus, err: String(errTxt).slice(0, 200) }); } catch(e){}
                                 const errChunk = JSON.stringify({
@@ -2463,6 +2468,12 @@ function startInternalProxy() {
 
                             if (!apiRes || !apiRes.ok) {
                                 const errTxt = lastErrTxt || `HTTP ${lastErrStatus}`;
+                                // Emergency shrink for Groq / OpenRouter rate-limit 413 (ITPM/TPM)
+                                if (lastErrStatus === 413 && /ITPM|TPM|input tokens per minute|rate_limit_exceeded/i.test(String(errTxt || '').slice(0, 300))) {
+                                    const budgetKey = `${provider?.name || provider?.baseUrl || ''}|${customModel?.modelId || customModel?.id || ''}`;
+                                    learnedHistoryBudget[budgetKey] = 500;
+                                    console.warn(`[SX PROXY] Rate-limit 413 on ${budgetKey} — emergency budget 500 set for next request`);
+                                }
                                 console.error(`[SX PROXY] OpenAI upstream error ${lastErrStatus}:`, errTxt);
                                 try { logDone({ conv: reqConvKey || null, event: 'error', proto: 'openai', status: lastErrStatus, err: String(errTxt).slice(0, 200) }); } catch(e){}
                                 const errChunk = JSON.stringify({
