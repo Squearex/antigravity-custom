@@ -321,12 +321,16 @@ export class UIInjector {
         const isAlreadyAdded = (modelId, provId) =>
             self.state.getModels().some(m => m.modelId === modelId && m.providerId === provId);
 
+        const META_SRC_LABEL = { api: 'Provider API', zen: 'Zen dokümanı', 'zen-catalog': 'Zen katalog', openrouter: 'OpenRouter', local: 'Yerel DB', manual: 'Manuel', partial: 'Kısmi', none: 'Bilinmiyor' };
+        const metaSrcLabel = (m) => META_SRC_LABEL[m?.metaSource] || (m?.metaSource || '');
+
         const metaFromFetched = (fm) => {
             if (!fm) return {};
             const out = {};
             if (fm.contextLength) out.contextLength = fm.contextLength;
             if (typeof fm.supportsImages === 'boolean') out.supportsImages = fm.supportsImages;
             if (typeof fm.supportsTools === 'boolean') out.supportsTools = fm.supportsTools;
+            if (fm.metaSource) out.metaSource = fm.metaSource;
             return out;
         };
 
@@ -346,10 +350,11 @@ export class UIInjector {
                 const already = isAlreadyAdded(m.id, provId);
                 if (already) addedCount++;
                 const ctxTag = self.models.formatContextSize(m.contextLength);
+                const srcTitle = metaSrcLabel(m) ? ` title="Kaynak: ${metaSrcLabel(m)}"` : '';
                 const badges = [];
-                if (ctxTag) badges.push(`<span style="font-size:9px;font-weight:700;color:#a3e635;background:rgba(163,230,53,0.1);padding:0 4px;border-radius:3px;">${ctxTag}</span>`);
-                if (m.supportsImages) badges.push('<span style="font-size:9px;font-weight:600;color:#38bdf8;background:rgba(56,189,248,0.1);padding:0 4px;border-radius:3px;">Vision</span>');
-                if (m.supportsTools) badges.push('<span style="font-size:9px;font-weight:600;color:#fbbf24;background:rgba(245,158,11,0.1);padding:0 4px;border-radius:3px;">Tools</span>');
+                if (ctxTag) badges.push(`<span${srcTitle} style="font-size:9px;font-weight:700;color:#a3e635;background:rgba(163,230,53,0.1);padding:0 4px;border-radius:3px;">${ctxTag}</span>`);
+                if (m.supportsImages) badges.push(`<span${srcTitle} style="font-size:9px;font-weight:600;color:#38bdf8;background:rgba(56,189,248,0.1);padding:0 4px;border-radius:3px;">Vision</span>`);
+                if (m.supportsTools) badges.push(`<span${srcTitle} style="font-size:9px;font-weight:600;color:#fbbf24;background:rgba(245,158,11,0.1);padding:0 4px;border-radius:3px;">Tools</span>`);
                 const badgeHtml = badges.length
                     ? `<span style="display:inline-flex;gap:4px;flex-shrink:0;margin-left:auto;padding-left:6px;">${badges.join('')}</span>`
                     : '';
@@ -432,10 +437,13 @@ export class UIInjector {
                     const total = allFetchedModels.length;
                     const already = allFetchedModels.filter(m => isAlreadyAdded(m.id, provId)).length;
                     const withCtx = allFetchedModels.filter(m => Number(m.contextLength) > 0).length;
+                    const zenOk = self.meta ? allFetchedModels.filter(m => self.meta.isZenModel(m.id)).length : 0;
                     hint.style.display = '';
                     hint.textContent = `${total} model bulundu` +
                         (already ? ` — ${already} zaten ekli` : '') +
-                        ` — ${withCtx}/${total} context bilgili` + (metaUpdated ? ' — metadata güncellendi' : '') + '.';
+                        ` — ${withCtx}/${total} context bilgili` +
+                        (zenOk ? ` — ${zenOk} Zen kataloğunda` : '') +
+                        (metaUpdated ? ' — metadata güncellendi' : '') + '.';
                 }
                 if (metaUpdated) onSave && onSave();
             } catch(e) { alert('Listelenemedi: ' + e.message); }
@@ -465,7 +473,8 @@ export class UIInjector {
                     id: existing.id, providerId: provId, name, modelId, directMode: true,
                     contextLength: Number.isFinite(ctxRaw) && ctxRaw > 0 ? Math.round(ctxRaw) : 0,
                     supportsImages: !!overlay.querySelector('#sx-m-vision')?.checked,
-                    supportsTools: !!overlay.querySelector('#sx-m-tools')?.checked
+                    supportsTools: !!overlay.querySelector('#sx-m-tools')?.checked,
+                    metaSource: 'manual'
                 };
                 if (!entry.contextLength) delete entry.contextLength;
                 const idx = list.findIndex(m => m.id === existing.id);

@@ -2783,12 +2783,15 @@
       const checkedIds = /* @__PURE__ */ new Set();
       const self = this;
       const isAlreadyAdded = (modelId, provId) => self.state.getModels().some((m) => m.modelId === modelId && m.providerId === provId);
+      const META_SRC_LABEL = { api: "Provider API", zen: "Zen dok\xFCman\u0131", "zen-catalog": "Zen katalog", openrouter: "OpenRouter", local: "Yerel DB", manual: "Manuel", partial: "K\u0131smi", none: "Bilinmiyor" };
+      const metaSrcLabel = (m) => META_SRC_LABEL[m?.metaSource] || (m?.metaSource || "");
       const metaFromFetched = (fm) => {
         if (!fm) return {};
         const out = {};
         if (fm.contextLength) out.contextLength = fm.contextLength;
         if (typeof fm.supportsImages === "boolean") out.supportsImages = fm.supportsImages;
         if (typeof fm.supportsTools === "boolean") out.supportsTools = fm.supportsTools;
+        if (fm.metaSource) out.metaSource = fm.metaSource;
         return out;
       };
       function renderChecklist(filterText) {
@@ -2807,10 +2810,11 @@
           const already = isAlreadyAdded(m.id, provId);
           if (already) addedCount++;
           const ctxTag = self.models.formatContextSize(m.contextLength);
+          const srcTitle = metaSrcLabel(m) ? ` title="Kaynak: ${metaSrcLabel(m)}"` : "";
           const badges = [];
-          if (ctxTag) badges.push(`<span style="font-size:9px;font-weight:700;color:#a3e635;background:rgba(163,230,53,0.1);padding:0 4px;border-radius:3px;">${ctxTag}</span>`);
-          if (m.supportsImages) badges.push('<span style="font-size:9px;font-weight:600;color:#38bdf8;background:rgba(56,189,248,0.1);padding:0 4px;border-radius:3px;">Vision</span>');
-          if (m.supportsTools) badges.push('<span style="font-size:9px;font-weight:600;color:#fbbf24;background:rgba(245,158,11,0.1);padding:0 4px;border-radius:3px;">Tools</span>');
+          if (ctxTag) badges.push(`<span${srcTitle} style="font-size:9px;font-weight:700;color:#a3e635;background:rgba(163,230,53,0.1);padding:0 4px;border-radius:3px;">${ctxTag}</span>`);
+          if (m.supportsImages) badges.push(`<span${srcTitle} style="font-size:9px;font-weight:600;color:#38bdf8;background:rgba(56,189,248,0.1);padding:0 4px;border-radius:3px;">Vision</span>`);
+          if (m.supportsTools) badges.push(`<span${srcTitle} style="font-size:9px;font-weight:600;color:#fbbf24;background:rgba(245,158,11,0.1);padding:0 4px;border-radius:3px;">Tools</span>`);
           const badgeHtml = badges.length ? `<span style="display:inline-flex;gap:4px;flex-shrink:0;margin-left:auto;padding-left:6px;">${badges.join("")}</span>` : "";
           return '<label style="display:flex;align-items:center;gap:9px;padding:7px 12px;cursor:' + (already ? "default" : "pointer") + ";opacity:" + (already ? "0.45" : "1") + ';"><input type="checkbox" data-id="' + self.sxEsc(m.id) + '"' + (checkedIds.has(m.id) ? " checked" : "") + (already ? " disabled" : "") + ' style="width:14px;height:14px;accent-color:#38bdf8;cursor:' + (already ? "not-allowed" : "pointer") + ';flex-shrink:0;" /><span style="min-width:0;overflow:hidden;flex:1;"><div style="font-family:ui-monospace,monospace;font-size:11.5px;color:rgba(255,255,255,0.88);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + self.sxEsc(m.id) + (already ? ' <span style="font-size:9px;color:rgba(255,255,255,0.35);font-family:inherit;">(ekli)</span>' : "") + "</div>" + (m.name && m.name !== m.id ? '<div style="font-size:10px;color:rgba(255,255,255,0.38);">' + self.sxEsc(m.name) + "</div>" : "") + "</span>" + badgeHtml + "</label>";
         }).join("");
@@ -2885,8 +2889,9 @@
             const total = allFetchedModels.length;
             const already = allFetchedModels.filter((m) => isAlreadyAdded(m.id, provId)).length;
             const withCtx = allFetchedModels.filter((m) => Number(m.contextLength) > 0).length;
+            const zenOk = self.meta ? allFetchedModels.filter((m) => self.meta.isZenModel(m.id)).length : 0;
             hint.style.display = "";
-            hint.textContent = `${total} model bulundu` + (already ? ` \u2014 ${already} zaten ekli` : "") + ` \u2014 ${withCtx}/${total} context bilgili` + (metaUpdated ? " \u2014 metadata g\xFCncellendi" : "") + ".";
+            hint.textContent = `${total} model bulundu` + (already ? ` \u2014 ${already} zaten ekli` : "") + ` \u2014 ${withCtx}/${total} context bilgili` + (zenOk ? ` \u2014 ${zenOk} Zen katalo\u011Funda` : "") + (metaUpdated ? " \u2014 metadata g\xFCncellendi" : "") + ".";
           }
           if (metaUpdated) onSave && onSave();
         } catch (e) {
@@ -2931,7 +2936,8 @@
             directMode: true,
             contextLength: Number.isFinite(ctxRaw) && ctxRaw > 0 ? Math.round(ctxRaw) : 0,
             supportsImages: !!overlay.querySelector("#sx-m-vision")?.checked,
-            supportsTools: !!overlay.querySelector("#sx-m-tools")?.checked
+            supportsTools: !!overlay.querySelector("#sx-m-tools")?.checked,
+            metaSource: "manual"
           };
           if (!entry.contextLength) delete entry.contextLength;
           const idx = list.findIndex((m) => m.id === existing.id);
@@ -3584,7 +3590,7 @@
     // xAI
     "grok-2": { contextLength: 131072, supportsImages: true, supportsTools: true },
     "grok-3": { contextLength: 131072, supportsImages: true, supportsTools: true },
-    "grok-4": { contextLength: 262144, supportsImages: true, supportsTools: true },
+    "grok-4": { contextLength: 2e6, supportsImages: true, supportsTools: true },
     // Cohere
     "command-r": { contextLength: 131072, supportsImages: false, supportsTools: true },
     "command-r-plus": { contextLength: 131072, supportsImages: false, supportsTools: true },
@@ -3599,10 +3605,9 @@
     "nova-lite": { contextLength: 3e5, supportsImages: true, supportsTools: true },
     "nova-micro": { contextLength: 131072, supportsImages: false, supportsTools: true },
     // Moonshot / Kimi
-    "kimi-k2": { contextLength: 131072, supportsImages: false, supportsTools: true },
-    "kimi-latest": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    "kimi-k2": { contextLength: 262144, supportsImages: false, supportsTools: true },
     // MiniMax
-    "minimax-m1": { contextLength: 1e6, supportsImages: false, supportsTools: true },
+    "minimax-m1": { contextLength: 2e5, supportsImages: false, supportsTools: true },
     // Zhipu / GLM
     "glm-4-plus": { contextLength: 131072, supportsImages: false, supportsTools: true },
     "glm-4.5": { contextLength: 131072, supportsImages: false, supportsTools: true },
@@ -3611,12 +3616,73 @@
     "phi-4": { contextLength: 16384, supportsImages: false, supportsTools: true },
     // Google older
     "gemma-2-27b": { contextLength: 8192, supportsImages: false, supportsTools: false },
-    "gemma-2-9b": { contextLength: 8192, supportsImages: false, supportsTools: false },
-    // Common OpenRouter free aliases (basename forms)
-    "mimo-v2.6-flash-free": { contextLength: 131072, supportsImages: false, supportsTools: true },
-    "mimo-v2.5-free": { contextLength: 131072, supportsImages: false, supportsTools: true },
-    "muse-spark-1.3-contributor-free": { contextLength: 131072, supportsImages: false, supportsTools: true },
-    "muse-spark-1.2-contributor-free": { contextLength: 131072, supportsImages: false, supportsTools: true }
+    "gemma-2-9b": { contextLength: 8192, supportsImages: false, supportsTools: false }
+  };
+  var ZEN_META = {
+    // GPT-5.x / 6 family — ≤272K tier in pricing table
+    "gpt-6-astra": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.6-sol": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.6-terra": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.6-luna": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.5": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.5-pro": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.4": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.4-pro": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.4-mini": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.4-nano": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.3-codex": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.3-codex-spark": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.2": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.2-codex": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.1": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.1-codex": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.1-codex-max": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5.1-codex-mini": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5-codex": { ctx: 272e3, vis: true, tools: true },
+    "gpt-5-nano": { ctx: 272e3, vis: true, tools: true },
+    // Claude family — 200K standard (sonnet-4.5 row shows ≤200K/>200K split)
+    "claude-fable-5": { ctx: 2e5, vis: true, tools: true },
+    "claude-fable-5-1": { ctx: 2e5, vis: true, tools: true },
+    "claude-opus-5": { ctx: 2e5, vis: true, tools: true },
+    "claude-opus-4-8": { ctx: 2e5, vis: true, tools: true },
+    "claude-opus-4-7": { ctx: 2e5, vis: true, tools: true },
+    "claude-opus-4-6": { ctx: 2e5, vis: true, tools: true },
+    "claude-opus-4-5": { ctx: 2e5, vis: true, tools: true },
+    "claude-sonnet-5": { ctx: 2e5, vis: true, tools: true },
+    "claude-sonnet-4-6": { ctx: 2e5, vis: true, tools: true },
+    "claude-sonnet-4-5": { ctx: 2e5, vis: true, tools: true },
+    "claude-sonnet-4": { ctx: 2e5, vis: true, tools: true },
+    "claude-haiku-4-5": { ctx: 2e5, vis: true, tools: true },
+    // Gemini family — 1M standard
+    "gemini-3.8-flash": { ctx: 1048576, vis: true, tools: true },
+    "gemini-3.7-flash": { ctx: 1048576, vis: true, tools: true },
+    "gemini-3.6-flash": { ctx: 1048576, vis: true, tools: true },
+    "gemini-3.5-flash": { ctx: 1048576, vis: true, tools: true },
+    "gemini-3.5-flash-lite": { ctx: 1048576, vis: true, tools: true },
+    "gemini-3.1-pro": { ctx: 1048576, vis: true, tools: true },
+    "gemini-3-flash": { ctx: 1048576, vis: true, tools: true },
+    // Grok — 4.5/4.6/4.7 show ≤200K tiers
+    "grok-4.7": { ctx: 2e5, vis: true, tools: true },
+    "grok-4.6": { ctx: 2e5, vis: true, tools: true },
+    "grok-4.5": { ctx: 2e5, vis: true, tools: true },
+    "grok-build-0.1": { ctx: 131072, vis: true, tools: true },
+    // Muse Spark (Meta) — tools via /responses endpoint; ctx/vision not documented
+    "muse-spark-1.3": { ctx: 0, tools: true },
+    "muse-spark-1.2": { ctx: 0, tools: true },
+    "muse-spark-1.3-contributor-free": { ctx: 0, tools: true },
+    "muse-spark-1.2-contributor-free": { ctx: 0, tools: true },
+    // DeepSeek V4 on Zen — explicit vision variant only; rest via OpenRouter layer
+    "deepseek-v4-flash-vision-exp": { ctx: 0, vis: true, tools: true },
+    "deepseek-v4.1-flash": { ctx: 0, tools: true },
+    "deepseek-v4-pro": { ctx: 0, tools: true },
+    "deepseek-v4-flash": { ctx: 0, tools: true },
+    "deepseek-v4-flash-free": { ctx: 0, tools: true },
+    // Jev — /systemone eval model, no tool calls, no images
+    "jev-1.13": { ctx: 0, vis: false, tools: false },
+    "jev-1.13-free": { ctx: 0, vis: false, tools: false },
+    // Big Pickle — undisclosed; chat endpoint
+    "big-pickle": { ctx: 0, tools: true }
   };
   var VISION_NAME_RE = /(?:^|[\/\-_.])(?:vl|vision|4o|omni|gemini|gemma|pixtral|llava|paligemma|vision[-_]?pro|llama[-_]?3\.2[-_].*vision)/i;
   var NO_VISION_NAME_RE = /(?:^|[\/\-_.])(?:code|coder|embedding|audio|transcribe|tts|whisper|rerank)/i;
@@ -3629,6 +3695,9 @@
       this._orCatalogRaw = null;
       this._orPromise = null;
       this._orLoadedAt = 0;
+      this._zenSet = null;
+      this._zenPromise = null;
+      this._zenLoadedAt = 0;
     }
     /** Normalize model id for fuzzy matching across providers/catalogs. */
     normalizeKey(id) {
@@ -3663,6 +3732,54 @@
         if (best) return LOCAL_KB[best];
       }
       return null;
+    }
+    /** Doc-verified Zen metadata by exact/normalized id. Returns {contextLength?, supportsImages?, supportsTools?}. */
+    _zenLookup(modelId) {
+      const raw = String(modelId || "").toLowerCase().trim();
+      if (!raw) return null;
+      const cands = [raw, this.normalizeKey(modelId)];
+      const base = raw.split("/").pop();
+      if (base && base !== raw) cands.push(base, this.normalizeKey(base));
+      for (const c of cands) {
+        const row = c && ZEN_META[c];
+        if (row) {
+          const out = {};
+          if (Number(row.ctx) > 0) out.contextLength = Number(row.ctx);
+          if (typeof row.vis === "boolean") out.supportsImages = row.vis;
+          if (typeof row.tools === "boolean") out.supportsTools = row.tools;
+          out.metaSource = "zen";
+          return out;
+        }
+      }
+      return null;
+    }
+    /** Live Zen catalog (auth-free). Used to confirm a model id exists on Zen. */
+    async ensureZenCatalog(force = false) {
+      const maxAge = 12 * 60 * 60 * 1e3;
+      if (!force && this._zenSet && Date.now() - this._zenLoadedAt < maxAge) return this._zenSet;
+      if (this._zenPromise && !force) return this._zenPromise;
+      this._zenPromise = (async () => {
+        try {
+          const resp = await this.network.proxyFetch("https://opencode.ai/zen/v1/models", "GET", {});
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          const data = await resp.json();
+          const list = Array.isArray(data?.data) ? data.data : [];
+          const set = new Set(list.map((m) => String(m?.id || "").toLowerCase()).filter(Boolean));
+          this._zenSet = set;
+          this._zenLoadedAt = Date.now();
+          this.logger?.info?.("ModelMetaResolver", `Zen catalog loaded: ${set.size} models`);
+          return set;
+        } catch (e) {
+          this.logger?.warn?.("ModelMetaResolver", "Zen catalog failed", e.message);
+          this._zenPromise = null;
+          return null;
+        }
+      })();
+      return this._zenPromise;
+    }
+    isZenModel(modelId) {
+      if (!this._zenSet || !modelId) return false;
+      return this._zenSet.has(String(modelId).toLowerCase());
     }
     async ensureOpenRouterCatalog(force = false) {
       const maxAge = 12 * 60 * 60 * 1e3;
@@ -3729,8 +3846,9 @@
     }
     /**
      * Merge metadata layers into a model-like object.
-     * Priority: explicit fields on input > provider-shaped fields already on input > online catalog > local KB > name heuristics
-     * Always returns object with contextLength (may be 0) and boolean supportsImages/supportsTools when resolvable.
+     * Priority: explicit fields on input > Zen doc table > provider-shaped fields already on input
+     *           > local KB > OpenRouter catalog (async) > name heuristics.
+     * Unknown context is left 0 — never faked.
      */
     enrich(input, { online = true } = {}) {
       const out = { ...input || {} };
@@ -3740,12 +3858,25 @@
       const hasVis = typeof out.supportsImages === "boolean";
       const hasTool = typeof out.supportsTools === "boolean";
       const apply = (src) => {
-        if (!src) return;
-        if (!out.contextLength && Number(src.contextLength) > 0) out.contextLength = Number(src.contextLength);
-        if (typeof out.supportsImages !== "boolean" && typeof src.supportsImages === "boolean") out.supportsImages = src.supportsImages;
-        if (typeof out.supportsTools !== "boolean" && typeof src.supportsTools === "boolean") out.supportsTools = src.supportsTools;
+        if (!src) return false;
+        let touched = false;
+        if (!out.contextLength && Number(src.contextLength) > 0) {
+          out.contextLength = Number(src.contextLength);
+          touched = true;
+        }
+        if (typeof out.supportsImages !== "boolean" && typeof src.supportsImages === "boolean") {
+          out.supportsImages = src.supportsImages;
+          touched = true;
+        }
+        if (typeof out.supportsTools !== "boolean" && typeof src.supportsTools === "boolean") {
+          out.supportsTools = src.supportsTools;
+          touched = true;
+        }
         if (!out.name && src.name) out.name = src.name;
+        if (touched && src.metaSource && !out.metaSource) out.metaSource = src.metaSource;
+        return touched;
       };
+      apply(this._zenLookup(id) || this._zenLookup(name));
       apply(this._kbLookup(id) || this._kbLookup(name));
       if (typeof out.supportsImages !== "boolean") {
         if (VISION_NAME_RE.test(id) || VISION_NAME_RE.test(name)) {
@@ -3774,7 +3905,7 @@
           if (missingVis && typeof online.supportsImages === "boolean") out.supportsImages = online.supportsImages;
           if (missingTool && typeof online.supportsTools === "boolean") out.supportsTools = online.supportsTools;
           if (!out.name && online.name) out.name = online.name;
-          out.metaSource = "openrouter";
+          if (!out.metaSource) out.metaSource = "openrouter";
         }
       }
       if (!out.metaSource) {
@@ -3785,10 +3916,19 @@
     }
     async enrichList(list, opts = {}) {
       if (!Array.isArray(list) || !list.length) return list || [];
-      if (opts.online !== false) await this.ensureOpenRouterCatalog();
+      if (opts.online !== false) {
+        await Promise.all([
+          this.ensureZenCatalog().catch(() => null),
+          this.ensureOpenRouterCatalog().catch(() => null)
+        ]);
+      }
       const out = [];
       for (const item of list) {
-        out.push(await this.enrichAsync(item, opts));
+        const e = await this.enrichAsync(item, opts);
+        if (this._zenSet && !e.metaSourceResolved && this.isZenModel(e.modelId || e.id)) {
+          e.inZenCatalog = true;
+        }
+        out.push(e);
       }
       return out;
     }
@@ -3798,7 +3938,12 @@
      */
     async backfillStored(models, opts = {}) {
       if (!Array.isArray(models) || !models.length) return { list: models || [], changed: false };
-      if (opts.online !== false) await this.ensureOpenRouterCatalog();
+      if (opts.online !== false) {
+        await Promise.all([
+          this.ensureZenCatalog().catch(() => null),
+          this.ensureOpenRouterCatalog().catch(() => null)
+        ]);
+      }
       let changed = false;
       const list = models.map((m) => ({ ...m }));
       for (const m of list) {

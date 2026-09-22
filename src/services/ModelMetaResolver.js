@@ -75,7 +75,7 @@ const LOCAL_KB = {
     // xAI
     'grok-2': { contextLength: 131072, supportsImages: true, supportsTools: true },
     'grok-3': { contextLength: 131072, supportsImages: true, supportsTools: true },
-    'grok-4': { contextLength: 262144, supportsImages: true, supportsTools: true },
+    'grok-4': { contextLength: 2000000, supportsImages: true, supportsTools: true },
     // Cohere
     'command-r': { contextLength: 131072, supportsImages: false, supportsTools: true },
     'command-r-plus': { contextLength: 131072, supportsImages: false, supportsTools: true },
@@ -90,10 +90,9 @@ const LOCAL_KB = {
     'nova-lite': { contextLength: 300000, supportsImages: true, supportsTools: true },
     'nova-micro': { contextLength: 131072, supportsImages: false, supportsTools: true },
     // Moonshot / Kimi
-    'kimi-k2': { contextLength: 131072, supportsImages: false, supportsTools: true },
-    'kimi-latest': { contextLength: 131072, supportsImages: true, supportsTools: true },
+    'kimi-k2': { contextLength: 262144, supportsImages: false, supportsTools: true },
     // MiniMax
-    'minimax-m1': { contextLength: 1000000, supportsImages: false, supportsTools: true },
+    'minimax-m1': { contextLength: 200000, supportsImages: false, supportsTools: true },
     // Zhipu / GLM
     'glm-4-plus': { contextLength: 131072, supportsImages: false, supportsTools: true },
     'glm-4.5': { contextLength: 131072, supportsImages: false, supportsTools: true },
@@ -103,11 +102,82 @@ const LOCAL_KB = {
     // Google older
     'gemma-2-27b': { contextLength: 8192, supportsImages: false, supportsTools: false },
     'gemma-2-9b': { contextLength: 8192, supportsImages: false, supportsTools: false },
-    // Common OpenRouter free aliases (basename forms)
-    'mimo-v2.6-flash-free': { contextLength: 131072, supportsImages: false, supportsTools: true },
-    'mimo-v2.5-free': { contextLength: 131072, supportsImages: false, supportsTools: true },
-    'muse-spark-1.3-contributor-free': { contextLength: 131072, supportsImages: false, supportsTools: true },
-    'muse-spark-1.2-contributor-free': { contextLength: 131072, supportsImages: false, supportsTools: true },
+};
+
+/**
+ * OpenCode Zen metadata — doc-verified facts.
+ * Source: https://opencode.ai/docs/tr/zen/  (+ live catalog https://opencode.ai/zen/v1/models, auth-free)
+ * - `ctx` tier-verified where the pricing table shows an explicit "(≤ X tokens)" split,
+ *   otherwise same-vendor family anchor. ctx:0 = unknown (never faked).
+ * - `vis` true only for natively multimodal families or explicit vision variants.
+ * - `tools` true for all chat/coding endpoints (/responses, /messages, /chat/completions),
+ *   false only for /systemone (jev) which returns state evals, not tool calls.
+ */
+const ZEN_META = {
+    // GPT-5.x / 6 family — ≤272K tier in pricing table
+    'gpt-6-astra': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.6-sol': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.6-terra': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.6-luna': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.5': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.5-pro': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.4': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.4-pro': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.4-mini': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.4-nano': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.3-codex': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.3-codex-spark': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.2': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.2-codex': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.1': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.1-codex': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.1-codex-max': { ctx: 272000, vis: true, tools: true },
+    'gpt-5.1-codex-mini': { ctx: 272000, vis: true, tools: true },
+    'gpt-5': { ctx: 272000, vis: true, tools: true },
+    'gpt-5-codex': { ctx: 272000, vis: true, tools: true },
+    'gpt-5-nano': { ctx: 272000, vis: true, tools: true },
+    // Claude family — 200K standard (sonnet-4.5 row shows ≤200K/>200K split)
+    'claude-fable-5': { ctx: 200000, vis: true, tools: true },
+    'claude-fable-5-1': { ctx: 200000, vis: true, tools: true },
+    'claude-opus-5': { ctx: 200000, vis: true, tools: true },
+    'claude-opus-4-8': { ctx: 200000, vis: true, tools: true },
+    'claude-opus-4-7': { ctx: 200000, vis: true, tools: true },
+    'claude-opus-4-6': { ctx: 200000, vis: true, tools: true },
+    'claude-opus-4-5': { ctx: 200000, vis: true, tools: true },
+    'claude-sonnet-5': { ctx: 200000, vis: true, tools: true },
+    'claude-sonnet-4-6': { ctx: 200000, vis: true, tools: true },
+    'claude-sonnet-4-5': { ctx: 200000, vis: true, tools: true },
+    'claude-sonnet-4': { ctx: 200000, vis: true, tools: true },
+    'claude-haiku-4-5': { ctx: 200000, vis: true, tools: true },
+    // Gemini family — 1M standard
+    'gemini-3.8-flash': { ctx: 1048576, vis: true, tools: true },
+    'gemini-3.7-flash': { ctx: 1048576, vis: true, tools: true },
+    'gemini-3.6-flash': { ctx: 1048576, vis: true, tools: true },
+    'gemini-3.5-flash': { ctx: 1048576, vis: true, tools: true },
+    'gemini-3.5-flash-lite': { ctx: 1048576, vis: true, tools: true },
+    'gemini-3.1-pro': { ctx: 1048576, vis: true, tools: true },
+    'gemini-3-flash': { ctx: 1048576, vis: true, tools: true },
+    // Grok — 4.5/4.6/4.7 show ≤200K tiers
+    'grok-4.7': { ctx: 200000, vis: true, tools: true },
+    'grok-4.6': { ctx: 200000, vis: true, tools: true },
+    'grok-4.5': { ctx: 200000, vis: true, tools: true },
+    'grok-build-0.1': { ctx: 131072, vis: true, tools: true },
+    // Muse Spark (Meta) — tools via /responses endpoint; ctx/vision not documented
+    'muse-spark-1.3': { ctx: 0, tools: true },
+    'muse-spark-1.2': { ctx: 0, tools: true },
+    'muse-spark-1.3-contributor-free': { ctx: 0, tools: true },
+    'muse-spark-1.2-contributor-free': { ctx: 0, tools: true },
+    // DeepSeek V4 on Zen — explicit vision variant only; rest via OpenRouter layer
+    'deepseek-v4-flash-vision-exp': { ctx: 0, vis: true, tools: true },
+    'deepseek-v4.1-flash': { ctx: 0, tools: true },
+    'deepseek-v4-pro': { ctx: 0, tools: true },
+    'deepseek-v4-flash': { ctx: 0, tools: true },
+    'deepseek-v4-flash-free': { ctx: 0, tools: true },
+    // Jev — /systemone eval model, no tool calls, no images
+    'jev-1.13': { ctx: 0, vis: false, tools: false },
+    'jev-1.13-free': { ctx: 0, vis: false, tools: false },
+    // Big Pickle — undisclosed; chat endpoint
+    'big-pickle': { ctx: 0, tools: true },
 };
 
 const VISION_NAME_RE = /(?:^|[\/\-_.])(?:vl|vision|4o|omni|gemini|gemma|pixtral|llava|paligemma|vision[-_]?pro|llama[-_]?3\.2[-_].*vision)/i;
@@ -122,6 +192,9 @@ export class ModelMetaResolver {
         this._orCatalogRaw = null;    // Map exact id -> meta
         this._orPromise = null;
         this._orLoadedAt = 0;
+        this._zenSet = null;          // Set of exact lowercase Zen model ids
+        this._zenPromise = null;
+        this._zenLoadedAt = 0;
     }
 
     /** Normalize model id for fuzzy matching across providers/catalogs. */
@@ -165,6 +238,57 @@ export class ModelMetaResolver {
             if (best) return LOCAL_KB[best];
         }
         return null;
+    }
+
+    /** Doc-verified Zen metadata by exact/normalized id. Returns {contextLength?, supportsImages?, supportsTools?}. */
+    _zenLookup(modelId) {
+        const raw = String(modelId || '').toLowerCase().trim();
+        if (!raw) return null;
+        const cands = [raw, this.normalizeKey(modelId)];
+        const base = raw.split('/').pop();
+        if (base && base !== raw) cands.push(base, this.normalizeKey(base));
+        for (const c of cands) {
+            const row = c && ZEN_META[c];
+            if (row) {
+                const out = {};
+                if (Number(row.ctx) > 0) out.contextLength = Number(row.ctx);
+                if (typeof row.vis === 'boolean') out.supportsImages = row.vis;
+                if (typeof row.tools === 'boolean') out.supportsTools = row.tools;
+                out.metaSource = 'zen';
+                return out;
+            }
+        }
+        return null;
+    }
+
+    /** Live Zen catalog (auth-free). Used to confirm a model id exists on Zen. */
+    async ensureZenCatalog(force = false) {
+        const maxAge = 12 * 60 * 60 * 1000;
+        if (!force && this._zenSet && (Date.now() - this._zenLoadedAt) < maxAge) return this._zenSet;
+        if (this._zenPromise && !force) return this._zenPromise;
+        this._zenPromise = (async () => {
+            try {
+                const resp = await this.network.proxyFetch('https://opencode.ai/zen/v1/models', 'GET', {});
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                const list = Array.isArray(data?.data) ? data.data : [];
+                const set = new Set(list.map(m => String(m?.id || '').toLowerCase()).filter(Boolean));
+                this._zenSet = set;
+                this._zenLoadedAt = Date.now();
+                this.logger?.info?.('ModelMetaResolver', `Zen catalog loaded: ${set.size} models`);
+                return set;
+            } catch (e) {
+                this.logger?.warn?.('ModelMetaResolver', 'Zen catalog failed', e.message);
+                this._zenPromise = null;
+                return null;
+            }
+        })();
+        return this._zenPromise;
+    }
+
+    isZenModel(modelId) {
+        if (!this._zenSet || !modelId) return false;
+        return this._zenSet.has(String(modelId).toLowerCase());
     }
 
     async ensureOpenRouterCatalog(force = false) {
@@ -240,8 +364,9 @@ export class ModelMetaResolver {
 
     /**
      * Merge metadata layers into a model-like object.
-     * Priority: explicit fields on input > provider-shaped fields already on input > online catalog > local KB > name heuristics
-     * Always returns object with contextLength (may be 0) and boolean supportsImages/supportsTools when resolvable.
+     * Priority: explicit fields on input > Zen doc table > provider-shaped fields already on input
+     *           > local KB > OpenRouter catalog (async) > name heuristics.
+     * Unknown context is left 0 — never faked.
      */
     enrich(input, { online = true } = {}) {
         const out = { ...(input || {}) };
@@ -253,14 +378,20 @@ export class ModelMetaResolver {
         const hasTool = typeof out.supportsTools === 'boolean';
 
         const apply = (src) => {
-            if (!src) return;
-            if (!out.contextLength && Number(src.contextLength) > 0) out.contextLength = Number(src.contextLength);
-            if (typeof out.supportsImages !== 'boolean' && typeof src.supportsImages === 'boolean') out.supportsImages = src.supportsImages;
-            if (typeof out.supportsTools !== 'boolean' && typeof src.supportsTools === 'boolean') out.supportsTools = src.supportsTools;
+            if (!src) return false;
+            let touched = false;
+            if (!out.contextLength && Number(src.contextLength) > 0) { out.contextLength = Number(src.contextLength); touched = true; }
+            if (typeof out.supportsImages !== 'boolean' && typeof src.supportsImages === 'boolean') { out.supportsImages = src.supportsImages; touched = true; }
+            if (typeof out.supportsTools !== 'boolean' && typeof src.supportsTools === 'boolean') { out.supportsTools = src.supportsTools; touched = true; }
             if (!out.name && src.name) out.name = src.name;
+            if (touched && src.metaSource && !out.metaSource) out.metaSource = src.metaSource;
+            return touched;
         };
 
-        // Sync layers that are available offline first
+        // Doc-verified Zen layer first (never overrides explicit/API values)
+        apply(this._zenLookup(id) || this._zenLookup(name));
+
+        // Sync layers that are available offline
         apply(this._kbLookup(id) || this._kbLookup(name));
 
         // Heuristics only for still-missing vision flag (never override boolean)
@@ -297,7 +428,7 @@ export class ModelMetaResolver {
                 if (missingVis && typeof online.supportsImages === 'boolean') out.supportsImages = online.supportsImages;
                 if (missingTool && typeof online.supportsTools === 'boolean') out.supportsTools = online.supportsTools;
                 if (!out.name && online.name) out.name = online.name;
-                out.metaSource = 'openrouter';
+                if (!out.metaSource) out.metaSource = 'openrouter';
             }
         }
         if (!out.metaSource) {
@@ -310,11 +441,20 @@ export class ModelMetaResolver {
 
     async enrichList(list, opts = {}) {
         if (!Array.isArray(list) || !list.length) return list || [];
-        // Warm catalog once for the whole batch
-        if (opts.online !== false) await this.ensureOpenRouterCatalog();
+        // Warm catalogs once for the whole batch (Zen + OpenRouter)
+        if (opts.online !== false) {
+            await Promise.all([
+                this.ensureZenCatalog().catch(() => null),
+                this.ensureOpenRouterCatalog().catch(() => null),
+            ]);
+        }
         const out = [];
         for (const item of list) {
-            out.push(await this.enrichAsync(item, opts));
+            const e = await this.enrichAsync(item, opts);
+            if (this._zenSet && !e.metaSourceResolved && this.isZenModel(e.modelId || e.id)) {
+                e.inZenCatalog = true;
+            }
+            out.push(e);
         }
         return out;
     }
@@ -325,7 +465,12 @@ export class ModelMetaResolver {
      */
     async backfillStored(models, opts = {}) {
         if (!Array.isArray(models) || !models.length) return { list: models || [], changed: false };
-        if (opts.online !== false) await this.ensureOpenRouterCatalog();
+        if (opts.online !== false) {
+            await Promise.all([
+                this.ensureZenCatalog().catch(() => null),
+                this.ensureOpenRouterCatalog().catch(() => null),
+            ]);
+        }
         let changed = false;
         const list = models.map(m => ({ ...m }));
         for (const m of list) {
