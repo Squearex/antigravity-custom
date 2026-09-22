@@ -1156,10 +1156,14 @@ function startInternalProxy() {
                         }
                     }
 
+                    const mSupportsImages = typeof m.supportsImages === 'boolean'
+                        ? m.supportsImages
+                        : /(?:vl|vision|omni|4o|gemini|gemma|pixtral|llava|paligemma|qwen.*vl)/i.test(String(m.modelId || m.name || ''));
+
                     modelsMap[key] = {
                         displayName: m.name,
                         model: `MODEL_PLACEHOLDER_M${idx + 1}`,
-                        supportsImages: true,
+                        supportsImages: mSupportsImages,
                         supportsThinking: true,
                         supportsAdaptiveThinking: true,
                         supportsRawThinking: true,

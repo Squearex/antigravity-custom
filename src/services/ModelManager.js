@@ -109,13 +109,22 @@ export class ModelManager {
         return false;
     }
 
+    supportsTools(m) {
+        if (typeof m.supportsTools === 'boolean') return m.supportsTools;
+        const str = `${m.modelId || ''} ${m.name || ''}`.toLowerCase();
+        if (/(?:no[-_]?tools?|text[-_]?only|completion)/.test(str)) return false;
+        return true;
+    }
+
     buildSXModelConfig(m, index = 0) {
         const placeholderEnum = 'MODEL_PLACEHOLDER_M1';
         const hasVision = this.isVisionModel(m);
+        const hasTools = this.supportsTools(m);
         return {
             label: m.name,
             modelOrAlias: { model: placeholderEnum },
             supportsImages: hasVision,
+            supportsTools: hasTools,
             supportsThinking: true,
             supportsAdaptiveThinking: true,
             supportsRawThinking: true,
@@ -135,7 +144,8 @@ export class ModelManager {
             } : {
                 "text/plain": true
             },
-            modelId: m.id
+            modelId: m.id,
+            contextLength: m.contextLength || undefined
         };
     }
 

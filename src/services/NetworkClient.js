@@ -137,9 +137,88 @@ export class NetworkClient {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
         const list = data.data || data.models || (Array.isArray(data) ? data : []);
-        return list.map(m => ({
-            id: m.id || m.name || String(m),
-            name: m.display_name || m.name || m.id || String(m)
-        })).filter(m => m.id);
+        return list
+            .map(m => (m && typeof m === 'object') ? this._normalizeModelMeta(m) : null)
+            .filter(m => m && m.id);
+    }
+
+    _normalizeModelMeta(m) {
+        const id = m.id || m.name || '';
+        const name = m.display_name || m.name || m.id || '';
+        const contextLength = this._extractContextLength(m);
+        const supportsImages = this._extractVision(m);
+        const supportsTools = this._extractTools(m);
+        const out = { id, name };
+        if (contextLength) out.contextLength = contextLength;
+        if (typeof supportsImages === 'boolean') out.supportsImages = supportsImages;
+        if (typeof supportsTools === 'boolean') out.supportsTools = supportsTools;
+        return out;
+    }
+
+    _extractContextLength(m) {
+        const candidates = [
+            m.context_length, m.contextLength, m.context_window, m.contextWindow,
+            m.max_context_length, m.maxContextLength, m.max_context_tokens, m.maxContextTokens,
+            m.context_length_tokens, m.max_tokens, m.maxTokens,
+            m.topics?.context_length, m.limits?.context_length, m.info?.context_length
+        ];
+        for (const c of candidates) {
+            const n = Number(c);
+            if (Number.isFinite(n) && n >= 1000) return Math.round(n);
+        }
+        const arch = m.architecture || m.model_info || m.info || {};
+        for (const c of [arch.context_length, arch.context_window, arch.max_context_length]) {
+            const n = Number(c);
+            if (Number.isFinite(n) && n >= 1000) return Math.round(n);
+        }
+        // Anthropic-style: top-level window
+        const win = m.window || m.input?.context_window;
+        if (win && typeof win === 'object') {
+            const n = Number(win.max || win.context_length);
+            if (Number.isFinite(n) && n >= 1000) return Math.round(n);
+        }
+        return 0;
+    }
+
+    _extractVision(m) {
+        if (typeof m.supports_images === 'boolean') return m.supports_images;
+        if (typeof m.supports_vision === 'boolean') return m.supports_vision;
+        if (typeof m.supportsImages === 'boolean') return m.supportsImages;
+        if (typeof m.vision === 'boolean') return m.vision;
+        const modality = String(m.modality || m.architecture?.modality || m.architecture?.input_modalities || '').toLowerCase();
+        if (modality) {
+            if (modality.includes('image') || modality.includes('vision') || modality.includes('multimodal')) return true;
+            if (modality.includes('text') && !modality.includes('image')) return false;
+        }
+        const inputMods = m.input_modalities || m.modalities?.input || m.architecture?.input_modalities;
+        if (Array.isArray(inputMods)) {
+            const s = inputMods.map(String).join(',').toLowerCase();
+            if (s.includes('image') || s.includes('vision')) return true;
+            if (s.includes('text')) return false;
+        }
+        const caps = m.capabilities || m.features || m.supported_modalities;
+        if (Array.isArray(caps)) {
+            const s = caps.map(String).join(',').toLowerCase();
+            if (s.includes('image') || s.includes('vision') || s.includes('multimodal')) return true;
+        }
+        return undefined;
+    }
+
+    _extractTools(m) {
+        if (typeof m.supports_tools === 'boolean') return m.supports_tools;
+        if (typeof m.supportsTools === 'boolean') return m.supportsTools;
+        if (typeof m.tools === 'boolean') return m.tools;
+        const params = m.supported_parameters || m.supported_features || m.features;
+        if (Array.isArray(params)) {
+            const s = params.map(String).join(',').toLowerCase();
+            if (s.includes('tool') || s.includes('function')) return true;
+            if (s.length) return false;
+        }
+        const caps = m.capabilities;
+        if (Array.isArray(caps)) {
+            const s = caps.map(String).join(',').toLowerCase();
+            if (s.includes('tool') || s.includes('function')) return true;
+        }
+        return undefined;
     }
 }

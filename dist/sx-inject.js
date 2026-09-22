@@ -387,10 +387,92 @@
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       const data = await resp.json();
       const list = data.data || data.models || (Array.isArray(data) ? data : []);
-      return list.map((m) => ({
-        id: m.id || m.name || String(m),
-        name: m.display_name || m.name || m.id || String(m)
-      })).filter((m) => m.id);
+      return list.map((m) => m && typeof m === "object" ? this._normalizeModelMeta(m) : null).filter((m) => m && m.id);
+    }
+    _normalizeModelMeta(m) {
+      const id = m.id || m.name || "";
+      const name = m.display_name || m.name || m.id || "";
+      const contextLength = this._extractContextLength(m);
+      const supportsImages = this._extractVision(m);
+      const supportsTools = this._extractTools(m);
+      const out = { id, name };
+      if (contextLength) out.contextLength = contextLength;
+      if (typeof supportsImages === "boolean") out.supportsImages = supportsImages;
+      if (typeof supportsTools === "boolean") out.supportsTools = supportsTools;
+      return out;
+    }
+    _extractContextLength(m) {
+      const candidates = [
+        m.context_length,
+        m.contextLength,
+        m.context_window,
+        m.contextWindow,
+        m.max_context_length,
+        m.maxContextLength,
+        m.max_context_tokens,
+        m.maxContextTokens,
+        m.context_length_tokens,
+        m.max_tokens,
+        m.maxTokens,
+        m.topics?.context_length,
+        m.limits?.context_length,
+        m.info?.context_length
+      ];
+      for (const c of candidates) {
+        const n = Number(c);
+        if (Number.isFinite(n) && n >= 1e3) return Math.round(n);
+      }
+      const arch = m.architecture || m.model_info || m.info || {};
+      for (const c of [arch.context_length, arch.context_window, arch.max_context_length]) {
+        const n = Number(c);
+        if (Number.isFinite(n) && n >= 1e3) return Math.round(n);
+      }
+      const win = m.window || m.input?.context_window;
+      if (win && typeof win === "object") {
+        const n = Number(win.max || win.context_length);
+        if (Number.isFinite(n) && n >= 1e3) return Math.round(n);
+      }
+      return 0;
+    }
+    _extractVision(m) {
+      if (typeof m.supports_images === "boolean") return m.supports_images;
+      if (typeof m.supports_vision === "boolean") return m.supports_vision;
+      if (typeof m.supportsImages === "boolean") return m.supportsImages;
+      if (typeof m.vision === "boolean") return m.vision;
+      const modality = String(m.modality || m.architecture?.modality || m.architecture?.input_modalities || "").toLowerCase();
+      if (modality) {
+        if (modality.includes("image") || modality.includes("vision") || modality.includes("multimodal")) return true;
+        if (modality.includes("text") && !modality.includes("image")) return false;
+      }
+      const inputMods = m.input_modalities || m.modalities?.input || m.architecture?.input_modalities;
+      if (Array.isArray(inputMods)) {
+        const s = inputMods.map(String).join(",").toLowerCase();
+        if (s.includes("image") || s.includes("vision")) return true;
+        if (s.includes("text")) return false;
+      }
+      const caps = m.capabilities || m.features || m.supported_modalities;
+      if (Array.isArray(caps)) {
+        const s = caps.map(String).join(",").toLowerCase();
+        if (s.includes("image") || s.includes("vision") || s.includes("multimodal")) return true;
+      }
+      return void 0;
+    }
+    _extractTools(m) {
+      if (typeof m.supports_tools === "boolean") return m.supports_tools;
+      if (typeof m.supportsTools === "boolean") return m.supportsTools;
+      if (typeof m.tools === "boolean") return m.tools;
+      const params = m.supported_parameters || m.supported_features || m.features;
+      if (Array.isArray(params)) {
+        const s = params.map(String).join(",").toLowerCase();
+        if (s.includes("tool") || s.includes("function")) return true;
+        if (s.length) return false;
+      }
+      const caps = m.capabilities;
+      if (Array.isArray(caps)) {
+        const s = caps.map(String).join(",").toLowerCase();
+        if (s.includes("tool") || s.includes("function")) return true;
+      }
+      return void 0;
     }
   };
 
@@ -1014,13 +1096,21 @@
       }
       return false;
     }
+    supportsTools(m) {
+      if (typeof m.supportsTools === "boolean") return m.supportsTools;
+      const str = `${m.modelId || ""} ${m.name || ""}`.toLowerCase();
+      if (/(?:no[-_]?tools?|text[-_]?only|completion)/.test(str)) return false;
+      return true;
+    }
     buildSXModelConfig(m, index = 0) {
       const placeholderEnum = "MODEL_PLACEHOLDER_M1";
       const hasVision = this.isVisionModel(m);
+      const hasTools = this.supportsTools(m);
       return {
         label: m.name,
         modelOrAlias: { model: placeholderEnum },
         supportsImages: hasVision,
+        supportsTools: hasTools,
         supportsThinking: true,
         supportsAdaptiveThinking: true,
         supportsRawThinking: true,
@@ -1040,7 +1130,8 @@
         } : {
           "text/plain": true
         },
-        modelId: m.id
+        modelId: m.id,
+        contextLength: m.contextLength || void 0
       };
     }
     buildCustomModelConfigs() {
@@ -2675,19 +2766,38 @@
       let allFetchedModels = [];
       const checkedIds = /* @__PURE__ */ new Set();
       const self = this;
+      const isAlreadyAdded = (modelId, provId) => self.state.getModels().some((m) => m.modelId === modelId && m.providerId === provId);
+      const metaFromFetched = (fm) => {
+        if (!fm) return {};
+        const out = {};
+        if (fm.contextLength) out.contextLength = fm.contextLength;
+        if (typeof fm.supportsImages === "boolean") out.supportsImages = fm.supportsImages;
+        if (typeof fm.supportsTools === "boolean") out.supportsTools = fm.supportsTools;
+        return out;
+      };
       function renderChecklist(filterText) {
         const list = overlay.querySelector("#sx-m-check-list");
         if (!list) return;
+        const provId = overlay.querySelector("#sx-m-prov")?.value;
         const filtered = allFetchedModels.filter(
           (m) => m.id.toLowerCase().includes(filterText) || (m.name || "").toLowerCase().includes(filterText)
-        ).slice(0, 300);
+        ).slice(0, 500);
         if (!filtered.length) {
           list.innerHTML = '<div style="padding:12px;color:rgba(255,255,255,0.3);font-size:12px;text-align:center;">Sonu\xE7 yok</div>';
           return;
         }
-        list.innerHTML = filtered.map(
-          (m) => '<label style="display:flex;align-items:center;gap:9px;padding:7px 12px;cursor:pointer;"><input type="checkbox" data-id="' + self.sxEsc(m.id) + '" data-name="' + self.sxEsc(m.name || m.id) + '"' + (checkedIds.has(m.id) ? " checked" : "") + ' style="width:14px;height:14px;accent-color:#38bdf8;cursor:pointer;flex-shrink:0;" /><span style="min-width:0;overflow:hidden;"><div style="font-family:ui-monospace,monospace;font-size:11.5px;color:rgba(255,255,255,0.88);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + self.sxEsc(m.id) + "</div>" + (m.name && m.name !== m.id ? '<div style="font-size:10px;color:rgba(255,255,255,0.38);">' + self.sxEsc(m.name) + "</div>" : "") + "</span></label>"
-        ).join("");
+        let addedCount = 0;
+        list.innerHTML = filtered.map((m) => {
+          const already = isAlreadyAdded(m.id, provId);
+          if (already) addedCount++;
+          const ctxTag = self.models.formatContextSize(m.contextLength);
+          const badges = [];
+          if (ctxTag) badges.push(`<span style="font-size:9px;font-weight:700;color:#a3e635;background:rgba(163,230,53,0.1);padding:0 4px;border-radius:3px;">${ctxTag}</span>`);
+          if (m.supportsImages) badges.push('<span style="font-size:9px;font-weight:600;color:#38bdf8;background:rgba(56,189,248,0.1);padding:0 4px;border-radius:3px;">Vision</span>');
+          if (m.supportsTools) badges.push('<span style="font-size:9px;font-weight:600;color:#fbbf24;background:rgba(245,158,11,0.1);padding:0 4px;border-radius:3px;">Tools</span>');
+          const badgeHtml = badges.length ? `<span style="display:inline-flex;gap:4px;flex-shrink:0;margin-left:auto;padding-left:6px;">${badges.join("")}</span>` : "";
+          return '<label style="display:flex;align-items:center;gap:9px;padding:7px 12px;cursor:' + (already ? "default" : "pointer") + ";opacity:" + (already ? "0.45" : "1") + ';"><input type="checkbox" data-id="' + self.sxEsc(m.id) + '"' + (checkedIds.has(m.id) ? " checked" : "") + (already ? " disabled" : "") + ' style="width:14px;height:14px;accent-color:#38bdf8;cursor:' + (already ? "not-allowed" : "pointer") + ';flex-shrink:0;" /><span style="min-width:0;overflow:hidden;flex:1;"><div style="font-family:ui-monospace,monospace;font-size:11.5px;color:rgba(255,255,255,0.88);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + self.sxEsc(m.id) + (already ? ' <span style="font-size:9px;color:rgba(255,255,255,0.35);font-family:inherit;">(ekli)</span>' : "") + "</div>" + (m.name && m.name !== m.id ? '<div style="font-size:10px;color:rgba(255,255,255,0.38);">' + self.sxEsc(m.name) + "</div>" : "") + "</span>" + badgeHtml + "</label>";
+        }).join("");
         list.querySelectorAll("input[type=checkbox]").forEach((cb) => {
           cb.onchange = () => {
             if (cb.checked) checkedIds.add(cb.dataset.id);
@@ -2698,6 +2808,14 @@
             }
           };
         });
+        const hint = overlay.querySelector("#sx-m-bulk-hint");
+        if (hint && checkedIds.size === 0 && addedCount > 0) {
+          hint.style.display = "";
+          hint.textContent = addedCount + " model zaten ekli \u2014 tekrar eklenmeyecek.";
+        } else if (hint && checkedIds.size > 0) {
+          hint.style.display = "";
+          hint.textContent = checkedIds.size + " model se\xE7ildi \u2014 Ekle ile toplu eklenecek.";
+        }
       }
       const fetchBtn = overlay.querySelector("#sx-m-fetch");
       if (fetchBtn) fetchBtn.onclick = async () => {
@@ -2709,15 +2827,42 @@
         }
         fetchBtn.disabled = true;
         fetchBtn.textContent = "Y\xFCkleniyor...";
+        checkedIds.clear();
         try {
           allFetchedModels = await self.network.fetchModels(prov.baseUrl, prov.apiKey, prov.protocol, prov.modelsPath);
+          const modelsNow = self.state.getModels();
+          let metaUpdated = false;
+          allFetchedModels.forEach((fm) => {
+            const ex = modelsNow.find((m) => m.modelId === fm.id && m.providerId === provId);
+            if (!ex) return;
+            if (fm.contextLength && !ex.contextLength) {
+              ex.contextLength = fm.contextLength;
+              metaUpdated = true;
+            }
+            if (typeof fm.supportsImages === "boolean" && typeof ex.supportsImages !== "boolean") {
+              ex.supportsImages = fm.supportsImages;
+              metaUpdated = true;
+            }
+            if (typeof fm.supportsTools === "boolean" && typeof ex.supportsTools !== "boolean") {
+              ex.supportsTools = fm.supportsTools;
+              metaUpdated = true;
+            }
+          });
+          if (metaUpdated) self.state.setModels(modelsNow);
           const hint = overlay.querySelector("#sx-m-bulk-hint");
           const filterEl2 = overlay.querySelector("#sx-m-filter");
           const listEl = overlay.querySelector("#sx-m-check-list");
-          if (hint) hint.style.display = "none";
           if (filterEl2) filterEl2.style.display = "";
           if (listEl) listEl.style.display = "";
-          renderChecklist("");
+          const filterText = (filterEl2?.value || "").toLowerCase().trim();
+          renderChecklist(filterText);
+          if (hint) {
+            const total = allFetchedModels.length;
+            const already = allFetchedModels.filter((m) => isAlreadyAdded(m.id, provId)).length;
+            hint.style.display = "";
+            hint.textContent = `${total} model bulundu` + (already ? ` \u2014 ${already} zaten ekli` : "") + ".";
+          }
+          if (metaUpdated) onSave && onSave();
         } catch (e) {
           alert("Listelenemedi: " + e.message);
         } finally {
@@ -2727,6 +2872,11 @@
       };
       const filterEl = overlay.querySelector("#sx-m-filter");
       if (filterEl) filterEl.oninput = (e) => renderChecklist(e.target.value.toLowerCase().trim());
+      const provSel = overlay.querySelector("#sx-m-prov");
+      if (provSel) provSel.onchange = () => {
+        checkedIds.clear();
+        renderChecklist((filterEl?.value || "").toLowerCase().trim());
+      };
       overlay.querySelector("#sx-m-cancel").onclick = () => overlay.remove();
       overlay.onclick = (e) => {
         if (e.target === overlay) overlay.remove();
@@ -2741,7 +2891,25 @@
             alert("Model ID ve ad zorunludur.");
             return;
           }
-          const entry = { id: existing.id, providerId: provId, name, modelId, directMode: true };
+          const dup = list.find((m) => m.modelId === modelId && m.providerId === provId && m.id !== existing.id);
+          if (dup) {
+            alert("Bu provider i\xE7in ayn\u0131 model ID zaten ekli.");
+            return;
+          }
+          const prev = list.find((m) => m.id === existing.id) || existing;
+          const entry = {
+            id: existing.id,
+            providerId: provId,
+            name,
+            modelId,
+            directMode: true,
+            contextLength: prev.contextLength || 0,
+            supportsImages: typeof prev.supportsImages === "boolean" ? prev.supportsImages : void 0,
+            supportsTools: typeof prev.supportsTools === "boolean" ? prev.supportsTools : void 0
+          };
+          if (!entry.contextLength) delete entry.contextLength;
+          if (typeof entry.supportsImages === "undefined") delete entry.supportsImages;
+          if (typeof entry.supportsTools === "undefined") delete entry.supportsTools;
           const idx = list.findIndex((m) => m.id === existing.id);
           if (idx >= 0) list[idx] = entry;
           else list.push(entry);
@@ -2751,16 +2919,28 @@
           return;
         }
         if (checkedIds.size > 0) {
+          let added = 0;
+          let skipped = 0;
           checkedIds.forEach((id) => {
-            const fm = allFetchedModels.find((m) => m.id === id);
+            if (list.some((m) => m.modelId === id && m.providerId === provId)) {
+              skipped++;
+              return;
+            }
+            const fm2 = allFetchedModels.find((m) => m.id === id);
             list.push({
               id: "m_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
               providerId: provId,
-              name: fm ? fm.name || id : id,
+              name: fm2 ? fm2.name || id : id,
               modelId: id,
-              directMode: true
+              directMode: true,
+              ...metaFromFetched(fm2)
             });
+            added++;
           });
+          if (added === 0) {
+            alert(skipped ? "Se\xE7ilen t\xFCm modeller zaten ekli." : "Eklenecek model yok.");
+            return;
+          }
           self.state.setModels(list);
           overlay.remove();
           onSave && onSave();
@@ -2772,7 +2952,19 @@
           alert("Model ID girin veya listeden en az bir model se\xE7in.");
           return;
         }
-        list.push({ id: "m_" + Date.now(), providerId: provId, name: manualName || manualId, modelId: manualId, directMode: true });
+        if (list.some((m) => m.modelId === manualId && m.providerId === provId)) {
+          alert("Bu provider i\xE7in ayn\u0131 model ID zaten ekli.");
+          return;
+        }
+        const fm = allFetchedModels.find((m) => m.id === manualId);
+        list.push({
+          id: "m_" + Date.now(),
+          providerId: provId,
+          name: manualName || fm && fm.name || manualId,
+          modelId: manualId,
+          directMode: true,
+          ...metaFromFetched(fm)
+        });
         self.state.setModels(list);
         overlay.remove();
         onSave && onSave();
@@ -2912,10 +3104,16 @@
           html += '<div class="sx-models-list">';
           models.forEach((m) => {
             const p = providers.find((x) => x.id === m.providerId);
+            const ctxTag = this.models.formatContextSize(m.contextLength);
+            const badgeBits = [];
+            if (ctxTag) badgeBits.push(`<span style="font-size:9.5px;font-weight:700;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.2);padding:0 5px;border-radius:4px;">${ctxTag}</span>`);
+            if (this.models.isVisionModel(m)) badgeBits.push('<span style="font-size:9.5px;font-weight:600;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0 5px;border-radius:4px;">Vision</span>');
+            if (m.supportsTools === true) badgeBits.push('<span style="font-size:9.5px;font-weight:600;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0 5px;border-radius:4px;">Tools</span>');
             html += `
                         <div class="sx-model-card">
                             <div class="sx-model-name">${this.sxEsc(m.name)}</div>
                             <div class="sx-model-id">${this.sxEsc(m.modelId)}</div>
+                            <div style="display:flex;gap:4px;flex-shrink:0;">${badgeBits.join("")}</div>
                             <div class="sx-model-prov">${this.sxEsc(p ? p.name : "?")}</div>
                             <div class="sx-card-actions">
                                 <button class="sx-icon-btn edit-m" data-id="${m.id}" title="Edit">\u270E</button>
@@ -3229,7 +3427,6 @@
                 if (mLow.includes("1m") || mLow.includes("ultra")) ctxTag = "1M";
                 else if (mLow.includes("256k") || mLow.includes("pro")) ctxTag = "256k";
                 else if (mLow.includes("128k")) ctxTag = "128k";
-                else ctxTag = "128k";
               }
               if (ctxTag) {
                 rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">${ctxTag}</span>`;
@@ -3239,6 +3436,9 @@
               }
               if (isVision) {
                 rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">Vision</span>`;
+              }
+              if (m.supportsTools === true) {
+                rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">Tools</span>`;
               }
               const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);margin-left:4px;flex-shrink:0;${isSelected ? "" : "visibility:hidden;"}"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
               item.innerHTML = `
