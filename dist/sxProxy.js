@@ -165,6 +165,45 @@ function makeLoopNudge(name, argsStr, count) {
     return `[Sistem Uyarısı: '${name}' aracını aynı parametrelerle art arda ${count} kez çağırdın ve ilerleme yok — bu bir döngü. Aynı çağrıyı tekrarlama. Şunları dene: (1) bir önceki hata mesajındaki parametreyi düzelt, (2) önce listele/ara araçlarıyla doğru yolu bul, (3) farklı bir dosya ya da yönteme geç. Parametreler: ${shortArgs}]`;
 }
 
+// ── Intent rescue for vacuous continuations ───────────────────────────────
+// When history gets trimmed, a bare "Continue"/"devam" loses its referent and
+// the model replies "isteğiniz görünmüyor". Detect vacuous last messages and,
+// if trimming actually dropped turns, re-inject the last substantive user
+// intent so the model can continue without asking the user to repeat.
+const VACUOUS_RE = /^(continue|devam|devam et|sürdür|go on|carry on|proceed|go ahead|do it|yap|ok|okay|okey|tamam|evet|yes|yeah|aynen|olur|hadi|please continue|lütfen devam et)[.!.…]*$/i;
+function isVacuousContinuation(text) {
+    try {
+        const t = String(text || '').trim();
+        if (!t || t.length > 30) return false;
+        return VACUOUS_RE.test(t);
+    } catch(e) { return false; }
+}
+function getTurnText(c) {
+    try {
+        const parts = c?.parts || [];
+        return parts
+            .filter(p => typeof p.text === 'string')
+            .filter(p => !p.text.startsWith('[Otomatik Bağlam Özeti]') && !p.text.startsWith('[Sistem Uyarısı'))
+            .map(p => p.text).join('\n').trim();
+    } catch(e) { return ''; }
+}
+function findLastSubstantiveUser(contents) {
+    try {
+        if (!Array.isArray(contents)) return null;
+        for (let i = contents.length - 1; i >= 0; i--) {
+            const c = contents[i];
+            if (!c || (c.role !== 'user' && c.role !== 'human')) continue;
+            const t = getTurnText(c);
+            if (!t || t.length < 120 || isVacuousContinuation(t)) continue;
+            return t.slice(0, 1500);
+        }
+    } catch(e) {}
+    return null;
+}
+function makeIntentReminder(substantive) {
+    return `[Bağlam Hatırlatması: geçmiş kırpıldığı için son isteğin tam görünmüyor olabilir. Kullanıcının önceki somut isteği: "${substantive}" — buna göre kaldığın yerden devam et; gerçekten emin değilsen tek kısa soru sor.]`;
+}
+
 // ── Automatic context compaction (professional fix for full context) ──────
 // When history exceeds the budget, the evicted middle is summarized with the
 // same provider/model (one cheap non-streaming call) and the summary is pinned:
@@ -1957,7 +1996,24 @@ function startInternalProxy() {
 
                         // Auto-compact conversation history using real available budget
                         const contentsBeforeCompact = contents.length;
+                        // Capture pre-trim intent for vacuous continuations ("Continue" etc.)
+                        let lastUserText = '';
+                        try {
+                            for (let i = contents.length - 1; i >= 0; i--) {
+                                const c = contents[i];
+                                if (c && (c.role === 'user' || c.role === 'human')) { lastUserText = getTurnText(c); break; }
+                            }
+                        } catch(e) {}
+                        const substantiveBefore = findLastSubstantiveUser(contents);
                         contents = await autoCompactWithSummary(contents, historyTokenBudget, { provider, modelId: customModel?.modelId, convKey: reqConvKey });
+                        // If the last message is vacuous AND trimming dropped turns, the model
+                        // loses the referent ("isteğiniz görünmüyor") — re-inject last intent.
+                        let intentRescued = false;
+                        if (lastUserText && isVacuousContinuation(lastUserText) && substantiveBefore && contents.length < contentsBeforeCompact) {
+                            contents.push({ role: 'user', parts: [{ text: makeIntentReminder(substantiveBefore) }] });
+                            intentRescued = true;
+                            console.log(`[SX PROXY] Intent rescue injected for ${reqConvKey || '?'}`);
+                        }
                         // Agent loop breaker: inject pending nudge from the previous streamed response
                         try {
                             const pend = (reqConvKey && loopGuardPending[reqConvKey]) || null;
@@ -2219,6 +2275,7 @@ function startInternalProxy() {
                                 finalMsgChars,
                                 finalToolsChars,
                                 finalEstimatedTokens: Math.ceil((finalMsgChars + finalToolsChars) / 1.55),
+                                intentRescued: !!intentRescued,
                             });
                             if (reqConvKey) {
                                 recordSentEstimate(reqConvKey, Math.ceil((finalMsgChars + finalToolsChars) / 1.55), customModel?.modelId || customModel?.id);
