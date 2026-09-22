@@ -21,6 +21,48 @@ function isContextOverflow(status, text) {
     return CONTEXT_OVERFLOW_RE.test(String(text || '').slice(0, 2000));
 }
 
+// Upstream watchdog: free-tier gateways can queue/hang forever leaving the UI
+// stuck on "Working". TTFB aborts when no response headers arrive in time;
+// total timer bounds the whole attempt including long streams.
+const SX_TTFB_TIMEOUT_MS = 180000;
+const SX_TOTAL_TIMEOUT_MS = 12 * 60 * 1000;
+async function fetchUpstream(url, opts) {
+    const ctrl = new AbortController();
+    let totalFired = false, ttfbFired = false;
+    const ttfbTimer = setTimeout(() => { ttfbFired = true; try { ctrl.abort(); } catch(e){} }, SX_TTFB_TIMEOUT_MS);
+    const totalTimer = setTimeout(() => { totalFired = true; try { ctrl.abort(); } catch(e){} }, SX_TOTAL_TIMEOUT_MS);
+    const done = () => { clearTimeout(ttfbTimer); clearTimeout(totalTimer); };
+    try {
+        const res = await fetch(url, { ...opts, signal: ctrl.signal });
+        clearTimeout(ttfbTimer);
+        return { res, done };
+    } catch (e) {
+        done();
+        if (ttfbFired && !totalFired) {
+            const err = new Error('Upstream zaman aşımı: 3 dakika içinde yanıt başlamadı (gateway kuyruğu ya da sunucu yanıt vermiyor).');
+            err.code = 'SX_TTFB_TIMEOUT'; throw err;
+        }
+        if (totalFired) {
+            const err = new Error('Upstream zaman aşımı: toplam 12 dakika doldu.');
+            err.code = 'SX_TOTAL_TIMEOUT'; throw err;
+        }
+        throw e;
+    }
+}
+
+// Ingress log: proves whether a chat request reached the proxy (last 200 hits).
+function logHit(entry) {
+    try {
+        const p = path.join(app.getPath('userData'), 'sx_proxy_hits.jsonl');
+        let lines = [];
+        if (fs.existsSync(p)) {
+            lines = fs.readFileSync(p, 'utf8').split('\n').filter(l => l.trim()).slice(-199);
+        }
+        lines.push(JSON.stringify({ ts: new Date().toISOString(), ...entry }));
+        fs.writeFileSync(p, lines.join('\n'), 'utf8');
+    } catch(e) {}
+}
+
 function getConvPerfFile() {
     try {
         return path.join(app.getPath('userData'), 'sx_conv_perf.json');
@@ -1450,6 +1492,13 @@ function startInternalProxy() {
                             historyTokensAfter,
                             estimatedTotal: overheadTokens + historyTokensAfter,
                         });
+                        logHit({
+                            conv: reqConvKey || null,
+                            model: customModel?.modelId || customModel?.id || '?',
+                            turns: contents.length,
+                            estTok: overheadTokens + historyTokensAfter,
+                            budget: historyTokenBudget,
+                        });
 
                         const proto = (provider.protocol || 'openai').toLowerCase();
                         res.writeHead(200, {
@@ -1458,6 +1507,9 @@ function startInternalProxy() {
                             'Connection': 'keep-alive',
                             'Access-Control-Allow-Origin': '*'
                         });
+                        // Always release upstream timers when our response closes.
+                        let upCleanup = null;
+                        res.on('close', () => { try { if (upCleanup) upCleanup(); } catch(e){} });
 
                         if (proto === 'anthropic') {
                             const anthropicTools = convertGeminiToolsToAnthropic(rawTools);
@@ -1483,16 +1535,26 @@ function startInternalProxy() {
                             for (let attempt = 0; attempt < 3; attempt++) {
                                 const slim = compactContentsForContext(contents, anthBudget);
                                 payload.messages = sanitizeAnthropicMessages(geminiContentsToAnthropic(slim));
-                                apiRes = await fetch(apiUrl, {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                        'x-api-key': provider.apiKey || '',
-                                        'anthropic-version': '2023-06-01'
-                                    },
-                                    body: JSON.stringify(payload)
-                                });
+                                try {
+                                    const up = await fetchUpstream(apiUrl, {
+                                        method: 'POST',
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                            'x-api-key': provider.apiKey || '',
+                                            'anthropic-version': '2023-06-01'
+                                        },
+                                        body: JSON.stringify(payload)
+                                    });
+                                    upCleanup = up.done;
+                                    apiRes = up.res;
+                                } catch (fetchErr) {
+                                    lastErrStatus = 0;
+                                    lastErrTxt = (fetchErr && fetchErr.message) || String(fetchErr);
+                                    console.error(`[SX PROXY] Anthropic upstream fetch failed (attempt ${attempt + 1}/3):`, lastErrTxt);
+                                    break; // timeout/network: shrinking history won't help
+                                }
                                 if (apiRes.ok) break;
+                                upCleanup && upCleanup(); upCleanup = null;
                                 lastErrStatus = apiRes.status;
                                 lastErrTxt = await apiRes.text().catch(() => `HTTP ${apiRes.status}`);
                                 if (attempt < 2 && isContextOverflow(apiRes.status, lastErrTxt)) {
@@ -1661,15 +1723,25 @@ function startInternalProxy() {
                             let attemptBudget = realHistoryBudget;
                             for (let attempt = 0; attempt < 3; attempt++) {
                                 payload.messages = trimOpenAIMessages(sanitizedOaMsgs, attemptBudget);
-                                apiRes = await fetch(apiUrl, {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                        'Authorization': 'Bearer ' + (provider.apiKey || '')
-                                    },
-                                    body: JSON.stringify(payload)
-                                });
+                                try {
+                                    const up = await fetchUpstream(apiUrl, {
+                                        method: 'POST',
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                            'Authorization': 'Bearer ' + (provider.apiKey || '')
+                                        },
+                                        body: JSON.stringify(payload)
+                                    });
+                                    upCleanup = up.done;
+                                    apiRes = up.res;
+                                } catch (fetchErr) {
+                                    lastErrStatus = 0;
+                                    lastErrTxt = (fetchErr && fetchErr.message) || String(fetchErr);
+                                    console.error(`[SX PROXY] OpenAI upstream fetch failed (attempt ${attempt + 1}/3):`, lastErrTxt);
+                                    break; // timeout/network: shrinking history won't help
+                                }
                                 if (apiRes.ok) break;
+                                upCleanup && upCleanup(); upCleanup = null;
                                 lastErrStatus = apiRes.status;
                                 lastErrTxt = await apiRes.text().catch(() => `HTTP ${apiRes.status}`);
                                 if (attempt < 2 && isContextOverflow(apiRes.status, lastErrTxt)) {
