@@ -256,10 +256,15 @@ export class PerfMonitor {
 
                 const isLast = (idx === footers.length - 1);
                 const stats = this.getStatsForMessage(footerEl, isLast);
-                if (!stats || !stats.completionTokens) return;
+                if (!stats && !isLast) return;
+                // Always render badge: if stats missing, show minimal wait state
+                const hasData = stats && (stats.ttftMs || stats.tps || stats.completionTokens > 0);
 
-                const ttftSec = (stats.ttftMs / 1000).toFixed(2);
-                const ttftStr = stats.ttftMs >= 1000 ? `${ttftSec}s` : `${stats.ttftMs}ms`;
+                const ttftSec = stats ? (stats.ttftMs / 1000).toFixed(2) : '--';
+                const ttftStr = stats ? (stats.ttftMs >= 1000 ? `${ttftSec}s` : `${stats.ttftMs}ms`) : '--ms';
+                const tpsStr = stats ? (stats.tps || 0) : 0;
+                const tokDisp = stats ? `~${stats.completionTokens || 0} tok` : '--';
+                const splitStr = (stats && (stats.normalTokens != null || stats.thinkingTokens != null)) ? ` N${stats.normalTokens || 0}/T${stats.thinkingTokens || 0}` : '';
 
                 let speedColor = '#10b981';
                 if (stats.tps < 20) speedColor = '#f43f5e';
@@ -285,13 +290,14 @@ export class PerfMonitor {
                 }
 
                 const splitStr = (stats.normalTokens != null || stats.thinkingTokens != null) ? ` N${stats.normalTokens || 0}/T${stats.thinkingTokens || 0}` : '';
+                const safeColor = stats ? (stats.tps < 20 ? '#f43f5e' : stats.tps < 40 ? '#eab308' : stats.tps < 80 ? '#38bdf8' : '#10b981') : '#38bdf8';
                 badge.innerHTML = `
                     <span style="color: #64748b; font-size: 10px;">•</span>
-                    <span style="color: ${speedColor}; font-weight: 700;" title="İnferans Hızı: ${stats.tps} Token/Saniye">⚡ ${stats.tps} TPS</span>
+                    <span style="color: ${safeColor}; font-weight: 700;" title="İnferans Hızı: ${tpsStr} Token/Saniye">⚡ ${tpsStr} TPS</span>
                     <span style="color: #64748b; font-size: 10px;">•</span>
-                    <span style="color: #38bdf8; font-weight: 600;" title="İlk Yanıt Süresi (TTFT): ${stats.ttftMs}ms">⏱️ ${ttftStr}</span>
+                    <span style="color: #38bdf8; font-weight: 600;" title="İlk Yanıt Süresi (TTFT): ${stats ? stats.ttftMs + 'ms' : '--'}">⏱️ ${ttftStr}</span>
                     <span style="color: #64748b; font-size: 10px;">•</span>
-                    <span style="color: #94a3b8;" title="Bu Mesaj İçin Üretilen Token: ~${stats.completionTokens} tok${splitStr}">~${stats.completionTokens} tok${splitStr}</span>
+                    <span style="color: #94a3b8;" title="Bu Mesaj İçin Üretilen Token: ${tokDisp}${splitStr}">${tokDisp}${splitStr}</span>
                 `;
             });
         } catch(e) {}
