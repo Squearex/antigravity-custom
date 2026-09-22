@@ -147,7 +147,7 @@ export class QuotaMonitor {
             this._lastPollTs = Date.now();
             this._progressInFlight = this.fetchStreamProgress(cleanConvId).then(p => {
                 this._progressInFlight = null;
-                if (!p) { this._streamActive = false; return; }
+                if (!p) { this._streamActive = false; this._lastGen = null; return; }
                 this._streamActive = !!p.streaming;
                 const gen = p.genTokens || 0;
                 if (gen > 50) {
@@ -155,8 +155,9 @@ export class QuotaMonitor {
                     if (p.streaming) this._lastStreamTs = Date.now();
                 } else if (!p.streaming) {
                     this._streamActive = false;
+                    this._lastGen = null;
                 }
-            }).catch(() => { this._progressInFlight = null; this._streamActive = false; });
+            }).catch(() => { this._progressInFlight = null; this._streamActive = false; this._lastGen = null; });
         }
     }
 

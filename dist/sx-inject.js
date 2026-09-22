@@ -1454,6 +1454,7 @@
           this._progressInFlight = null;
           if (!p) {
             this._streamActive = false;
+            this._lastGen = null;
             return;
           }
           this._streamActive = !!p.streaming;
@@ -1463,10 +1464,12 @@
             if (p.streaming) this._lastStreamTs = Date.now();
           } else if (!p.streaming) {
             this._streamActive = false;
+            this._lastGen = null;
           }
         }).catch(() => {
           this._progressInFlight = null;
           this._streamActive = false;
+          this._lastGen = null;
         });
       }
     }
