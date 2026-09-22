@@ -1985,7 +1985,7 @@
           this._obsTimer = setTimeout(() => {
             this._obsTimer = null;
             this.injectMetricsToMessageFooters();
-          }, 650);
+          }, 150);
         });
         this._observer.observe(document.body, {
           childList: true,
