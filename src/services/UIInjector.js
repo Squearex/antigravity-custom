@@ -623,7 +623,7 @@ export class UIInjector {
 
         // Throttle looser: allow rapid retries when settings dialog just opened
         const scanTs = Date.now();
-        if (this._lastSettingsScan && (scanTs - this._lastSettingsScan < 50) && !document.querySelector('#sx-content-wrapper')) return;
+        if (this._lastSettingsScan && (scanTs - this._lastSettingsScan < 0) && !document.querySelector('#sx-content-wrapper')) return;
         this._lastSettingsScan = scanTs;
 
         let rightPanel = null;
