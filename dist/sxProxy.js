@@ -395,6 +395,62 @@ function loadConvPerfFromDisk() {
     } catch(e) {}
 }
 
+// Per-message perf history: convKey -> [last 30 msgPerf entries].
+// convPerfStats keeps only the LAST message (compat); this keeps EVERY message
+// with normal/thinking split, tool calls, prompt tokens and finish reason.
+const convPerfHistory = {}; // convKey -> [{...msgPerf}]
+function getConvPerfHistoryFile() {
+    try {
+        return path.join(app.getPath('userData'), 'sx_conv_perf_history.json');
+    } catch(e) { return ''; }
+}
+function saveConvPerfHistoryToDisk() {
+    try {
+        const p = getConvPerfHistoryFile();
+        if (p) fs.writeFileSync(p, JSON.stringify(convPerfHistory), 'utf8');
+    } catch(e) {}
+}
+function loadConvPerfHistoryFromDisk() {
+    try {
+        const p = getConvPerfHistoryFile();
+        if (p && fs.existsSync(p)) {
+            const raw = JSON.parse(fs.readFileSync(p, 'utf8')) || {};
+            for (const k of Object.keys(raw)) {
+                if (Array.isArray(raw[k])) convPerfHistory[k] = raw[k].slice(-30);
+            }
+        }
+    } catch(e) {}
+}
+// Shared chars->tokens estimate for text (matches transcript math).
+function sxEstToks(chars) { return Math.max(0, Math.round((Number(chars) || 0) / 3.5)); }
+// Finalize + store one message's perf. promptEstTokens falls back to the
+// pre-request sent estimate when no real upstream usage arrived.
+function recordMsgPerf(convKey, entry, promptEstTokens) {
+    try {
+        const e = { ...(entry || {}) };
+        if (!(e.promptTokens > 0) && promptEstTokens > 0) {
+            e.promptTokens = Math.round(promptEstTokens);
+            e.promptEstimated = true;
+        }
+        if (!convKey) {
+            convPerfStats['last'] = { ...(convPerfStats['last'] || {}), ...e };
+            saveConvPerfToDisk();
+            return e;
+        }
+        if (!convPerfHistory[convKey]) convPerfHistory[convKey] = [];
+        convPerfHistory[convKey].push(e);
+        if (convPerfHistory[convKey].length > 30) convPerfHistory[convKey].splice(0, convPerfHistory[convKey].length - 30);
+        capMapSize(convPerfHistory, 60);
+        // Compat: last-message slots keep the full detail object too
+        convPerfStats[convKey] = e;
+        convPerfStats['last'] = e;
+        capMapSize(convPerfStats, 60, 'last');
+        saveConvPerfToDisk();
+        saveConvPerfHistoryToDisk();
+    } catch(err) {}
+    return entry;
+}
+
 function dbgLog(obj) {
     try {
         _dbgLastStats = { ...obj, ts: new Date().toISOString() };
@@ -424,6 +480,7 @@ function loadConvModelsFromDisk() {
             console.log('[SX PROXY] Restored conv models from disk:', Object.keys(convModels).length, 'conversations');
         }
         loadConvPerfFromDisk();
+        loadConvPerfHistoryFromDisk();
     } catch(e) { console.error('[SX Proxy] Error loading conv models:', e); }
 }
 
@@ -1562,10 +1619,12 @@ function startInternalProxy() {
                     const convKey = 'conv_' + cleanConvId;
 
                     let stats = convPerfStats[convKey] || convPerfStats['conv_new'] || convPerfStats['last'] || null;
+                    const history = (convPerfHistory[convKey] || convPerfHistory['conv_new'] || []).slice(-30);
                     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                     res.end(JSON.stringify({
                         ok: true,
                         convId: cleanConvId,
+                        history,
                         stats: stats || {
                             ttftMs: null,
                             totalMs: null,
@@ -2070,6 +2129,10 @@ function startInternalProxy() {
                             const anthropicTools = convertGeminiToolsToAnthropic(rawTools);
                             const apiUrl = (provider.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '') + '/v1/messages';
                             const anthStartTime = Date.now();
+                            // Per-message detail accumulators (normal vs thinking split, tools, real usage)
+                            let anthTextChars = 0, anthThinkChars = 0;
+                            const anthMsgTools = [];
+                            let anthUsageIn = 0, anthUsageOut = 0, anthStopReason = '';
                             const payload = {
                                 model: customModel.modelId,
                                 max_tokens: 16000,
@@ -2163,8 +2226,19 @@ function startInternalProxy() {
                                     if (!raw || raw === '[DONE]') continue;
                                     try {
                                         const ev = JSON.parse(raw);
+                                        // Real usage accounting (Anthropic streams input/output counts)
+                                        if (ev.type === 'message_start' && ev.message && ev.message.usage) {
+                                            anthUsageIn = Number(ev.message.usage.input_tokens) || 0;
+                                            continue;
+                                        }
+                                        if (ev.type === 'message_delta' && ev.usage) {
+                                            anthUsageOut = Number(ev.usage.output_tokens) || 0;
+                                            if (ev.delta && ev.delta.stop_reason) anthStopReason = String(ev.delta.stop_reason);
+                                            continue;
+                                        }
                                         if (ev.type === 'content_block_delta') {
                                             if (ev.delta?.type === 'text_delta') {
+                                                anthTextChars += (ev.delta.text || '').length;
                                                 bumpStreamProgress(reqConvKey, (ev.delta.text || '').length);
                                                 const chunk = JSON.stringify({
                                                     response: {
@@ -2175,6 +2249,7 @@ function startInternalProxy() {
                                                 });
                                                 res.write(`data: ${chunk}\n\n`);
                                             } else if (ev.delta?.type === 'thinking_delta') {
+                                                anthThinkChars += (ev.delta.thinking || '').length;
                                                 bumpStreamProgress(reqConvKey, (ev.delta.thinking || '').length);
                                                 const chunk = JSON.stringify({
                                                     response: {
@@ -2216,6 +2291,7 @@ function startInternalProxy() {
                                                 });
                                                 res.write(`data: ${chunk}\n\n`);
                                                 try { recordToolCall(reqConvKey, currentToolCall.name, currentToolCall.arguments); } catch(e){}
+                                                if (currentToolCall.name) anthMsgTools.push(String(currentToolCall.name));
                                                 currentToolCall = null;
                                             }
                                         }
@@ -2231,17 +2307,23 @@ function startInternalProxy() {
                                 const ttftMsA = Math.max(0, firstTs - anthStartTime);
                                 const compToksA = Math.max(1, Math.round(genChars / 3.5));
                                 const genMsA = Math.max(1, totalMsA - ttftMsA);
+                                const normalToksA = sxEstToks(anthTextChars);
+                                const thinkToksA = sxEstToks(anthThinkChars);
                                 const perfDataA = {
                                     ttftMs: ttftMsA, totalMs: totalMsA, generationMs: genMsA,
                                     completionTokens: compToksA,
+                                    normalTokens: normalToksA,
+                                    thinkingTokens: thinkToksA,
+                                    promptTokens: (anthUsageIn > 0 ? anthUsageIn : Math.round(genChars / 3.5)), // prefer real usage
+                                    outputTokens: (anthUsageOut > 0 ? anthUsageOut : compToksA),
+                                    toolCalls: anthMsgTools.length,
+                                    toolCallNames: anthMsgTools,
+                                    stopReason: anthStopReason || '',
                                     tps: Number((compToksA / (genMsA / 1000)).toFixed(1)),
                                     modelName: customModel?.name || customModel?.modelId || 'Custom Model',
                                     timestamp: new Date().toISOString()
                                 };
-                            if (reqConvKey) convPerfStats[reqConvKey] = perfDataA;
-                            convPerfStats['last'] = perfDataA;
-                            capMapSize(convPerfStats, 60, 'last');
-                            saveConvPerfToDisk();
+                            if (reqConvKey) recordMsgPerf(reqConvKey, perfDataA, 0); // already saved above
                             } catch(e) {}
                         } else {
                             // OpenAI protocol (OpenRouter, OpenAI, Kilo, Kira, etc.)
@@ -2373,6 +2455,11 @@ function startInternalProxy() {
                             let inThink = false;
                             const activeToolCalls = {};
                             let totalChunksSent = 0;
+                            // Per-message real usage tracking (upstream provides usage in final chunk)
+                            let openUsagePrompt = 0, openUsageComplete = 0;
+                            let openStopReason = '';
+                            const openMsgTools = [];
+                            let openNormalChars = 0, openThinkChars = 0;
 
                             let rawLinesSample = [];
                             while (true) {
@@ -2406,7 +2493,13 @@ function startInternalProxy() {
                                         }
                                         const choice = ev.choices?.[0];
                                         const delta = choice?.delta || {};
+                                        // Capture real usage when upstream sends it (often last line with usage block)
+                                        if (ev.usage) {
+                                            openUsagePrompt = Number(ev.usage.prompt_tokens) || openUsagePrompt;
+                                            openUsageComplete = Number(ev.usage.completion_tokens) || openUsageComplete;
+                                        }
                                         if (choice?.finish_reason) {
+                                            openStopReason = String(choice.finish_reason);
                                             dbgLog({ ..._dbgLastStats, lastFinishReason: choice.finish_reason, rawLinesSample });
                                         }
 
@@ -2424,6 +2517,7 @@ function startInternalProxy() {
                                         if (rc) {
                                             if (!firstTokenTime) firstTokenTime = Date.now();
                                             totalGeneratedChars += rc.length;
+                                            openThinkChars += rc.length;
                                             bumpStreamProgress(reqConvKey, rc.length);
                                             console.log('[SX PROXY THOUGHT]', rc.replace(/\n/g, ' ').slice(0, 30));
                                             const chunk = JSON.stringify({
@@ -2507,9 +2601,10 @@ function startInternalProxy() {
                                                     const normTxt = textStream.slice(0, openIdx);
                                                     inThink = true;
                                                     textStream = textStream.slice(openIdx + openLen);
-                                                    if (normTxt) {
-                                                        if (!firstTokenTime) firstTokenTime = Date.now();
-                                                        totalGeneratedChars += normTxt.length;
+                                                        if (normTxt) {
+                                                            if (!firstTokenTime) firstTokenTime = Date.now();
+                                                            totalGeneratedChars += normTxt.length;
+                                                            openNormalChars += normTxt.length;
                                                         const chunk = JSON.stringify({
                                                             response: {
                                                                 candidates: [{
@@ -2523,6 +2618,8 @@ function startInternalProxy() {
                                                 } else {
                                                     if (!firstTokenTime) firstTokenTime = Date.now();
                                                     totalGeneratedChars += textStream.length;
+                                                    openNormalChars += textStream.length;
+                                                            openThinkChars += textStream.length;
                                                     const chunk = JSON.stringify({
                                                         response: {
                                                             candidates: [{
@@ -2558,6 +2655,7 @@ function startInternalProxy() {
                                 const tc = activeToolCalls[idx];
                                 if (!tc.name) continue;
                                 try { recordToolCall(reqConvKey, tc.name, tc.arguments); } catch(e){}
+                                if (tc.name) openMsgTools.push(String(tc.name));
                                 let parsedArgs = {};
                                 try { parsedArgs = JSON.parse(tc.arguments || '{}'); } catch(e) { parsedArgs = { raw: tc.arguments }; }
                                 fcParts.push({
@@ -2592,16 +2690,19 @@ function startInternalProxy() {
                                 totalMs: totalRequestMs,
                                 generationMs,
                                 completionTokens: estimatedCompTokens,
+                                normalTokens: sxEstToks(openNormalChars),
+                                thinkingTokens: sxEstToks(openThinkChars),
+                                promptTokens: (openUsagePrompt > 0 ? openUsagePrompt : Math.round(finalMsgChars / 1.55) + Math.round(finalToolsChars / 1.55)),
+                                outputTokens: (openUsageComplete > 0 ? openUsageComplete : estimatedCompTokens),
+                                toolCalls: openMsgTools.length,
+                                toolCallNames: openMsgTools,
+                                stopReason: openStopReason || '',
                                 tps,
                                 modelName: customModel?.name || customModel?.modelId || 'Custom Model',
                                 timestamp: new Date().toISOString()
                             };
-
-                            if (reqConvKey) convPerfStats[reqConvKey] = perfData;
-                            convPerfStats['last'] = perfData;
-                            capMapSize(convPerfStats, 60, 'last');
-                            saveConvPerfToDisk();
-                            console.log(`[SX PROXY PERF] ${reqConvKey || 'last'}: TTFT=${ttftMs}ms, Total=${totalRequestMs}ms, CompToks=${estimatedCompTokens}, TPS=${tps}`);
+                            if (reqConvKey) recordMsgPerf(reqConvKey, perfData, Math.round(finalMsgChars / 1.55) + Math.round(finalToolsChars / 1.55));
+                            console.log(`[SX PROXY PERF] ${reqConvKey || 'last'}: TTFT=${ttftMs}ms, Total=${totalRequestMs}ms, CompToks=${estimatedCompTokens}, Normal=${perfData.normalTokens}, Think=${perfData.thinkingTokens}, Tools=${perfData.toolCalls}, Stop=${perfData.stopReason || '-'}`);
 
                             // If model sent absolutely nothing (empty stream), emit a fallback to avoid
                             // "model output must contain either output text or tool calls" error

@@ -432,6 +432,10 @@ export class PerfMonitor {
                     <span style="color:#64748b;">Ölçülen Model:</span>
                     <span style="color:#cbd5e1;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${sxEsc(stats.modelName || '')}">${sxEsc(stats.modelName || '')}</span>
                 </div>
+                ${(stats.normalTokens != null || stats.thinkingTokens != null) ? `<div style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:#a3e635;"><span>Normal / Thinking (tok):</span><span style="font-family:ui-monospace,monospace;font-weight:600;">${stats.normalTokens || 0} / ${stats.thinkingTokens || 0}</span></div>` : ''}
+                ${(stats.promptTokens > 0 || stats.outputTokens > 0) ? `<div style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:#38bdf8;"><span>Prompt / Output (gerçek):</span><span style="font-family:ui-monospace,monospace;font-weight:600;">${stats.promptTokens || 0} / ${stats.outputTokens || 0}</span></div>` : ''}
+                ${(stats.toolCalls > 0) ? `<div style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:#fb923c;"><span>Araç çağrısı:</span><span style="font-family:ui-monospace,monospace;font-weight:600;">${stats.toolCalls} (${(stats.toolCallNames || []).slice(0,3).join(', ')})</span></div>` : ''}
+                ${(stats.stopReason) ? `<div style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:#f472b6;"><span>Stop reason:</span><span style="font-family:ui-monospace,monospace;font-weight:600;">${stats.stopReason}</span></div>` : ''}
             `;
         };
 
