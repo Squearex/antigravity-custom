@@ -1026,11 +1026,12 @@
     "TEAMS_TIER_PRO_ULTIMATE"
   ];
   var ModelManager = class {
-    constructor(eventBus, stateStore, networkClient, logger) {
+    constructor(eventBus, stateStore, networkClient, logger, metaResolver = null) {
       this.bus = eventBus;
       this.state = stateStore;
       this.network = networkClient;
       this.logger = logger;
+      this.metaResolver = metaResolver;
     }
     init() {
       this.bus.on("state:providers-updated", () => {
@@ -2489,7 +2490,7 @@
 
   // src/services/UIInjector.js
   var UIInjector = class {
-    constructor(eventBus, stateStore, modelManager, themeEngine, quotaMonitor, perfMonitor, networkClient, logger) {
+    constructor(eventBus, stateStore, modelManager, themeEngine, quotaMonitor, perfMonitor, networkClient, logger, metaResolver = null) {
       this.bus = eventBus;
       this.state = stateStore;
       this.models = modelManager;
@@ -2498,6 +2499,7 @@
       this.perf = perfMonitor;
       this.network = networkClient;
       this.logger = logger;
+      this.meta = metaResolver;
       this._lastUrl = window.location.href;
       this._lastAutoFetch = 0;
     }
@@ -2729,6 +2731,20 @@
             <div class="sx-field">
                 <label class="sx-label">G\xF6r\xFCnt\xFC Ad\u0131</label>
                 <input class="sx-input" id="sx-m-name" value="${this.sxEsc(existing?.name || "")}" placeholder="\xF6rnek: Claude 3.7 Sonnet" />
+            </div>
+            <div class="sx-field">
+                <label class="sx-label">Context (token)</label>
+                <input class="sx-input" id="sx-m-ctx" type="number" min="0" step="1024" value="${existing?.contextLength ? this.sxEsc(existing.contextLength) : ""}" placeholder="\xF6rnek: 200000" />
+            </div>
+            <div class="sx-field" style="display:flex;gap:18px;align-items:center;">
+                <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:rgba(255,255,255,0.75);cursor:pointer;">
+                    <input type="checkbox" id="sx-m-vision" ${existing?.supportsImages ? "checked" : ""} style="width:14px;height:14px;accent-color:#38bdf8;" />
+                    Vision
+                </label>
+                <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:rgba(255,255,255,0.75);cursor:pointer;">
+                    <input type="checkbox" id="sx-m-tools" ${existing?.supportsTools ? "checked" : ""} style="width:14px;height:14px;accent-color:#fb923c;" />
+                    Tools
+                </label>
             </div>`;
       const addFields = `
             <div class="sx-field">
@@ -2829,7 +2845,8 @@
         fetchBtn.textContent = "Y\xFCkleniyor...";
         checkedIds.clear();
         try {
-          allFetchedModels = await self.network.fetchModels(prov.baseUrl, prov.apiKey, prov.protocol, prov.modelsPath);
+          const rawList = await self.network.fetchModels(prov.baseUrl, prov.apiKey, prov.protocol, prov.modelsPath);
+          allFetchedModels = self.meta ? await self.meta.enrichList(rawList, { online: true }) : rawList;
           const modelsNow = self.state.getModels();
           let metaUpdated = false;
           allFetchedModels.forEach((fm) => {
@@ -2848,7 +2865,15 @@
               metaUpdated = true;
             }
           });
-          if (metaUpdated) self.state.setModels(modelsNow);
+          if (self.meta) {
+            const { list: bfList, changed } = await self.meta.backfillStored(modelsNow, { online: true });
+            if (changed) {
+              self.state.setModels(bfList);
+              metaUpdated = true;
+            }
+          } else if (metaUpdated) {
+            self.state.setModels(modelsNow);
+          }
           const hint = overlay.querySelector("#sx-m-bulk-hint");
           const filterEl2 = overlay.querySelector("#sx-m-filter");
           const listEl = overlay.querySelector("#sx-m-check-list");
@@ -2859,8 +2884,9 @@
           if (hint) {
             const total = allFetchedModels.length;
             const already = allFetchedModels.filter((m) => isAlreadyAdded(m.id, provId)).length;
+            const withCtx = allFetchedModels.filter((m) => Number(m.contextLength) > 0).length;
             hint.style.display = "";
-            hint.textContent = `${total} model bulundu` + (already ? ` \u2014 ${already} zaten ekli` : "") + ".";
+            hint.textContent = `${total} model bulundu` + (already ? ` \u2014 ${already} zaten ekli` : "") + ` \u2014 ${withCtx}/${total} context bilgili` + (metaUpdated ? " \u2014 metadata g\xFCncellendi" : "") + ".";
           }
           if (metaUpdated) onSave && onSave();
         } catch (e) {
@@ -2881,7 +2907,7 @@
       overlay.onclick = (e) => {
         if (e.target === overlay) overlay.remove();
       };
-      overlay.querySelector("#sx-m-save").onclick = () => {
+      overlay.querySelector("#sx-m-save").onclick = async () => {
         const provId = overlay.querySelector("#sx-m-prov").value;
         const list = self.state.getModels();
         if (isEdit) {
@@ -2896,20 +2922,18 @@
             alert("Bu provider i\xE7in ayn\u0131 model ID zaten ekli.");
             return;
           }
-          const prev = list.find((m) => m.id === existing.id) || existing;
+          const ctxRaw = Number(String(overlay.querySelector("#sx-m-ctx")?.value || "").trim());
           const entry = {
             id: existing.id,
             providerId: provId,
             name,
             modelId,
             directMode: true,
-            contextLength: prev.contextLength || 0,
-            supportsImages: typeof prev.supportsImages === "boolean" ? prev.supportsImages : void 0,
-            supportsTools: typeof prev.supportsTools === "boolean" ? prev.supportsTools : void 0
+            contextLength: Number.isFinite(ctxRaw) && ctxRaw > 0 ? Math.round(ctxRaw) : 0,
+            supportsImages: !!overlay.querySelector("#sx-m-vision")?.checked,
+            supportsTools: !!overlay.querySelector("#sx-m-tools")?.checked
           };
           if (!entry.contextLength) delete entry.contextLength;
-          if (typeof entry.supportsImages === "undefined") delete entry.supportsImages;
-          if (typeof entry.supportsTools === "undefined") delete entry.supportsTools;
           const idx = list.findIndex((m) => m.id === existing.id);
           if (idx >= 0) list[idx] = entry;
           else list.push(entry);
@@ -2921,17 +2945,24 @@
         if (checkedIds.size > 0) {
           let added = 0;
           let skipped = 0;
+          const toEnrich = [];
           checkedIds.forEach((id) => {
             if (list.some((m) => m.modelId === id && m.providerId === provId)) {
               skipped++;
               return;
             }
-            const fm2 = allFetchedModels.find((m) => m.id === id);
+            const fm2 = allFetchedModels.find((m) => m.id === id) || { id, name: id };
+            toEnrich.push(fm2);
+          });
+          if (self.meta && toEnrich.length) {
+            await self.meta.enrichList(toEnrich, { online: true });
+          }
+          toEnrich.forEach((fm2) => {
             list.push({
               id: "m_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
               providerId: provId,
-              name: fm2 ? fm2.name || id : id,
-              modelId: id,
+              name: fm2.name || fm2.id,
+              modelId: fm2.id,
               directMode: true,
               ...metaFromFetched(fm2)
             });
@@ -2956,11 +2987,12 @@
           alert("Bu provider i\xE7in ayn\u0131 model ID zaten ekli.");
           return;
         }
-        const fm = allFetchedModels.find((m) => m.id === manualId);
+        const fmBase = allFetchedModels.find((m) => m.id === manualId) || { id: manualId, name: manualName || manualId };
+        const fm = self.meta ? await self.meta.enrichAsync(fmBase, { online: true }) : fmBase;
         list.push({
           id: "m_" + Date.now(),
           providerId: provId,
-          name: manualName || fm && fm.name || manualId,
+          name: manualName || fm.name || manualId,
           modelId: manualId,
           directMode: true,
           ...metaFromFetched(fm)
@@ -3483,6 +3515,317 @@
     }
   };
 
+  // src/services/ModelMetaResolver.js
+  var LOCAL_KB = {
+    // OpenAI
+    "gpt-4o": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    "gpt-4o-mini": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    "gpt-4.1": { contextLength: 1047576, supportsImages: true, supportsTools: true },
+    "gpt-4.1-mini": { contextLength: 1047576, supportsImages: true, supportsTools: true },
+    "gpt-4.1-nano": { contextLength: 1047576, supportsImages: true, supportsTools: true },
+    "gpt-4-turbo": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    "gpt-4-turbo-preview": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    "gpt-4": { contextLength: 8192, supportsImages: false, supportsTools: true },
+    "gpt-3.5-turbo": { contextLength: 16385, supportsImages: false, supportsTools: true },
+    "gpt-3.5-turbo-16k": { contextLength: 16385, supportsImages: false, supportsTools: true },
+    "o1": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "o1-mini": { contextLength: 131072, supportsImages: false, supportsTools: false },
+    "o1-preview": { contextLength: 131072, supportsImages: false, supportsTools: false },
+    "o3": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "o3-mini": { contextLength: 2e5, supportsImages: false, supportsTools: true },
+    "o4-mini": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    // Anthropic
+    "claude-3-7-sonnet": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-3-7-sonnet-latest": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-3-5-sonnet": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-3-5-sonnet-latest": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-3-5-haiku": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-3-opus": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-3-sonnet": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-3-haiku": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-sonnet-4": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-opus-4": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-opus-4-1": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-opus-4-5": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-sonnet-4-5": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    "claude-haiku-4-5": { contextLength: 2e5, supportsImages: true, supportsTools: true },
+    // Google
+    "gemini-2.5-pro": { contextLength: 1048576, supportsImages: true, supportsTools: true },
+    "gemini-2.5-flash": { contextLength: 1048576, supportsImages: true, supportsTools: true },
+    "gemini-2.5-flash-lite": { contextLength: 1048576, supportsImages: true, supportsTools: true },
+    "gemini-2.0-flash": { contextLength: 1048576, supportsImages: true, supportsTools: true },
+    "gemini-2.0-flash-lite": { contextLength: 1048576, supportsImages: true, supportsTools: true },
+    "gemini-1.5-pro": { contextLength: 2097152, supportsImages: true, supportsTools: true },
+    "gemini-1.5-flash": { contextLength: 1048576, supportsImages: true, supportsTools: true },
+    "gemini-1.5-flash-8b": { contextLength: 1048576, supportsImages: true, supportsTools: true },
+    // DeepSeek
+    "deepseek-chat": { contextLength: 65536, supportsImages: false, supportsTools: true },
+    "deepseek-reasoner": { contextLength: 65536, supportsImages: false, supportsTools: true },
+    "deepseek-coder": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    // Meta
+    "llama-3.3-70b-instruct": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "llama-3.1-405b-instruct": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "llama-3.1-70b-instruct": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "llama-3.1-8b-instruct": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "llama-3.2-11b-vision": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    "llama-3.2-90b-vision": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    // Mistral
+    "mistral-large": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "mistral-medium": { contextLength: 32768, supportsImages: false, supportsTools: true },
+    "mistral-small": { contextLength: 32768, supportsImages: false, supportsTools: true },
+    "pixtral-large": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    "codestral": { contextLength: 262144, supportsImages: false, supportsTools: true },
+    // Qwen
+    "qwen-2.5-72b-instruct": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "qwen-2.5-coder-32b": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "qwen2.5-vl-72b-instruct": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    "qwen3-235b-a22b": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "qwq-32b": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    // xAI
+    "grok-2": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    "grok-3": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    "grok-4": { contextLength: 262144, supportsImages: true, supportsTools: true },
+    // Cohere
+    "command-r": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "command-r-plus": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "command-a": { contextLength: 262144, supportsImages: false, supportsTools: true },
+    // Perplexity
+    "sonar": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "sonar-pro": { contextLength: 2e5, supportsImages: false, supportsTools: true },
+    "sonar-reasoning": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "sonar-reasoning-pro": { contextLength: 2e5, supportsImages: false, supportsTools: true },
+    // Amazon
+    "nova-pro": { contextLength: 3e5, supportsImages: true, supportsTools: true },
+    "nova-lite": { contextLength: 3e5, supportsImages: true, supportsTools: true },
+    "nova-micro": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    // Moonshot / Kimi
+    "kimi-k2": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "kimi-latest": { contextLength: 131072, supportsImages: true, supportsTools: true },
+    // MiniMax
+    "minimax-m1": { contextLength: 1e6, supportsImages: false, supportsTools: true },
+    // Zhipu / GLM
+    "glm-4-plus": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "glm-4.5": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "glm-4.6": { contextLength: 2e5, supportsImages: false, supportsTools: true },
+    // Microsoft
+    "phi-4": { contextLength: 16384, supportsImages: false, supportsTools: true },
+    // Google older
+    "gemma-2-27b": { contextLength: 8192, supportsImages: false, supportsTools: false },
+    "gemma-2-9b": { contextLength: 8192, supportsImages: false, supportsTools: false },
+    // Common OpenRouter free aliases (basename forms)
+    "mimo-v2.6-flash-free": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "mimo-v2.5-free": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "muse-spark-1.3-contributor-free": { contextLength: 131072, supportsImages: false, supportsTools: true },
+    "muse-spark-1.2-contributor-free": { contextLength: 131072, supportsImages: false, supportsTools: true }
+  };
+  var VISION_NAME_RE = /(?:^|[\/\-_.])(?:vl|vision|4o|omni|gemini|gemma|pixtral|llava|paligemma|vision[-_]?pro|llama[-_]?3\.2[-_].*vision)/i;
+  var NO_VISION_NAME_RE = /(?:^|[\/\-_.])(?:code|coder|embedding|audio|transcribe|tts|whisper|rerank)/i;
+  var NO_TOOLS_NAME_RE = /(?:^|[\/\-_.])(?:embedding|whisper|tts|transcribe|rerank|moderation|audio)/i;
+  var ModelMetaResolver = class {
+    constructor(networkClient, logger) {
+      this.network = networkClient;
+      this.logger = logger;
+      this._orCatalog = null;
+      this._orCatalogRaw = null;
+      this._orPromise = null;
+      this._orLoadedAt = 0;
+    }
+    /** Normalize model id for fuzzy matching across providers/catalogs. */
+    normalizeKey(id) {
+      let s = String(id || "").toLowerCase().trim();
+      if (!s) return "";
+      s = s.replace(/^(openai|anthropic|google|meta|meta-llama|mistralai|mistral|deepseek|qwen|amazon|cohere|perplexity|together|fireworks|groq|x-ai|xai|openrouter|nvidia|microsoft|ai21|liquid|z-ai|zhipu|moonshotai|moonshot|minimax|stepfun|qwen)\//, "");
+      s = s.replace(/[-_]?20\d{6}$/, "");
+      s = s.replace(/[-_]?20\d{2}[-_]?\d{2}[-_]?\d{2}$/, "");
+      s = s.replace(/[-_.]?(latest|free|experimental|instruct|preview|chat|thinking|turbo)$/g, "");
+      s = s.replace(/[\s_]+/g, "-");
+      s = s.replace(/\.(\d)/g, "-$1");
+      s = s.replace(/-+/g, "-").replace(/^-|-$/g, "");
+      return s;
+    }
+    _kbLookup(modelId) {
+      const raw = String(modelId || "").toLowerCase();
+      if (!raw) return null;
+      if (LOCAL_KB[raw]) return LOCAL_KB[raw];
+      const key = this.normalizeKey(modelId);
+      if (LOCAL_KB[key]) return LOCAL_KB[key];
+      const basename = raw.split("/").pop();
+      if (LOCAL_KB[basename]) return LOCAL_KB[basename];
+      const baseKey = this.normalizeKey(basename);
+      if (LOCAL_KB[baseKey]) return LOCAL_KB[baseKey];
+      if (key.length >= 6) {
+        const hits = Object.keys(LOCAL_KB).filter((k) => k.includes(key) || key.includes(k));
+        if (hits.length === 1) return LOCAL_KB[hits[0]];
+        let best = null;
+        for (const k of Object.keys(LOCAL_KB)) {
+          if (key.includes(k) && (!best || k.length > best.length)) best = k;
+        }
+        if (best) return LOCAL_KB[best];
+      }
+      return null;
+    }
+    async ensureOpenRouterCatalog(force = false) {
+      const maxAge = 12 * 60 * 60 * 1e3;
+      if (!force && this._orCatalog && Date.now() - this._orLoadedAt < maxAge) return this._orCatalog;
+      if (this._orPromise && !force) return this._orPromise;
+      this._orPromise = (async () => {
+        try {
+          const resp = await this.network.proxyFetch("https://openrouter.ai/api/v1/models", "GET", {});
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          const data = await resp.json();
+          const list = Array.isArray(data?.data) ? data.data : [];
+          const exact = /* @__PURE__ */ new Map();
+          const norm = /* @__PURE__ */ new Map();
+          for (const m of list) {
+            if (!m?.id) continue;
+            const meta = this._fromOpenRouterItem(m);
+            exact.set(String(m.id).toLowerCase(), meta);
+            const nk = this.normalizeKey(m.id);
+            if (nk && !norm.has(nk)) norm.set(nk, meta);
+            const base = String(m.id).split("/").pop();
+            const bk = this.normalizeKey(base);
+            if (bk && !norm.has(bk)) norm.set(bk, meta);
+          }
+          this._orCatalogRaw = exact;
+          this._orCatalog = norm;
+          this._orLoadedAt = Date.now();
+          this.logger?.info?.("ModelMetaResolver", `OpenRouter catalog loaded: ${exact.size} models`);
+          return this._orCatalog;
+        } catch (e) {
+          this.logger?.warn?.("ModelMetaResolver", "OpenRouter catalog failed", e.message);
+          this._orPromise = null;
+          return null;
+        }
+      })();
+      return this._orPromise;
+    }
+    _fromOpenRouterItem(m) {
+      const out = {};
+      const ctx = Number(m.context_length || m.context_window || 0);
+      if (Number.isFinite(ctx) && ctx >= 1e3) out.contextLength = Math.round(ctx);
+      const modality = String(m.architecture?.modality || "").toLowerCase();
+      const inMods = Array.isArray(m.architecture?.input_modalities) ? m.architecture.input_modalities.join(",").toLowerCase() : "";
+      const hay = `${modality},${inMods}`;
+      if (hay.includes("image") || hay.includes("vision")) out.supportsImages = true;
+      else if (hay.includes("text")) out.supportsImages = false;
+      const params = Array.isArray(m.supported_parameters) ? m.supported_parameters.join(",").toLowerCase() : "";
+      if (params.includes("tool") || params.includes("function")) out.supportsTools = true;
+      else if (params) out.supportsTools = false;
+      if (m.name) out.name = m.name;
+      return out;
+    }
+    async lookupOnline(modelId) {
+      await this.ensureOpenRouterCatalog();
+      if (!this._orCatalogRaw) return null;
+      const raw = String(modelId || "").toLowerCase();
+      if (this._orCatalogRaw.has(raw)) return this._orCatalogRaw.get(raw);
+      const key = this.normalizeKey(modelId);
+      if (key && this._orCatalog.has(key)) return this._orCatalog.get(key);
+      const base = raw.split("/").pop();
+      if (this._orCatalogRaw.has(base)) return this._orCatalogRaw.get(base);
+      const bk = this.normalizeKey(base);
+      if (bk && this._orCatalog.has(bk)) return this._orCatalog.get(bk);
+      return null;
+    }
+    /**
+     * Merge metadata layers into a model-like object.
+     * Priority: explicit fields on input > provider-shaped fields already on input > online catalog > local KB > name heuristics
+     * Always returns object with contextLength (may be 0) and boolean supportsImages/supportsTools when resolvable.
+     */
+    enrich(input, { online = true } = {}) {
+      const out = { ...input || {} };
+      const id = out.modelId || out.id || "";
+      const name = out.name || "";
+      const hasCtx = Number(out.contextLength) > 0;
+      const hasVis = typeof out.supportsImages === "boolean";
+      const hasTool = typeof out.supportsTools === "boolean";
+      const apply = (src) => {
+        if (!src) return;
+        if (!out.contextLength && Number(src.contextLength) > 0) out.contextLength = Number(src.contextLength);
+        if (typeof out.supportsImages !== "boolean" && typeof src.supportsImages === "boolean") out.supportsImages = src.supportsImages;
+        if (typeof out.supportsTools !== "boolean" && typeof src.supportsTools === "boolean") out.supportsTools = src.supportsTools;
+        if (!out.name && src.name) out.name = src.name;
+      };
+      apply(this._kbLookup(id) || this._kbLookup(name));
+      if (typeof out.supportsImages !== "boolean") {
+        if (VISION_NAME_RE.test(id) || VISION_NAME_RE.test(name)) {
+          out.supportsImages = !NO_VISION_NAME_RE.test(id);
+        }
+      }
+      if (typeof out.supportsTools !== "boolean") {
+        if (NO_TOOLS_NAME_RE.test(id) || NO_TOOLS_NAME_RE.test(name)) out.supportsTools = false;
+      }
+      const missing = !(Number(out.contextLength) > 0 && typeof out.supportsImages === "boolean" && typeof out.supportsTools === "boolean");
+      if (online && missing && id) {
+      }
+      if (hasCtx && hasVis && hasTool) out.metaSource = out.metaSource || "api";
+      return out;
+    }
+    async enrichAsync(input, opts = {}) {
+      const out = this.enrich(input, opts);
+      const id = out.modelId || out.id || "";
+      const missingCtx = !(Number(out.contextLength) > 0);
+      const missingVis = typeof out.supportsImages !== "boolean";
+      const missingTool = typeof out.supportsTools !== "boolean";
+      if (opts.online !== false && id && (missingCtx || missingVis || missingTool)) {
+        const online = await this.lookupOnline(id);
+        if (online) {
+          if (missingCtx && Number(online.contextLength) > 0) out.contextLength = Number(online.contextLength);
+          if (missingVis && typeof online.supportsImages === "boolean") out.supportsImages = online.supportsImages;
+          if (missingTool && typeof online.supportsTools === "boolean") out.supportsTools = online.supportsTools;
+          if (!out.name && online.name) out.name = online.name;
+          out.metaSource = "openrouter";
+        }
+      }
+      if (!out.metaSource) {
+        const kb = this._kbLookup(id);
+        out.metaSource = kb ? "local" : typeof out.supportsImages === "boolean" || Number(out.contextLength) > 0 ? "partial" : "none";
+      }
+      return out;
+    }
+    async enrichList(list, opts = {}) {
+      if (!Array.isArray(list) || !list.length) return list || [];
+      if (opts.online !== false) await this.ensureOpenRouterCatalog();
+      const out = [];
+      for (const item of list) {
+        out.push(await this.enrichAsync(item, opts));
+      }
+      return out;
+    }
+    /**
+     * Fill missing fields on stored models without overwriting user/API values.
+     * Returns { list, changed }.
+     */
+    async backfillStored(models, opts = {}) {
+      if (!Array.isArray(models) || !models.length) return { list: models || [], changed: false };
+      if (opts.online !== false) await this.ensureOpenRouterCatalog();
+      let changed = false;
+      const list = models.map((m) => ({ ...m }));
+      for (const m of list) {
+        const id = m.modelId || m.id || "";
+        const needCtx = !(Number(m.contextLength) > 0);
+        const needVis = typeof m.supportsImages !== "boolean";
+        const needTool = typeof m.supportsTools !== "boolean";
+        if (!needCtx && !needVis && !needTool) continue;
+        const filled = await this.enrichAsync(m, opts);
+        if (Number(filled.contextLength) > 0 && !Number(m.contextLength)) {
+          m.contextLength = Number(filled.contextLength);
+          changed = true;
+        }
+        if (typeof m.supportsImages !== "boolean" && typeof filled.supportsImages === "boolean") {
+          m.supportsImages = filled.supportsImages;
+          changed = true;
+        }
+        if (typeof m.supportsTools !== "boolean" && typeof filled.supportsTools === "boolean") {
+          m.supportsTools = filled.supportsTools;
+          changed = true;
+        }
+        void id;
+      }
+      return { list, changed };
+    }
+  };
+
   // src/index.js
   (function bootstrapSX() {
     const logger = new Logger("SX");
@@ -3494,16 +3837,18 @@
     const storage = new StorageService(bus, logger);
     const network = new NetworkClient(logger);
     const state = new StateStore(bus, logger);
-    const models = new ModelManager(bus, state, network, logger);
+    const metaResolver = new ModelMetaResolver(network, logger);
+    const models = new ModelManager(bus, state, network, logger, metaResolver);
     const theme = new ThemeEngine(bus, storage, network, logger);
     const quota = new QuotaMonitor(network, models, logger);
     const perf = new PerfMonitor(network, models, logger);
     const fetchInterceptor = new FetchInterceptor(models, logger);
     const voice = new VoiceRecorder(logger);
-    const ui = new UIInjector(bus, state, models, theme, quota, perf, network, logger);
+    const ui = new UIInjector(bus, state, models, theme, quota, perf, network, logger, metaResolver);
     container.register("storage", storage);
     container.register("network", network);
     container.register("state", state);
+    container.register("metaResolver", metaResolver);
     container.register("models", models);
     container.register("theme", theme);
     container.register("quota", quota);
@@ -3529,6 +3874,14 @@
           state.setModels(cfg.models);
         }
       }
+      metaResolver.backfillStored(state.getModels()).then(({ list, changed }) => {
+        if (changed) {
+          state.setModels(list);
+          logger.info("Core", "Model metadata backfilled from knowledge sources.");
+        }
+      }).catch((e) => logger.warn("Core", "Metadata backfill failed", e.message));
+    });
+    metaResolver.ensureOpenRouterCatalog().catch(() => {
     });
     window.SX_SDK = {
       bus,
@@ -3538,7 +3891,8 @@
       theme,
       quota,
       perf,
-      network
+      network,
+      metaResolver
     };
     window.SX_THEME_PRESETS = SX_THEME_PRESETS;
     window.sxApplyThemePreset = (p, s = true) => theme.applyPreset(p, s);

@@ -6,7 +6,7 @@
 import { SX_PRESETS } from './ModelManager.js';
 
 export class UIInjector {
-    constructor(eventBus, stateStore, modelManager, themeEngine, quotaMonitor, perfMonitor, networkClient, logger) {
+    constructor(eventBus, stateStore, modelManager, themeEngine, quotaMonitor, perfMonitor, networkClient, logger, metaResolver = null) {
         this.bus = eventBus;
         this.state = stateStore;
         this.models = modelManager;
@@ -15,6 +15,7 @@ export class UIInjector {
         this.perf = perfMonitor;
         this.network = networkClient;
         this.logger = logger;
+        this.meta = metaResolver;
         this._lastUrl = window.location.href;
         this._lastAutoFetch = 0;
     }
@@ -262,6 +263,20 @@ export class UIInjector {
             <div class="sx-field">
                 <label class="sx-label">Görüntü Adı</label>
                 <input class="sx-input" id="sx-m-name" value="${this.sxEsc(existing?.name || '')}" placeholder="örnek: Claude 3.7 Sonnet" />
+            </div>
+            <div class="sx-field">
+                <label class="sx-label">Context (token)</label>
+                <input class="sx-input" id="sx-m-ctx" type="number" min="0" step="1024" value="${existing?.contextLength ? this.sxEsc(existing.contextLength) : ''}" placeholder="örnek: 200000" />
+            </div>
+            <div class="sx-field" style="display:flex;gap:18px;align-items:center;">
+                <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:rgba(255,255,255,0.75);cursor:pointer;">
+                    <input type="checkbox" id="sx-m-vision" ${existing?.supportsImages ? 'checked' : ''} style="width:14px;height:14px;accent-color:#38bdf8;" />
+                    Vision
+                </label>
+                <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:rgba(255,255,255,0.75);cursor:pointer;">
+                    <input type="checkbox" id="sx-m-tools" ${existing?.supportsTools ? 'checked' : ''} style="width:14px;height:14px;accent-color:#fb923c;" />
+                    Tools
+                </label>
             </div>`;
 
         const addFields = `
@@ -379,7 +394,11 @@ export class UIInjector {
             fetchBtn.textContent = 'Yükleniyor...';
             checkedIds.clear();
             try {
-                allFetchedModels = await self.network.fetchModels(prov.baseUrl, prov.apiKey, prov.protocol, prov.modelsPath);
+                const rawList = await self.network.fetchModels(prov.baseUrl, prov.apiKey, prov.protocol, prov.modelsPath);
+                // Layered enrichment: API fields + local KB + OpenRouter public catalog
+                allFetchedModels = self.meta
+                    ? await self.meta.enrichList(rawList, { online: true })
+                    : rawList;
 
                 // Backfill metadata for already-added models (context/vision/tools)
                 const modelsNow = self.state.getModels();
@@ -391,7 +410,16 @@ export class UIInjector {
                     if (typeof fm.supportsImages === 'boolean' && typeof ex.supportsImages !== 'boolean') { ex.supportsImages = fm.supportsImages; metaUpdated = true; }
                     if (typeof fm.supportsTools === 'boolean' && typeof ex.supportsTools !== 'boolean') { ex.supportsTools = fm.supportsTools; metaUpdated = true; }
                 });
-                if (metaUpdated) self.state.setModels(modelsNow);
+                // Also backfill ALL stored models missing meta (not just this provider)
+                if (self.meta) {
+                    const { list: bfList, changed } = await self.meta.backfillStored(modelsNow, { online: true });
+                    if (changed) {
+                        self.state.setModels(bfList);
+                        metaUpdated = true;
+                    }
+                } else if (metaUpdated) {
+                    self.state.setModels(modelsNow);
+                }
 
                 const hint = overlay.querySelector('#sx-m-bulk-hint');
                 const filterEl = overlay.querySelector('#sx-m-filter');
@@ -403,8 +431,11 @@ export class UIInjector {
                 if (hint) {
                     const total = allFetchedModels.length;
                     const already = allFetchedModels.filter(m => isAlreadyAdded(m.id, provId)).length;
+                    const withCtx = allFetchedModels.filter(m => Number(m.contextLength) > 0).length;
                     hint.style.display = '';
-                    hint.textContent = `${total} model bulundu` + (already ? ` — ${already} zaten ekli` : '') + '.';
+                    hint.textContent = `${total} model bulundu` +
+                        (already ? ` — ${already} zaten ekli` : '') +
+                        ` — ${withCtx}/${total} context bilgili` + (metaUpdated ? ' — metadata güncellendi' : '') + '.';
                 }
                 if (metaUpdated) onSave && onSave();
             } catch(e) { alert('Listelenemedi: ' + e.message); }
@@ -419,7 +450,7 @@ export class UIInjector {
         overlay.querySelector('#sx-m-cancel').onclick = () => overlay.remove();
         overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
 
-        overlay.querySelector('#sx-m-save').onclick = () => {
+        overlay.querySelector('#sx-m-save').onclick = async () => {
             const provId = overlay.querySelector('#sx-m-prov').value;
             const list = self.state.getModels();
 
@@ -429,16 +460,14 @@ export class UIInjector {
                 if (!name || !modelId) { alert('Model ID ve ad zorunludur.'); return; }
                 const dup = list.find(m => m.modelId === modelId && m.providerId === provId && m.id !== existing.id);
                 if (dup) { alert('Bu provider için aynı model ID zaten ekli.'); return; }
-                const prev = list.find(m => m.id === existing.id) || existing;
+                const ctxRaw = Number(String(overlay.querySelector('#sx-m-ctx')?.value || '').trim());
                 const entry = {
                     id: existing.id, providerId: provId, name, modelId, directMode: true,
-                    contextLength: prev.contextLength || 0,
-                    supportsImages: typeof prev.supportsImages === 'boolean' ? prev.supportsImages : undefined,
-                    supportsTools: typeof prev.supportsTools === 'boolean' ? prev.supportsTools : undefined
+                    contextLength: Number.isFinite(ctxRaw) && ctxRaw > 0 ? Math.round(ctxRaw) : 0,
+                    supportsImages: !!overlay.querySelector('#sx-m-vision')?.checked,
+                    supportsTools: !!overlay.querySelector('#sx-m-tools')?.checked
                 };
                 if (!entry.contextLength) delete entry.contextLength;
-                if (typeof entry.supportsImages === 'undefined') delete entry.supportsImages;
-                if (typeof entry.supportsTools === 'undefined') delete entry.supportsTools;
                 const idx = list.findIndex(m => m.id === existing.id);
                 if (idx >= 0) list[idx] = entry; else list.push(entry);
                 self.state.setModels(list);
@@ -451,14 +480,21 @@ export class UIInjector {
             if (checkedIds.size > 0) {
                 let added = 0;
                 let skipped = 0;
+                const toEnrich = [];
                 checkedIds.forEach(id => {
                     if (list.some(m => m.modelId === id && m.providerId === provId)) { skipped++; return; }
-                    const fm = allFetchedModels.find(m => m.id === id);
+                    const fm = allFetchedModels.find(m => m.id === id) || { id, name: id };
+                    toEnrich.push(fm);
+                });
+                if (self.meta && toEnrich.length) {
+                    await self.meta.enrichList(toEnrich, { online: true });
+                }
+                toEnrich.forEach(fm => {
                     list.push({
                         id: 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
                         providerId: provId,
-                        name: fm ? (fm.name || id) : id,
-                        modelId: id,
+                        name: fm.name || fm.id,
+                        modelId: fm.id,
                         directMode: true,
                         ...metaFromFetched(fm)
                     });
@@ -482,11 +518,14 @@ export class UIInjector {
                 alert('Bu provider için aynı model ID zaten ekli.');
                 return;
             }
-            const fm = allFetchedModels.find(m => m.id === manualId);
+            const fmBase = allFetchedModels.find(m => m.id === manualId) || { id: manualId, name: manualName || manualId };
+            const fm = self.meta
+                ? await self.meta.enrichAsync(fmBase, { online: true })
+                : fmBase;
             list.push({
                 id: 'm_' + Date.now(),
                 providerId: provId,
-                name: manualName || (fm && fm.name) || manualId,
+                name: manualName || fm.name || manualId,
                 modelId: manualId,
                 directMode: true,
                 ...metaFromFetched(fm)

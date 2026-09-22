@@ -15,6 +15,7 @@ import { PerfMonitor } from './services/PerfMonitor.js';
 import { FetchInterceptor } from './services/FetchInterceptor.js';
 import { VoiceRecorder } from './services/VoiceRecorder.js';
 import { UIInjector } from './services/UIInjector.js';
+import { ModelMetaResolver } from './services/ModelMetaResolver.js';
 
 (function bootstrapSX() {
     const logger = new Logger('SX');
@@ -31,17 +32,19 @@ import { UIInjector } from './services/UIInjector.js';
     const storage = new StorageService(bus, logger);
     const network = new NetworkClient(logger);
     const state = new StateStore(bus, logger);
-    const models = new ModelManager(bus, state, network, logger);
+    const metaResolver = new ModelMetaResolver(network, logger);
+    const models = new ModelManager(bus, state, network, logger, metaResolver);
     const theme = new ThemeEngine(bus, storage, network, logger);
     const quota = new QuotaMonitor(network, models, logger);
     const perf = new PerfMonitor(network, models, logger);
     const fetchInterceptor = new FetchInterceptor(models, logger);
     const voice = new VoiceRecorder(logger);
-    const ui = new UIInjector(bus, state, models, theme, quota, perf, network, logger);
+    const ui = new UIInjector(bus, state, models, theme, quota, perf, network, logger, metaResolver);
 
     container.register('storage', storage);
     container.register('network', network);
     container.register('state', state);
+    container.register('metaResolver', metaResolver);
     container.register('models', models);
     container.register('theme', theme);
     container.register('quota', quota);
@@ -71,7 +74,17 @@ import { UIInjector } from './services/UIInjector.js';
                 state.setModels(cfg.models);
             }
         }
+        // 4b. Guarantee metadata for stored models (offline KB + OpenRouter catalog)
+        metaResolver.backfillStored(state.getModels()).then(({ list, changed }) => {
+            if (changed) {
+                state.setModels(list);
+                logger.info('Core', 'Model metadata backfilled from knowledge sources.');
+            }
+        }).catch(e => logger.warn('Core', 'Metadata backfill failed', e.message));
     });
+
+    // Warm OpenRouter catalog in background for instant lookups
+    metaResolver.ensureOpenRouterCatalog().catch(() => {});
 
     // 5. Global exports for debugging & backwards compatibility
     window.SX_SDK = {
@@ -82,7 +95,8 @@ import { UIInjector } from './services/UIInjector.js';
         theme,
         quota,
         perf,
-        network
+        network,
+        metaResolver
     };
     window.SX_THEME_PRESETS = SX_THEME_PRESETS;
     window.sxApplyThemePreset = (p, s = true) => theme.applyPreset(p, s);

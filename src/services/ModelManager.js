@@ -30,11 +30,12 @@ export const ALLOWED_TIERS = [
 ];
 
 export class ModelManager {
-    constructor(eventBus, stateStore, networkClient, logger) {
+    constructor(eventBus, stateStore, networkClient, logger, metaResolver = null) {
         this.bus = eventBus;
         this.state = stateStore;
         this.network = networkClient;
         this.logger = logger;
+        this.metaResolver = metaResolver;
     }
 
     init() {
