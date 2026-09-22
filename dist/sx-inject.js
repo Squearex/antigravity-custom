@@ -1248,6 +1248,8 @@
       this._streamActive = false;
       this._lastStreamTs = 0;
       this._sentCache = {};
+      this._progressFailTs = 0;
+      this._detailsFailTs = {};
     }
     _fmt(n) {
       if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
@@ -1332,7 +1334,8 @@
       const isFresh = !cleanConvId || cleanConvId === "new" || cleanConvId === "draft";
       if (!isFresh) {
         const cached = this._contextDetailsCache[cacheKey];
-        const isStale = !cached || Date.now() - (cached._time || 0) > 12e3;
+        const failTs = this._detailsFailTs[cacheKey] || 0;
+        const isStale = (!cached || Date.now() - (cached._time || 0) > 12e3) && Date.now() - failTs > 3e4;
         if (isStale) {
           this.refreshContextDetails(cleanConvId, activeM);
         }
@@ -1389,6 +1392,7 @@
           const data = await this.network.fetchContextDetails(cleanConvId, targetModel?.id);
           if (data && data.ok) {
             this._contextDetailsCache[cacheKey] = { data, _time: Date.now() };
+            delete this._detailsFailTs[cacheKey];
             if (data.detectedModelId && cleanConvId) {
               const cKey = "conv_" + cleanConvId;
               if (!localStorage.getItem("sx_active_model_" + cKey)) {
@@ -1407,7 +1411,9 @@
             }
             return data;
           }
+          this._detailsFailTs[cacheKey] = Date.now();
         } catch (e) {
+          this._detailsFailTs[cacheKey] = Date.now();
           this.logger?.warn("QuotaMonitor", "Failed to refresh context details", e);
         } finally {
           this._inFlightFetches.delete(cacheKey);
@@ -1484,10 +1490,14 @@
     }
     async fetchStreamProgress(cleanConvId) {
       if (!cleanConvId || cleanConvId === "new" || cleanConvId === "draft") return null;
+      if (this._progressFailTs && Date.now() - this._progressFailTs < 6e4) return null;
       try {
         const r = await this.network.get(`/get-stream-progress?convId=${encodeURIComponent(cleanConvId)}`);
-        return r && r.ok ? r : null;
+        if (r && r.ok) return r;
+        this._progressFailTs = Date.now();
+        return null;
       } catch (e) {
+        this._progressFailTs = Date.now();
         return null;
       }
     }
@@ -1499,7 +1509,9 @@
           this._sentCache["sent_" + cleanConvId] = { sent: r.sent, _time: Date.now() };
           return r.sent;
         }
+        this._sentCache["sent_" + cleanConvId] = { sent: null, failed: true, _time: Date.now() };
       } catch (e) {
+        this._sentCache["sent_" + cleanConvId] = { sent: null, failed: true, _time: Date.now() };
       }
       return null;
     }

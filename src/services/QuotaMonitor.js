@@ -13,6 +13,8 @@ export class QuotaMonitor {
         this._streamActive = false;
         this._lastStreamTs = 0;
         this._sentCache = {};
+        this._progressFailTs = 0;
+        this._detailsFailTs = {};
     }
 
     _fmt(n) {
@@ -112,7 +114,8 @@ export class QuotaMonitor {
         const isFresh = (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft');
         if (!isFresh) {
             const cached = this._contextDetailsCache[cacheKey];
-            const isStale = !cached || (Date.now() - (cached._time || 0) > 12000);
+            const failTs = this._detailsFailTs[cacheKey] || 0;
+            const isStale = (!cached || (Date.now() - (cached._time || 0) > 12000)) && (Date.now() - failTs > 30000);
             if (isStale) {
                 this.refreshContextDetails(cleanConvId, activeM);
             }
@@ -161,6 +164,7 @@ export class QuotaMonitor {
                 const data = await this.network.fetchContextDetails(cleanConvId, targetModel?.id);
                 if (data && data.ok) {
                     this._contextDetailsCache[cacheKey] = { data, _time: Date.now() };
+                    delete this._detailsFailTs[cacheKey];
 
                     // If model was detected from transcript, sync if conversation not explicitly set
                     if (data.detectedModelId && cleanConvId) {
@@ -183,7 +187,10 @@ export class QuotaMonitor {
                     }
                     return data;
                 }
+                // Negative cache on unsuccessful responses
+                this._detailsFailTs[cacheKey] = Date.now();
             } catch(e) {
+                this._detailsFailTs[cacheKey] = Date.now();
                 this.logger?.warn('QuotaMonitor', 'Failed to refresh context details', e);
             } finally {
                 this._inFlightFetches.delete(cacheKey);
@@ -270,10 +277,14 @@ export class QuotaMonitor {
 
     async fetchStreamProgress(cleanConvId) {
         if (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft') return null;
+        // Negative cache: don't hammer a proxy that lacks the endpoint (old version)
+        if (this._progressFailTs && (Date.now() - this._progressFailTs < 60000)) return null;
         try {
             const r = await this.network.get(`/get-stream-progress?convId=${encodeURIComponent(cleanConvId)}`);
-            return (r && r.ok) ? r : null;
-        } catch(e) { return null; }
+            if (r && r.ok) return r;
+            this._progressFailTs = Date.now();
+            return null;
+        } catch(e) { this._progressFailTs = Date.now(); return null; }
     }
 
     async refreshSentEstimate(cleanConvId) {
@@ -284,7 +295,11 @@ export class QuotaMonitor {
                 this._sentCache['sent_' + cleanConvId] = { sent: r.sent, _time: Date.now() };
                 return r.sent;
             }
-        } catch(e) {}
+            // Negative cache so 404s (old proxy) don't spam every tick
+            this._sentCache['sent_' + cleanConvId] = { sent: null, failed: true, _time: Date.now() };
+        } catch(e) {
+            this._sentCache['sent_' + cleanConvId] = { sent: null, failed: true, _time: Date.now() };
+        }
         return null;
     }
 
