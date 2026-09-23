@@ -1830,7 +1830,9 @@
       const rect = anchorEl.getBoundingClientRect();
       const popLeft = Math.max(10, Math.min(window.innerWidth - 340, rect.left - 20));
       pop.style.left = popLeft + "px";
-      pop.style.bottom = window.innerHeight - rect.top + 8 + "px";
+      const promptBox = anchorEl.closest("form") || anchorEl.closest('[data-testid="chat-input-container"]') || document.querySelector('[contenteditable="true"], textarea')?.closest("form, div.relative.flex, div.border") || anchorEl.closest(".relative");
+      const boxTop = promptBox ? promptBox.getBoundingClientRect().top : rect.top;
+      pop.style.bottom = Math.max(8, window.innerHeight - boxTop + 10) + "px";
       pop.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" id="sx-ctx-popover-header">
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -2333,7 +2335,9 @@
       const rect = anchorEl.getBoundingClientRect();
       const popLeft = Math.max(10, Math.min(window.innerWidth - 340, rect.left - 20));
       pop.style.left = popLeft + "px";
-      pop.style.bottom = window.innerHeight - rect.top + 8 + "px";
+      const promptBox = anchorEl.closest("form") || anchorEl.closest('[data-testid="chat-input-container"]') || document.querySelector('[contenteditable="true"], textarea')?.closest("form, div.relative.flex, div.border") || anchorEl.closest(".relative");
+      const boxTop = promptBox ? promptBox.getBoundingClientRect().top : rect.top;
+      pop.style.bottom = Math.max(8, window.innerHeight - boxTop + 10) + "px";
       pop.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" id="sx-perf-popover-header">
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -3411,6 +3415,77 @@
                 color: #ffffff !important;
                 background: rgba(255, 255, 255, 0.04) !important;
             }
+
+            /* Effort Popover & Slider Styles (Always loaded globally) */
+            .sx-effort-popover {
+                position: fixed !important;
+                z-index: 100000 !important;
+                width: 236px !important;
+                border-radius: 12px !important;
+                background: #14151b !important;
+                border: 1px solid rgba(255, 255, 255, 0.14) !important;
+                padding: 14px 16px !important;
+                box-shadow: 0 24px 56px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
+                backdrop-filter: blur(24px) !important;
+                font-family: inherit !important;
+                box-sizing: border-box !important;
+            }
+            .sx-effort-track {
+                height: 22px !important;
+                border-radius: 11px !important;
+                background: rgba(255, 255, 255, 0.06) !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                position: relative !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                padding: 0 8px !important;
+                cursor: pointer !important;
+                user-select: none !important;
+                box-sizing: border-box !important;
+                transition: background 0.15s ease !important;
+            }
+            .sx-effort-track:hover {
+                background: rgba(255, 255, 255, 0.09) !important;
+            }
+            .sx-effort-dot {
+                position: absolute !important;
+                top: 9px !important;
+                width: 4px !important;
+                height: 4px !important;
+                border-radius: 50% !important;
+                background: rgba(255, 255, 255, 0.3) !important;
+                pointer-events: none !important;
+                transform: translateX(-50%) !important;
+            }
+            .sx-effort-thumb {
+                position: absolute !important;
+                top: 2px !important;
+                width: 16px !important;
+                height: 16px !important;
+                border-radius: 6px !important;
+                background: #ffffff !important;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.25) !important;
+                pointer-events: none !important;
+                transition: left 0.12s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+            }
+
+            /* Effort Hover Tooltip Popup */
+            .sx-hover-popup {
+                position: fixed !important;
+                z-index: 100005 !important;
+                width: 290px !important;
+                background: #14151b !important;
+                border: 1px solid rgba(255, 255, 255, 0.16) !important;
+                border-radius: 10px !important;
+                padding: 12px 14px !important;
+                box-shadow: 0 18px 44px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
+                backdrop-filter: blur(24px) !important;
+                pointer-events: none !important;
+                box-sizing: border-box !important;
+                font-family: inherit !important;
+                color: #ffffff !important;
+            }
         `;
       const target = document.head || document.documentElement;
       if (target) {
@@ -4295,6 +4370,22 @@
       if (!modelPanel || modelPanel.closest("[data-sx-usage-panel]")) return;
       const sxModels = this.state.getModels();
       if (!sxModels || sxModels.length === 0) return;
+      try {
+        const promptBox = document.querySelector('[contenteditable="true"], textarea')?.closest("form, div.relative.flex, div.border");
+        if (promptBox) {
+          const boxTop = promptBox.getBoundingClientRect().top;
+          const popper = modelPanel.closest("[data-radix-popper-content-wrapper]") || modelPanel;
+          const pRect = popper.getBoundingClientRect();
+          if (pRect.bottom > boxTop - 4) {
+            const shiftY = pRect.bottom - (boxTop - 8);
+            if (shiftY > 0 && pRect.top - shiftY > 15 && !popper.dataset.sxShifted) {
+              popper.dataset.sxShifted = "true";
+              popper.style.transform = (popper.style.transform || "") + ` translateY(-${shiftY}px)`;
+            }
+          }
+        }
+      } catch (e) {
+      }
       let searchWrap = modelPanel.querySelector("#sx-model-search-wrap");
       if (!searchWrap) {
         searchWrap = document.createElement("div");
@@ -4945,9 +5036,12 @@
       effortBtn.textContent = text;
     }
     toggleEffortSliderPopover(anchorBtn) {
+      this.injectGlobalStyles();
       const existing = document.getElementById("sx-effort-slider-popover");
       if (existing) {
         existing.remove();
+        const hp = document.getElementById("sx-effort-hover-popup");
+        if (hp) hp.remove();
         return;
       }
       const perfPop = document.getElementById("sx-perf-popover");
@@ -4958,6 +5052,8 @@
       if (infoModal) infoModal.remove();
       const infoBdrop = document.getElementById("sx-effort-info-backdrop");
       if (infoBdrop) infoBdrop.remove();
+      const prevHp = document.getElementById("sx-effort-hover-popup");
+      if (prevHp) prevHp.remove();
       const popover = document.createElement("div");
       popover.id = "sx-effort-slider-popover";
       popover.className = "sx-effort-popover";
@@ -4979,7 +5075,7 @@
                     <span>Effort</span>
                     <strong id="sx-effort-popover-val" style="color:${curLvl.color};font-weight:700;">${curLvl.label}</strong>
                 </div>
-                <button type="button" id="sx-effort-help-btn" class="sx-help-icon" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;min-width:18px;min-height:18px;border-radius:50%;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.7);font-size:11px;font-weight:600;cursor:pointer;line-height:1;box-sizing:border-box;flex-shrink:0;aspect-ratio:1/1;padding:0;transition:all 0.15s ease;" title="Effort ve Titan Self-Healing Rehberi">?</button>
+                <button type="button" id="sx-effort-help-btn" class="sx-help-icon" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;min-width:18px;min-height:18px;border-radius:50%;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.7);font-size:11px;font-weight:600;cursor:help;line-height:1;box-sizing:border-box;flex-shrink:0;aspect-ratio:1/1;padding:0;transition:all 0.15s ease;" title="Bilgi i\xE7in \xFCzerine gelin">?</button>
             </div>
             <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:rgba(255,255,255,0.45);margin:10px 0 6px 0;user-select:none;">
                 <span>Faster</span>
@@ -5000,14 +5096,16 @@
         `;
       document.body.appendChild(popover);
       const rect = anchorBtn.getBoundingClientRect();
-      const popoverWidth = 232;
+      const popoverWidth = 236;
       let left = rect.left - (popoverWidth - rect.width) / 2;
       if (left + popoverWidth > window.innerWidth - 10) {
         left = window.innerWidth - popoverWidth - 10;
       }
       if (left < 10) left = 10;
       popover.style.left = left + "px";
-      popover.style.bottom = window.innerHeight - rect.top + 8 + "px";
+      const promptBox = anchorBtn.closest("form") || anchorBtn.closest('[data-testid="chat-input-container"]') || document.querySelector('[contenteditable="true"], textarea')?.closest("form, div.relative.flex, div.border") || anchorBtn.closest(".relative");
+      const boxTop = promptBox ? promptBox.getBoundingClientRect().top : rect.top;
+      popover.style.bottom = Math.max(8, window.innerHeight - boxTop + 10) + "px";
       const track = popover.querySelector("#sx-effort-slider-track");
       const thumb = popover.querySelector("#sx-effort-slider-thumb");
       const valEl = popover.querySelector("#sx-effort-popover-val");
@@ -5053,9 +5151,53 @@
       });
       const helpBtn = popover.querySelector("#sx-effort-help-btn");
       if (helpBtn) {
+        let hideTimeout = null;
+        const removeHoverPopup = () => {
+          const hp = document.getElementById("sx-effort-hover-popup");
+          if (hp) hp.remove();
+        };
+        const showHoverPopup = () => {
+          if (hideTimeout) clearTimeout(hideTimeout);
+          if (document.getElementById("sx-effort-hover-popup")) return;
+          const hoverPopup = document.createElement("div");
+          hoverPopup.id = "sx-effort-hover-popup";
+          hoverPopup.className = "sx-hover-popup";
+          hoverPopup.innerHTML = `
+                    <div style="font-weight:700;color:#fbbf24;font-size:12px;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+                        <span>\u26A1</span> Effort & Titan Self-Healing
+                    </div>
+                    <div style="font-size:11px;line-height:1.55;color:rgba(255,255,255,0.85);margin-bottom:8px;">
+                        <div><strong style="color:rgba(255,255,255,0.6)">Low:</strong> H\u0131zl\u0131, tek sat\u0131rl\u0131k d\xFCzenlemeler.</div>
+                        <div><strong style="color:rgba(255,255,255,0.9)">Normal:</strong> Dengeli standart mod.</div>
+                        <div><strong style="color:#38bdf8">High:</strong> Mimari ve \xE7oklu dosya ak\u0131l y\xFCr\xFCtmesi.</div>
+                        <div><strong style="color:#ffffff">Max:</strong> Maksimum derin analiz.</div>
+                        <div><strong style="color:#fbbf24">Ultra Code:</strong> Titan Self-Healing devrede.</div>
+                    </div>
+                    <div style="padding-top:7px;border-top:1px solid rgba(255,255,255,0.1);font-size:10.5px;color:rgba(255,255,255,0.7);line-height:1.45;">
+                        <strong style="color:#fbbf24;">\u{1F6E1}\uFE0F Titan Protokol\xFC:</strong><br>
+                        1. Repo Haritalama (AST ba\u011F\u0131ml\u0131l\u0131k taramas\u0131)<br>
+                        2. Atomik Kod D\xFCzenleme (S\u0131f\u0131r kay\u0131p)<br>
+                        3. Otomatik Do\u011Frulama (Syntax/lint kontrol\xFC)<br>
+                        4. Otonom Onar\u0131m (Hatalar\u0131 kendi kendine \xE7\xF6zme)
+                    </div>
+                `;
+          document.body.appendChild(hoverPopup);
+          const hRect = helpBtn.getBoundingClientRect();
+          const pWidth = 290;
+          let hLeft = hRect.right - pWidth;
+          if (hLeft < 10) hLeft = 10;
+          if (hLeft + pWidth > window.innerWidth - 10) hLeft = window.innerWidth - pWidth - 10;
+          hoverPopup.style.left = hLeft + "px";
+          hoverPopup.style.bottom = window.innerHeight - hRect.top + 8 + "px";
+        };
+        const scheduleHide = () => {
+          hideTimeout = setTimeout(removeHoverPopup, 180);
+        };
+        helpBtn.addEventListener("mouseenter", showHoverPopup);
+        helpBtn.addEventListener("mouseleave", scheduleHide);
         helpBtn.onclick = (e) => {
+          e.preventDefault();
           e.stopPropagation();
-          this.showEffortHelpModal();
         };
       }
       const scanBtn = popover.querySelector("#sx-popover-scan-btn");
@@ -5081,6 +5223,8 @@
         const onDocClick = (e) => {
           if (!popover.contains(e.target) && !anchorBtn.contains(e.target)) {
             popover.remove();
+            const hp = document.getElementById("sx-effort-hover-popup");
+            if (hp) hp.remove();
             document.removeEventListener("click", onDocClick);
           }
         };

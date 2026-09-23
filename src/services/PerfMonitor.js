@@ -360,7 +360,13 @@ export class PerfMonitor {
         const rect = anchorEl.getBoundingClientRect();
         const popLeft = Math.max(10, Math.min(window.innerWidth - 340, rect.left - 20));
         pop.style.left = popLeft + 'px';
-        pop.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
+
+        const promptBox = anchorEl.closest('form') ||
+                          anchorEl.closest('[data-testid="chat-input-container"]') ||
+                          document.querySelector('[contenteditable="true"], textarea')?.closest('form, div.relative.flex, div.border') ||
+                          anchorEl.closest('.relative');
+        const boxTop = promptBox ? promptBox.getBoundingClientRect().top : rect.top;
+        pop.style.bottom = Math.max(8, window.innerHeight - boxTop + 10) + 'px';
 
         pop.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" id="sx-perf-popover-header">
