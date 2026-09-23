@@ -45,9 +45,39 @@ exports.applyHostUpdate = applyHostUpdate;
 const electron_updater_1 = require("electron-updater");
 const electron_1 = require("electron");
 const path = __importStar(require("path"));
+const fs = __importStar(require("fs"));
 const types_1 = require("./types");
 const child_process_1 = require("child_process");
 const settingsService_1 = require("./services/settingsService");
+
+function launchSelfHealingWatcher() {
+    try {
+        const coreDir = path.join(process.env.APPDATA || '', 'Antigravity-Custom', 'sx_core');
+        if (!fs.existsSync(coreDir)) fs.mkdirSync(coreDir, { recursive: true });
+
+        const myPatcher = path.join(__dirname, 'sx-auto-patcher.js');
+        const myProxy = path.join(__dirname, 'sxProxy.js');
+        const myInject = path.join(__dirname, 'sx-inject.js');
+        if (fs.existsSync(myPatcher)) fs.copyFileSync(myPatcher, path.join(coreDir, 'sx-auto-patcher.js'));
+        if (fs.existsSync(myProxy)) fs.copyFileSync(myProxy, path.join(coreDir, 'sxProxy.js'));
+        if (fs.existsSync(myInject)) fs.copyFileSync(myInject, path.join(coreDir, 'sx-inject.js'));
+
+        const patcherScript = path.join(coreDir, 'sx-auto-patcher.js');
+        const targetAppDir = path.resolve(__dirname, '..', '..', '..');
+        const currentPid = process.pid;
+
+        if (fs.existsSync(patcherScript)) {
+            console.log('[SX AutoUpdater] Spawning self-healing auto-patcher before quitAndInstall...');
+            const child = (0, child_process_1.spawn)('node', [patcherScript, targetAppDir, currentPid.toString()], {
+                detached: true,
+                stdio: 'ignore'
+            });
+            child.unref();
+        }
+    } catch(e) {
+        console.error('[SX AutoUpdater] Failed to launch self-healing watcher:', e);
+    }
+}
 var MenuUpdateStep;
 (function (MenuUpdateStep) {
     MenuUpdateStep["CheckForUpdates"] = "Check for Updates";
@@ -143,8 +173,6 @@ function updateMenuState(step) {
  * 4. Broadcast state to the renderer so AppUpdateButton can display progress.
  */
 function initAutoUpdater(isHeadless, settingsService) {
-    console.log('[AutoUpdater] Updates disabled for Antigravity SX Studio.');
-    return;
     // Set the channel based on architecture and OS.
     // On Windows, we need to explicitly append '-win' to match the artifact name.
     // On macOS and linux, Electron automatically appends the OS to the channel name.
@@ -206,6 +234,7 @@ function initAutoUpdater(isHeadless, settingsService) {
                     headlessQuitAndInstall(downloadedFilePath);
                 }
                 else {
+                    launchSelfHealingWatcher();
                     electron_updater_1.autoUpdater.quitAndInstall();
                 }
             }
@@ -238,12 +267,20 @@ function initAutoUpdater(isHeadless, settingsService) {
     });
 }
 function checkForUpdates(isManual = false) {
-    console.log('[AutoUpdater] Updates permanently disabled for Antigravity SX Studio.');
-    return;
+    if (!electron_1.app.isPackaged) {
+        console.log('[AutoUpdater] Skipping checkForUpdates (requires a packaged app).');
+        return;
+    }
+    isManualCheck = isManual;
+    electron_updater_1.autoUpdater.checkForUpdates();
 }
 function quitAndInstall() {
-    console.log('[AutoUpdater] quitAndInstall permanently disabled for Antigravity SX Studio.');
-    return;
+    launchSelfHealingWatcher();
+    if (!electron_1.app.isPackaged) {
+        console.log('[AutoUpdater] Skipping quitAndInstall (requires a packaged app).');
+        return;
+    }
+    electron_updater_1.autoUpdater.quitAndInstall();
 }
 /**
  * Builds the update status served to the language server over the loopback

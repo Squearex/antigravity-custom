@@ -79,11 +79,7 @@ function registerIpcHandlers(storageManager) {
         (0, updater_1.broadcastState)({ type: types_1.UpdateState.Ready });
     });
     electron_1.ipcMain.handle('updater:quit-and-install', () => {
-        if (!electron_1.app.isPackaged) {
-            console.log('[AutoUpdater] Skipping quitAndInstall (requires a packaged app).');
-            return;
-        }
-        electron_updater_1.autoUpdater.quitAndInstall();
+        (0, updater_1.quitAndInstall)();
     });
     electron_1.ipcMain.handle('updater:get-state', () => {
         return (0, updater_1.getLastState)();
