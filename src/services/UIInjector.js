@@ -957,9 +957,9 @@ export class UIInjector {
     findSettingsLayout(dialog) {
         if (!dialog) return { sidebar: null, rightPanel: null };
 
-        // 1. Locate the sidebar container
-        const tabTexts = ['general', 'genel', 'appearance', 'görünüm', 'shortcuts', 'kısayol', 'application', 'uygulama', 'models', 'customizations', 'conversations'];
+        // 1. Locate sidebar
         const allElements = Array.from(dialog.querySelectorAll('*'));
+        const tabTexts = ['general', 'genel', 'appearance', 'görünüm', 'shortcuts', 'kısayol', 'application', 'uygulama', 'models', 'customizations', 'conversations'];
         const tabElements = allElements.filter(el => {
             if (el.closest('#sx-content-wrapper')) return false;
             if (el.children.length > 1) return false;
@@ -974,8 +974,10 @@ export class UIInjector {
                 const count = tabElements.filter(t => cur.contains(t)).length;
                 if (count >= 2) {
                     sidebar = cur;
-                    const parentSiblings = Array.from(cur.parentElement.children).filter(c => c !== cur && c.nodeType === 1);
-                    if (parentSiblings.length >= 1) {
+                    const p = cur.parentElement;
+                    const pText = (p.textContent || '').toLowerCase();
+                    if (p.children.length === 2 || pText.includes('models & usage') || pText.includes('manage your model quota')) {
+                        sidebar = cur;
                         break;
                     }
                 }
@@ -986,38 +988,48 @@ export class UIInjector {
         if (!sidebar) {
             sidebar = dialog.querySelector('aside, nav, [role="tablist"]');
         }
-        if (!sidebar) {
-            const userEl = allElements.find(el => {
-                if (el.closest('#sx-content-wrapper')) return false;
-                const t = (el.textContent || '').toLowerCase();
-                return t.includes('@') || t.includes('sx developer');
-            });
-            if (userEl) {
-                let cur = userEl;
-                while (cur && cur.parentElement && cur.parentElement !== dialog) {
-                    if (cur.parentElement.children.length >= 2) {
-                        sidebar = cur;
-                        break;
-                    }
-                    cur = cur.parentElement;
-                }
-            }
-        }
 
-        // 2. The rightPanel is the content column: Sibling of sidebar in the flex row!
+        // 2. Locate rightPanel: Find native content marker and ascend to content column
         let rightPanel = null;
-        if (sidebar && sidebar.parentElement) {
-            const siblings = Array.from(sidebar.parentElement.children).filter(el => el !== sidebar && el.nodeType === 1);
-            if (siblings.length === 1) {
-                rightPanel = siblings[0];
-            } else if (siblings.length > 1) {
-                rightPanel = siblings.find(s => s.matches?.('.flex-1, main, .overflow-y-auto, [role="tabpanel"]') || !s.contains(sidebar)) || siblings[0];
-            }
+        const existingWrap = dialog.querySelector('#sx-content-wrapper');
+        if (existingWrap && (!sidebar || !sidebar.contains(existingWrap))) {
+            rightPanel = existingWrap.parentElement;
         }
 
         if (!rightPanel) {
-            const flexContainers = Array.from(dialog.querySelectorAll('.flex-1, main, [role="tabpanel"]'));
-            rightPanel = flexContainers.find(p => (!sidebar || !p.contains(sidebar)) && p !== sidebar && p !== dialog);
+            const nativeMarker = allElements.find(el => {
+                if (el.closest('#sx-content-wrapper')) return false;
+                if (sidebar && sidebar.contains(el)) return false;
+                const t = (el.textContent || '').trim().toLowerCase();
+                return t === 'manage your model quota and credits.' ||
+                       t === 'manage your model quota' ||
+                       t === 'model credits' ||
+                       t === 'your plan' ||
+                       t === 'custom quota' ||
+                       t === 'enable ai credit overages';
+            });
+
+            if (nativeMarker) {
+                let cur = nativeMarker;
+                while (cur && cur.parentElement && cur.parentElement !== dialog) {
+                    const p = cur.parentElement;
+                    const pText = (p.textContent || '').toLowerCase();
+                    if (pText.includes('general') || pText.includes('genel')) {
+                        rightPanel = cur;
+                        break;
+                    }
+                    cur = p;
+                }
+                if (!rightPanel) rightPanel = cur;
+            }
+        }
+
+        // Fallback: Sibling of sidebar
+        if (!rightPanel && sidebar && sidebar.parentElement) {
+            const siblings = Array.from(sidebar.parentElement.children).filter(el => el !== sidebar && el.nodeType === 1);
+            if (siblings.length >= 1) {
+                rightPanel = siblings.find(s => s.matches?.('.flex-1, main, .overflow-y-auto, [role="tabpanel"]') || !s.contains(sidebar)) || siblings[0];
+            }
         }
 
         if (rightPanel && (rightPanel === sidebar || (sidebar && rightPanel.contains(sidebar)) || rightPanel === dialog)) {
@@ -1123,13 +1135,18 @@ export class UIInjector {
 
             // 4. Check which tab is currently active
             const activeTabTxt = this.getActiveSettingsTab(dialog, sidebar);
-            const isModelsActive = activeTabTxt ? (activeTabTxt === 'models' || activeTabTxt.startsWith('model')) : (this._selectedSettingsTab === 'models');
+            const isExplicitOtherTab = activeTabTxt && ['general', 'genel', 'application', 'uygulama', 'appearance', 'görünüm', 'shortcut', 'kısayol', 'customization', 'özelleştirme', 'browser', 'tarayıcı', 'conversation', 'sohbet', 'feedback'].some(k => activeTabTxt.includes(k));
+            const isModelsActive = !isExplicitOtherTab && (activeTabTxt === 'models' || activeTabTxt?.startsWith('model') || (!activeTabTxt && this._selectedSettingsTab === 'models'));
 
             // If user is NOT on Models tab, cleanly remove custom wrap and restore native view!
             if (!isModelsActive) {
                 const curWrap = dialog.querySelector('#sx-content-wrapper');
                 if (curWrap) {
+                    const rp = curWrap.parentElement;
                     curWrap.remove();
+                    if (rp) {
+                        Array.from(rp.children).forEach(c => c.style.removeProperty('display'));
+                    }
                 }
                 if (rightPanel) {
                     Array.from(rightPanel.children).forEach(c => {
@@ -1138,58 +1155,74 @@ export class UIInjector {
                         }
                     });
                 }
+                dialog.querySelectorAll('[data-sx-hidden]').forEach(el => {
+                    el.style.removeProperty('display');
+                    el.removeAttribute('data-sx-hidden');
+                });
                 return;
             }
 
-            // User IS on Models tab: if wrap already exists inside rightPanel, keep it visible and hide ALL other children!
+            // 5. User IS on Models tab: Hide ALL native children of rightPanel and any duplicate native headers
+            Array.from(rightPanel.children).forEach(c => {
+                if (c.id !== 'sx-content-wrapper') {
+                    c.style.setProperty('display', 'none', 'important');
+                    c.setAttribute('data-sx-hidden', 'true');
+                }
+            });
+
+            // Hide any native models headers in dialog that might be outside rightPanel
+            dialog.querySelectorAll('p, span, div, h2').forEach(el => {
+                if (el.closest('#sx-content-wrapper')) return;
+                if (sidebar && sidebar.contains(el)) return;
+                const t = (el.textContent || '').trim().toLowerCase();
+                if (t === 'manage your model quota and credits.' || t === 'manage your model quota') {
+                    const box = el.closest('div.flex, div.border-b, div.p-6, div.space-y-1, div.pb-4') || el.parentElement;
+                    if (box && (!sidebar || !box.contains(sidebar))) {
+                        box.style.setProperty('display', 'none', 'important');
+                        box.setAttribute('data-sx-hidden', 'true');
+                    }
+                }
+            });
+
+            // If wrap already exists inside rightPanel, keep it visible
             const curWrap = dialog.querySelector('#sx-content-wrapper');
             if (curWrap && rightPanel.contains(curWrap)) {
-                Array.from(rightPanel.children).forEach(c => {
-                    if (c !== curWrap) {
-                        c.style.setProperty('display', 'none', 'important');
-                    } else {
-                        c.style.removeProperty('display');
-                    }
-                });
+                curWrap.style.removeProperty('display');
                 return;
             }
 
             // Clean up any stray wrap before fresh mount
             if (curWrap) curWrap.remove();
 
-            Array.from(rightPanel.children).forEach(c => {
-                c.style.setProperty('display', 'none', 'important');
-            });
-
             const sxWrap = document.createElement('div');
             sxWrap.id = 'sx-content-wrapper';
             sxWrap.style.cssText = 'padding: 0 32px 32px 32px; box-sizing: border-box; width: 100%; height: 100%; overflow-y: auto;';
             rightPanel.appendChild(sxWrap);
 
-        const sxHeader = document.createElement('div');
-        sxHeader.id = 'sx-custom-engine-header';
-        sxHeader.innerHTML = `
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 0 14px 0;">
-                <div>
-                    <div style="font-size:22px;font-weight:700;color:rgba(255,255,255,0.92);letter-spacing:-0.5px;">Models &amp; Usage</div>
-                    <div style="font-size:13px;color:rgba(255,255,255,0.4);margin-top:4px;">Doğrudan custom provider bağlantısı aktif.</div>
+            const sxHeader = document.createElement('div');
+            sxHeader.id = 'sx-custom-engine-header';
+            sxHeader.innerHTML = `
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:24px 0 16px 0;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:20px;">
+                    <div>
+                        <div style="font-size:22px;font-weight:700;color:rgba(255,255,255,0.95);letter-spacing:-0.4px;">Models &amp; Usage</div>
+                        <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:4px;">Doğrudan custom provider bağlantısı aktif.</div>
+                    </div>
+                    <button type="button" class="sx-close-dialog-btn" style="background:transparent;border:none;color:rgba(255,255,255,0.4);cursor:pointer;padding:8px;border-radius:6px;display:flex;align-items:center;justify-content:center;transition:all 0.15s;" title="Close">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
                 </div>
-                <button type="button" class="sx-close-dialog-btn" style="background:transparent;border:none;color:rgba(255,255,255,0.5);cursor:pointer;padding:6px;border-radius:6px;display:flex;align-items:center;justify-content:center;transition:color 0.15s,background 0.15s;" title="Close">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                </button>
-            </div>
-        `;
-        const cBtn = sxHeader.querySelector('.sx-close-dialog-btn');
-        if (cBtn) {
-            cBtn.addEventListener('click', () => {
-                const nativeClose = dialog.querySelector('button[aria-label*="Close" i], button.absolute');
-                if (nativeClose) nativeClose.click();
-                else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
-            });
-            cBtn.addEventListener('mouseenter', () => { cBtn.style.color = '#ffffff'; cBtn.style.background = 'rgba(255,255,255,0.1)'; });
-            cBtn.addEventListener('mouseleave', () => { cBtn.style.color = 'rgba(255,255,255,0.5)'; cBtn.style.background = 'transparent'; });
-        }
-        sxWrap.appendChild(sxHeader);
+            `;
+            const cBtn = sxHeader.querySelector('.sx-close-dialog-btn');
+            if (cBtn) {
+                cBtn.addEventListener('click', () => {
+                    const nativeClose = dialog.querySelector('button[aria-label*="Close" i], button.absolute');
+                    if (nativeClose) nativeClose.click();
+                    else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+                });
+                cBtn.addEventListener('mouseenter', () => { cBtn.style.color = '#ffffff'; cBtn.style.background = 'rgba(255,255,255,0.1)'; });
+                cBtn.addEventListener('mouseleave', () => { cBtn.style.color = 'rgba(255,255,255,0.4)'; cBtn.style.background = 'transparent'; });
+            }
+            sxWrap.appendChild(sxHeader);
 
         const provSec = document.createElement('div');
         provSec.id = 'sx-providers-section';
