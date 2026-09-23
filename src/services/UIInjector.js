@@ -914,50 +914,45 @@ export class UIInjector {
     }
 
     trySXModelsSettingsInject() {
-        const dialog = document.querySelector('[role="dialog"]');
+        // 1. Safety cleanup: If an orphaned sx-content-wrapper exists outside of a valid settings dialog, remove it and restore page!
+        const isSettingsDialog = (d) => {
+            if (!d || d.nodeType !== 1) return false;
+            const text = (d.textContent || '').toLowerCase();
+            if (text.includes('delete conversation') || text.includes('delete this') || text.includes('silmek istediğinize')) return false;
+            const hasGeneral = text.includes('general') || text.includes('genel');
+            const hasOtherTab = text.includes('appearance') || text.includes('görünüm') || text.includes('shortcuts') || text.includes('customization') || text.includes('models');
+            return hasGeneral && hasOtherTab;
+        };
+
+        document.querySelectorAll('#sx-content-wrapper').forEach(wrap => {
+            const parentDialog = wrap.closest('[role="dialog"]');
+            if (!parentDialog || !isSettingsDialog(parentDialog)) {
+                const parent = wrap.parentElement;
+                if (parent) {
+                    Array.from(parent.children).forEach(c => c.style.removeProperty('display'));
+                }
+                wrap.remove();
+            }
+        });
+
+        // 2. Locate the real Settings modal
+        const allDialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+        const dialog = allDialogs.find(isSettingsDialog);
         if (!dialog) {
             this._selectedSettingsTab = null;
             return;
         }
 
-        // Guard: Do not touch non-settings dialogs (e.g. Delete Conversation, Alert, Confirm)
-        const dialogText = (dialog.innerText || '').toLowerCase();
-        if (dialog.querySelector('[data-testid*="delete" i], button[data-testid*="delete" i]') || 
-            dialogText.includes('delete conversation') || 
-            dialogText.includes('delete this') ||
-            dialogText.includes('silmek istediğinize')) {
-            return;
-        }
-
         this.injectGlobalStyles();
 
-        // Helper: identify active sidebar navigation tab
-        const getActiveSidebarTab = () => {
-            if (this._selectedSettingsTab) return this._selectedSettingsTab;
-            const buttons = Array.from(dialog.querySelectorAll('nav button, [role="tablist"] button, aside button, button, a, [role="tab"]'));
-            for (const b of buttons) {
-                const txt = (b.textContent || '').trim().toLowerCase();
-                if (!txt || txt.length > 25) continue;
-                if (['general', 'application', 'appearance', 'models', 'customizations', 'browser', 'conversations', 'shortcuts'].some(k => txt.includes(k))) {
-                    if (b.getAttribute('aria-selected') === 'true' || b.getAttribute('data-state') === 'active' || b.classList.contains('active')) {
-                        return txt;
-                    }
-                    try {
-                        const bg = window.getComputedStyle(b).backgroundColor;
-                        if (bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)' && !bg.startsWith('rgba(0, 0, 0')) {
-                            return txt;
-                        }
-                    } catch(e) {}
-                }
-            }
-            return null;
-        };
+        // 3. Helper: check if user switched to another tab (General, Appearance, Shortcuts, etc.)
+        const activeTabBtn = dialog.querySelector('button[aria-selected="true"], button[data-state="active"], [role="tab"][aria-selected="true"], [role="tab"].active');
+        const activeTabTxt = (activeTabBtn?.textContent || '').trim().toLowerCase();
+        const isExplicitOtherTab = activeTabTxt && ['general', 'application', 'appearance', 'customization', 'browser', 'shortcut'].some(k => activeTabTxt.includes(k));
 
-        const activeSidebarTab = getActiveSidebarTab();
-        const isExplicitOtherTab = activeSidebarTab && !activeSidebarTab.includes('model');
         const existingWrap = dialog.querySelector('#sx-content-wrapper');
 
-        // If user actively switched to another tab (e.g. General, Appearance, etc.)
+        // If user actively switched to another tab
         if (isExplicitOtherTab) {
             if (existingWrap) {
                 const rp = existingWrap.parentElement;
@@ -976,7 +971,7 @@ export class UIInjector {
             return;
         }
 
-        // If our custom wrap is already mounted and user did NOT switch to another tab: KEEP IT MOUNTED AND STABLE!
+        // If our custom wrap is already mounted in the dialog and still valid: KEEP IT STABLE!
         if (existingWrap) {
             const rp = existingWrap.parentElement;
             if (rp) {
@@ -989,42 +984,43 @@ export class UIInjector {
             return;
         }
 
-        // Check if native Models view is present in DOM (using textContent so it works even if styles hide elements)
+        // 4. Verify that Models & Usage is currently active in the dialog
         const fullContent = (dialog.textContent || '').toLowerCase();
         const MARKERS = ['manage your model quota', 'model credits', 'your plan', 'enable ai credit', 'custom quota', 'models & usage'];
-        const hasNativeModelsView = MARKERS.some(m => fullContent.includes(m)) || (activeSidebarTab && activeSidebarTab.includes('model'));
+        const hasModelsContent = MARKERS.some(m => fullContent.includes(m)) || (activeTabTxt && activeTabTxt.includes('model'));
 
-        if (!hasNativeModelsView) {
+        if (!hasModelsContent) {
             return;
         }
 
-        const tabList = dialog.querySelector('[role="tablist"], nav');
-        let rightPanel = dialog.querySelector('[role="tabpanel"]');
+        // 5. Precisely locate the right-side content panel (must NOT be the sidebar, must NOT contain General/Appearance)
+        const markerEl = Array.from(dialog.querySelectorAll('h1, h2, h3, h4, div, span, p')).find(el => {
+            const txt = (el.textContent || '').trim().toLowerCase();
+            return txt === 'models & usage' || 
+                   txt === 'manage your model quota and credits.' ||
+                   txt === 'model credits' || 
+                   txt === 'manage your model quota' ||
+                   txt === 'your plan' ||
+                   txt === 'custom quota';
+        });
 
-        if (!rightPanel && tabList && tabList.parentElement) {
-            const siblings = Array.from(tabList.parentElement.children).filter(el => el !== tabList);
-            if (siblings.length === 1) {
-                rightPanel = siblings[0];
+        if (!markerEl) return;
+
+        // Ascend from markerEl until we reach the direct right-panel column inside dialog
+        let rightPanel = markerEl;
+        while (rightPanel && rightPanel.parentElement && rightPanel.parentElement !== dialog) {
+            const parentText = (rightPanel.parentElement.textContent || '').toLowerCase();
+            // If parent contains the sidebar buttons, rightPanel is the child column!
+            if (parentText.includes('general') && (parentText.includes('appearance') || parentText.includes('shortcuts'))) {
+                break;
             }
+            rightPanel = rightPanel.parentElement;
         }
 
-        if (!rightPanel) {
-            for (const marker of ['Manage your model quota', 'Model Credits', 'Your Plan', 'Models & Usage']) {
-                const heading = Array.from(dialog.querySelectorAll('h1, h2, h3, h4, div, span')).find(el => el.textContent && el.textContent.toLowerCase().includes(marker.toLowerCase()));
-                if (heading) {
-                    rightPanel = heading.closest('[role="tabpanel"]') || heading.closest('.overflow-y-auto') || heading.parentElement?.parentElement;
-                    if (rightPanel) break;
-                }
-            }
-        }
-
-        if (!rightPanel) {
-            const scrollContainers = Array.from(dialog.querySelectorAll('.overflow-y-auto, main'));
-            rightPanel = scrollContainers.find(c => (!tabList || !c.contains(tabList)) && c !== dialog);
-        }
-
-        // Safety: rightPanel must never be the dialog itself, nor contain the tablist
-        if (!rightPanel || rightPanel === dialog || (tabList && rightPanel.contains(tabList))) return;
+        // Safety: rightPanel must never be dialog, must never contain sidebar tabs
+        if (!rightPanel || rightPanel === dialog) return;
+        const rpText = (rightPanel.textContent || '').toLowerCase();
+        if (rpText.includes('general') && rpText.includes('appearance')) return;
 
         Array.from(rightPanel.children).forEach(c => {
             c.style.setProperty('display', 'none', 'important');

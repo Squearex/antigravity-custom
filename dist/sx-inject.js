@@ -3925,39 +3925,34 @@
       setTimeout(() => overlay.querySelector("#sx-m-prov").focus(), 50);
     }
     trySXModelsSettingsInject() {
-      const dialog = document.querySelector('[role="dialog"]');
+      const isSettingsDialog = (d) => {
+        if (!d || d.nodeType !== 1) return false;
+        const text = (d.textContent || "").toLowerCase();
+        if (text.includes("delete conversation") || text.includes("delete this") || text.includes("silmek istedi\u011Finize")) return false;
+        const hasGeneral = text.includes("general") || text.includes("genel");
+        const hasOtherTab = text.includes("appearance") || text.includes("g\xF6r\xFCn\xFCm") || text.includes("shortcuts") || text.includes("customization") || text.includes("models");
+        return hasGeneral && hasOtherTab;
+      };
+      document.querySelectorAll("#sx-content-wrapper").forEach((wrap) => {
+        const parentDialog = wrap.closest('[role="dialog"]');
+        if (!parentDialog || !isSettingsDialog(parentDialog)) {
+          const parent = wrap.parentElement;
+          if (parent) {
+            Array.from(parent.children).forEach((c) => c.style.removeProperty("display"));
+          }
+          wrap.remove();
+        }
+      });
+      const allDialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+      const dialog = allDialogs.find(isSettingsDialog);
       if (!dialog) {
         this._selectedSettingsTab = null;
         return;
       }
-      const dialogText = (dialog.innerText || "").toLowerCase();
-      if (dialog.querySelector('[data-testid*="delete" i], button[data-testid*="delete" i]') || dialogText.includes("delete conversation") || dialogText.includes("delete this") || dialogText.includes("silmek istedi\u011Finize")) {
-        return;
-      }
       this.injectGlobalStyles();
-      const getActiveSidebarTab = () => {
-        if (this._selectedSettingsTab) return this._selectedSettingsTab;
-        const buttons = Array.from(dialog.querySelectorAll('nav button, [role="tablist"] button, aside button, button, a, [role="tab"]'));
-        for (const b of buttons) {
-          const txt = (b.textContent || "").trim().toLowerCase();
-          if (!txt || txt.length > 25) continue;
-          if (["general", "application", "appearance", "models", "customizations", "browser", "conversations", "shortcuts"].some((k) => txt.includes(k))) {
-            if (b.getAttribute("aria-selected") === "true" || b.getAttribute("data-state") === "active" || b.classList.contains("active")) {
-              return txt;
-            }
-            try {
-              const bg = window.getComputedStyle(b).backgroundColor;
-              if (bg && bg !== "transparent" && bg !== "rgba(0, 0, 0, 0)" && !bg.startsWith("rgba(0, 0, 0")) {
-                return txt;
-              }
-            } catch (e) {
-            }
-          }
-        }
-        return null;
-      };
-      const activeSidebarTab = getActiveSidebarTab();
-      const isExplicitOtherTab = activeSidebarTab && !activeSidebarTab.includes("model");
+      const activeTabBtn = dialog.querySelector('button[aria-selected="true"], button[data-state="active"], [role="tab"][aria-selected="true"], [role="tab"].active');
+      const activeTabTxt = (activeTabBtn?.textContent || "").trim().toLowerCase();
+      const isExplicitOtherTab = activeTabTxt && ["general", "application", "appearance", "customization", "browser", "shortcut"].some((k) => activeTabTxt.includes(k));
       const existingWrap = dialog.querySelector("#sx-content-wrapper");
       if (isExplicitOtherTab) {
         if (existingWrap) {
@@ -3989,32 +3984,26 @@
       }
       const fullContent = (dialog.textContent || "").toLowerCase();
       const MARKERS = ["manage your model quota", "model credits", "your plan", "enable ai credit", "custom quota", "models & usage"];
-      const hasNativeModelsView = MARKERS.some((m) => fullContent.includes(m)) || activeSidebarTab && activeSidebarTab.includes("model");
-      if (!hasNativeModelsView) {
+      const hasModelsContent = MARKERS.some((m) => fullContent.includes(m)) || activeTabTxt && activeTabTxt.includes("model");
+      if (!hasModelsContent) {
         return;
       }
-      const tabList = dialog.querySelector('[role="tablist"], nav');
-      let rightPanel = dialog.querySelector('[role="tabpanel"]');
-      if (!rightPanel && tabList && tabList.parentElement) {
-        const siblings = Array.from(tabList.parentElement.children).filter((el) => el !== tabList);
-        if (siblings.length === 1) {
-          rightPanel = siblings[0];
+      const markerEl = Array.from(dialog.querySelectorAll("h1, h2, h3, h4, div, span, p")).find((el) => {
+        const txt = (el.textContent || "").trim().toLowerCase();
+        return txt === "models & usage" || txt === "manage your model quota and credits." || txt === "model credits" || txt === "manage your model quota" || txt === "your plan" || txt === "custom quota";
+      });
+      if (!markerEl) return;
+      let rightPanel = markerEl;
+      while (rightPanel && rightPanel.parentElement && rightPanel.parentElement !== dialog) {
+        const parentText = (rightPanel.parentElement.textContent || "").toLowerCase();
+        if (parentText.includes("general") && (parentText.includes("appearance") || parentText.includes("shortcuts"))) {
+          break;
         }
+        rightPanel = rightPanel.parentElement;
       }
-      if (!rightPanel) {
-        for (const marker of ["Manage your model quota", "Model Credits", "Your Plan", "Models & Usage"]) {
-          const heading = Array.from(dialog.querySelectorAll("h1, h2, h3, h4, div, span")).find((el) => el.textContent && el.textContent.toLowerCase().includes(marker.toLowerCase()));
-          if (heading) {
-            rightPanel = heading.closest('[role="tabpanel"]') || heading.closest(".overflow-y-auto") || heading.parentElement?.parentElement;
-            if (rightPanel) break;
-          }
-        }
-      }
-      if (!rightPanel) {
-        const scrollContainers = Array.from(dialog.querySelectorAll(".overflow-y-auto, main"));
-        rightPanel = scrollContainers.find((c) => (!tabList || !c.contains(tabList)) && c !== dialog);
-      }
-      if (!rightPanel || rightPanel === dialog || tabList && rightPanel.contains(tabList)) return;
+      if (!rightPanel || rightPanel === dialog) return;
+      const rpText = (rightPanel.textContent || "").toLowerCase();
+      if (rpText.includes("general") && rpText.includes("appearance")) return;
       Array.from(rightPanel.children).forEach((c) => {
         c.style.setProperty("display", "none", "important");
       });
