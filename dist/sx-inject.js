@@ -3823,6 +3823,7 @@
             }
           }
         }
+        this.injectEffortButton(trigger);
       }
       const quotaMenu = document.querySelector('[role="menu"][data-nested]');
       if (quotaMenu) {
@@ -4055,6 +4056,200 @@
         modelPanel.appendChild(fBadge);
       }
       fBadge.innerHTML = '<span style="font-weight:700;"><span style="color:#38bdf8;text-shadow:0 0 10px rgba(56,189,248,0.35);">SX</span> <span style="color:#ffffff;">Development</span></span><span style="font-size:9.5px;color:rgba(255,255,255,0.35);font-weight:500;">Custom Engine</span>';
+    }
+    async injectEffortButton(trigger) {
+      if (!trigger || !trigger.parentElement) return;
+      let effortBtn = document.getElementById("sx-effort-btn");
+      if (!effortBtn) {
+        effortBtn = document.createElement("button");
+        effortBtn.id = "sx-effort-btn";
+        effortBtn.type = "button";
+        effortBtn.className = "sx-effort-btn";
+        effortBtn.title = "Agent & Reasoning Effort Se\xE7enekleri (T\u0131kla)";
+        effortBtn.onclick = (e) => {
+          e.stopPropagation();
+          this.openEffortModal();
+        };
+        trigger.insertAdjacentElement("afterend", effortBtn);
+      }
+      if (!this._lastEffortFetch || Date.now() - this._lastEffortFetch > 5e3) {
+        this._lastEffortFetch = Date.now();
+        try {
+          const cKey = this.models.getActiveConversationKey();
+          const res = await this.network.get("/sx/get-agent-effort?convId=" + encodeURIComponent(cKey));
+          if (res && res.ok && res.profile) {
+            this._currentEffort = res.profile;
+          }
+        } catch (e) {
+        }
+      }
+      const profile = this._currentEffort || { agentEffort: "normal", reasoningEffort: "normal" };
+      const agentEffort = profile.agentEffort || "normal";
+      let badgeHtml = "";
+      let btnStyle = "display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;margin-left:6px;transition:all 0.15s;font-family:inherit;line-height:1.2;";
+      if (agentEffort === "ultra") {
+        btnStyle += "background:rgba(245,158,11,0.14);border:1px solid rgba(245,158,11,0.4);color:#fbbf24;box-shadow:0 0 8px rgba(245,158,11,0.25);";
+        badgeHtml = "<span>\u{1F525}</span><span>Ultra Code</span>";
+      } else if (agentEffort === "high") {
+        btnStyle += "background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.3);color:#38bdf8;";
+        badgeHtml = "<span>\u26A1</span><span>High</span>";
+      } else if (agentEffort === "low") {
+        btnStyle += "background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);";
+        badgeHtml = "<span>\u26A1</span><span>Low</span>";
+      } else {
+        btnStyle += "background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.85);";
+        badgeHtml = "<span>\u26A1</span><span>Normal</span>";
+      }
+      if (effortBtn.dataset.sxEffort !== agentEffort) {
+        effortBtn.dataset.sxEffort = agentEffort;
+        effortBtn.style.cssText = btnStyle;
+        effortBtn.innerHTML = badgeHtml;
+      }
+    }
+    openEffortModal() {
+      if (document.getElementById("sx-effort-modal-overlay")) return;
+      const overlay = document.createElement("div");
+      overlay.className = "sx-modal-overlay";
+      overlay.id = "sx-effort-modal-overlay";
+      const profile = this._currentEffort || { agentEffort: "normal", reasoningEffort: "normal" };
+      let curAgent = profile.agentEffort || "normal";
+      let curReasoning = profile.reasoningEffort || "normal";
+      overlay.innerHTML = `
+            <div class="sx-modal" style="width: 520px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                    <div>
+                        <div class="sx-modal-title" style="margin-bottom:2px;">Agent &amp; Reasoning Effort</div>
+                        <div style="font-size:12px;color:rgba(255,255,255,0.4);">Ajan\u0131n \xE7al\u0131\u015Fma derinli\u011Fini ve modelin d\xFC\u015F\xFCnme b\xFCt\xE7esini se\xE7in.</div>
+                    </div>
+                    <button type="button" class="sx-icon-btn del" id="sx-effort-close" style="font-size:16px;">\u2715</button>
+                </div>
+
+                <div class="sx-field">
+                    <label class="sx-label">Agent Execution Mode</label>
+                    <div style="display:flex;flex-direction:column;gap:6px;" id="sx-agent-options">
+                        <label class="sx-effort-opt ${curAgent === "ultra" ? "is-active" : ""}" data-val="ultra" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid ${curAgent === "ultra" ? "#fbbf24" : "rgba(255,255,255,0.08)"};background:${curAgent === "ultra" ? "rgba(245,158,11,0.08)" : "rgba(255,255,255,0.02)"};cursor:pointer;">
+                            <input type="radio" name="sx-agent-effort" value="ultra" ${curAgent === "ultra" ? "checked" : ""} style="margin-top:2px;accent-color:#fbbf24;" />
+                            <div>
+                                <div style="font-size:12.5px;font-weight:700;color:#fbbf24;">\u{1F525} Ultra Code (Titan Ajan Modu)</div>
+                                <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:2px;">\xD6n tarama (AST Repo-Map) + Atomik Diff + Kod sonras\u0131 otomatik syntax/derleme do\u011Frulamas\u0131 (Self-Healing).</div>
+                            </div>
+                        </label>
+                        <label class="sx-effort-opt ${curAgent === "high" ? "is-active" : ""}" data-val="high" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid ${curAgent === "high" ? "#38bdf8" : "rgba(255,255,255,0.08)"};background:${curAgent === "high" ? "rgba(56,189,248,0.08)" : "rgba(255,255,255,0.02)"};cursor:pointer;">
+                            <input type="radio" name="sx-agent-effort" value="high" ${curAgent === "high" ? "checked" : ""} style="margin-top:2px;accent-color:#38bdf8;" />
+                            <div>
+                                <div style="font-size:12.5px;font-weight:700;color:#38bdf8;">\u26A1 High Effort (Planl\u0131 &amp; Kapsaml\u0131)</div>
+                                <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:2px;">Mimari etki plan\u0131 \xE7\u0131kar\u0131r, dosyalar\u0131 detayl\u0131 analiz eder, d\xFCzenleme sonras\u0131 kontrol eder.</div>
+                            </div>
+                        </label>
+                        <label class="sx-effort-opt ${curAgent === "normal" ? "is-active" : ""}" data-val="normal" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid ${curAgent === "normal" ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.08)"};background:${curAgent === "normal" ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.02)"};cursor:pointer;">
+                            <input type="radio" name="sx-agent-effort" value="normal" ${curAgent === "normal" ? "checked" : ""} style="margin-top:2px;accent-color:#fff;" />
+                            <div>
+                                <div style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,0.9);">\u26A1 Normal (Standart)</div>
+                                <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:2px;">Varsay\u0131lan dengeli \xE7al\u0131\u015Fma ak\u0131\u015F\u0131.</div>
+                            </div>
+                        </label>
+                        <label class="sx-effort-opt ${curAgent === "low" ? "is-active" : ""}" data-val="low" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid ${curAgent === "low" ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.08)"};background:${curAgent === "low" ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.02)"};cursor:pointer;">
+                            <input type="radio" name="sx-agent-effort" value="low" ${curAgent === "low" ? "checked" : ""} style="margin-top:2px;accent-color:#fff;" />
+                            <div>
+                                <div style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,0.7);">\u26A1 Low (H\u0131zl\u0131 &amp; Do\u011Frudan)</div>
+                                <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:2px;">Gereksiz arka plan taramas\u0131 yapmadan do\u011Frudan h\u0131zl\u0131 yan\u0131t \xFCretir.</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="sx-field" style="margin-top:14px;">
+                    <label class="sx-label">Model Reasoning Effort (D\xFC\u015F\xFCnme B\xFCt\xE7esi)</label>
+                    <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;" id="sx-reasoning-options">
+                        <button type="button" class="sx-btn ${curReasoning === "low" ? "sx-btn-primary" : ""}" data-val="low" style="justify-content:center;font-size:11.5px;">Low (2k)</button>
+                        <button type="button" class="sx-btn ${curReasoning === "normal" ? "sx-btn-primary" : ""}" data-val="normal" style="justify-content:center;font-size:11.5px;">Normal (8k)</button>
+                        <button type="button" class="sx-btn ${curReasoning === "high" ? "sx-btn-primary" : ""}" data-val="high" style="justify-content:center;font-size:11.5px;">High (16k)</button>
+                        <button type="button" class="sx-btn ${curReasoning === "max" ? "sx-btn-primary" : ""}" data-val="max" style="justify-content:center;font-size:11.5px;">Max (32k+)</button>
+                    </div>
+                </div>
+
+                <div style="margin-top:14px;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:space-between;">
+                    <div>
+                        <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.85);">AST Repo-Map Arac\u0131</div>
+                        <div style="font-size:10.5px;color:rgba(255,255,255,0.4);" id="sx-repomap-status">Projedeki s\u0131n\u0131flar\u0131 ve fonksiyonlar\u0131 tara</div>
+                    </div>
+                    <button type="button" class="sx-btn" id="sx-run-repomap-btn" style="font-size:11px;">\u{1F50D} Projeyi Tara</button>
+                </div>
+
+                <div class="sx-modal-actions" style="margin-top:16px;">
+                    <button type="button" class="sx-btn" id="sx-effort-cancel">\u0130ptal</button>
+                    <button type="button" class="sx-btn sx-btn-primary" id="sx-effort-save">Kaydet ve Uygula</button>
+                </div>
+            </div>
+        `;
+      document.body.appendChild(overlay);
+      overlay.querySelector("#sx-effort-close").onclick = () => overlay.remove();
+      overlay.querySelector("#sx-effort-cancel").onclick = () => overlay.remove();
+      overlay.querySelectorAll("#sx-agent-options .sx-effort-opt").forEach((opt) => {
+        opt.onclick = () => {
+          curAgent = opt.dataset.val;
+          overlay.querySelectorAll("#sx-agent-options input").forEach((inp) => inp.checked = inp.value === curAgent);
+          overlay.querySelectorAll("#sx-agent-options .sx-effort-opt").forEach((o) => {
+            const active = o.dataset.val === curAgent;
+            o.classList.toggle("is-active", active);
+            if (curAgent === "ultra") o.style.borderColor = active ? "#fbbf24" : "rgba(255,255,255,0.08)";
+            else if (curAgent === "high") o.style.borderColor = active ? "#38bdf8" : "rgba(255,255,255,0.08)";
+            else o.style.borderColor = active ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.08)";
+          });
+        };
+      });
+      overlay.querySelectorAll("#sx-reasoning-options button").forEach((btn) => {
+        btn.onclick = () => {
+          curReasoning = btn.dataset.val;
+          overlay.querySelectorAll("#sx-reasoning-options button").forEach((b) => {
+            b.classList.toggle("sx-btn-primary", b.dataset.val === curReasoning);
+          });
+        };
+      });
+      const scanBtn = overlay.querySelector("#sx-run-repomap-btn");
+      const scanStatus = overlay.querySelector("#sx-repomap-status");
+      scanBtn.onclick = async () => {
+        scanBtn.disabled = true;
+        scanBtn.textContent = "Taran\u0131yor...";
+        try {
+          const res = await this.network.post("/sx/generate-repo-map", {});
+          if (res && res.ok) {
+            scanStatus.textContent = `${res.fileCount} dosya tarand\u0131 ve sembol haritas\u0131 haz\u0131rland\u0131.`;
+            scanStatus.style.color = "#a3e635";
+            scanBtn.textContent = "\u2713 Tamamland\u0131";
+          } else {
+            scanStatus.textContent = "Tarama ba\u015Far\u0131s\u0131z oldu.";
+            scanBtn.textContent = "Tekrar Dene";
+            scanBtn.disabled = false;
+          }
+        } catch (e) {
+          scanStatus.textContent = "Hata: " + e.message;
+          scanBtn.textContent = "Tekrar Dene";
+          scanBtn.disabled = false;
+        }
+      };
+      overlay.querySelector("#sx-effort-save").onclick = async () => {
+        const saveBtn = overlay.querySelector("#sx-effort-save");
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Kaydediliyor...";
+        const cKey = this.models.getActiveConversationKey();
+        try {
+          await this.network.post("/sx/set-agent-effort", {
+            convId: cKey,
+            agentEffort: curAgent,
+            reasoningEffort: curReasoning
+          });
+          this._currentEffort = { agentEffort: curAgent, reasoningEffort: curReasoning };
+          this._lastEffortFetch = Date.now();
+          const trigger = document.querySelector('[data-testid="model-selector-trigger"]');
+          if (trigger) this.injectEffortButton(trigger);
+          overlay.remove();
+        } catch (e) {
+          alert("Kaydedilemedi: " + e.message);
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Kaydet ve Uygula";
+        }
+      };
     }
   };
 

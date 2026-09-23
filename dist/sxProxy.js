@@ -279,6 +279,101 @@ function saveCompactState() {
         fs.writeFileSync(p, JSON.stringify(out), 'utf8');
     } catch(e){}
 }
+
+// ── Agent Effort & Reasoning Effort Management (Titan Architecture) ───────
+const agentEffortState = {
+    global: { agentEffort: 'normal', reasoningEffort: 'normal' }
+}; // convId -> { agentEffort, reasoningEffort }
+let agentEffortLoaded = false;
+
+function getAgentEffortFile() { try { return path.join(app.getPath('userData'), 'sx_agent_effort.json'); } catch(e){ return ''; } }
+function loadAgentEffortState() {
+    if (agentEffortLoaded) return;
+    agentEffortLoaded = true;
+    try {
+        const p = getAgentEffortFile();
+        if (p && fs.existsSync(p)) {
+            const data = JSON.parse(fs.readFileSync(p, 'utf8')) || {};
+            for (const k of Object.keys(data)) {
+                if (data[k]) agentEffortState[k] = data[k];
+            }
+        }
+    } catch(e){}
+}
+function saveAgentEffortState() {
+    try {
+        const p = getAgentEffortFile();
+        if (!p) return;
+        fs.writeFileSync(p, JSON.stringify(agentEffortState, null, 2), 'utf8');
+    } catch(e){}
+}
+function getEffortProfile(convKey) {
+    loadAgentEffortState();
+    const cleanKey = (convKey || '').replace(/^conv_/, '');
+    const specific = agentEffortState[cleanKey] || agentEffortState['conv_' + cleanKey];
+    if (specific) return specific;
+    return agentEffortState.global || { agentEffort: 'normal', reasoningEffort: 'normal' };
+}
+
+function extractSymbolsFromCode(content, ext) {
+    const symbols = [];
+    const lines = content.split('\n');
+    const classRegex = /(?:class|struct|interface|type)\s+([A-Za-z0-9_]+)/g;
+    const fnRegex = /(?:function|func|def|void|int|bool|string|uintptr_t|auto|async function)\s+([A-Za-z0-9_]+)\s*\(/g;
+    
+    for (let i = 0; i < Math.min(lines.length, 800); i++) {
+        const line = lines[i].trim();
+        if (line.startsWith('//') || line.startsWith('#') || line.startsWith('*')) continue;
+        let match;
+        while ((match = classRegex.exec(line)) !== null) {
+            symbols.push(match[1]);
+        }
+        while ((match = fnRegex.exec(line)) !== null) {
+            symbols.push(match[1] + '()');
+        }
+    }
+    return [...new Set(symbols)].slice(0, 15);
+}
+
+function generateRepoMap(targetDir, maxFiles = 60) {
+    const results = [];
+    const ignoredDirs = new Set(['node_modules', '.git', 'dist', 'bin', 'build', '.system_generated', 'venv', '__pycache__', '.vscode', '.idea']);
+    const validExts = new Set(['.cpp', '.h', '.hpp', '.c', '.js', '.ts', '.jsx', '.tsx', '.py', '.go', '.rs', '.cs']);
+
+    function walk(dir, depth) {
+        if (depth > 4 || results.length >= maxFiles) return;
+        try {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const ent of entries) {
+                if (results.length >= maxFiles) break;
+                if (ent.isDirectory()) {
+                    if (!ignoredDirs.has(ent.name) && !ent.name.startsWith('.')) {
+                        walk(path.join(dir, ent.name), depth + 1);
+                    }
+                } else if (ent.isFile()) {
+                    const ext = path.extname(ent.name).toLowerCase();
+                    if (validExts.has(ext)) {
+                        const fullPath = path.join(dir, ent.name);
+                        try {
+                            const stat = fs.statSync(fullPath);
+                            if (stat.size < 300000) {
+                                const content = fs.readFileSync(fullPath, 'utf8');
+                                const lineCount = content.split('\n').length;
+                                const symbols = extractSymbolsFromCode(content, ext);
+                                const relPath = path.relative(targetDir, fullPath).replace(/\\/g, '/');
+                                results.push({ relPath, lineCount, symbols });
+                            }
+                        } catch(e){}
+                    }
+                }
+            }
+        } catch(e){}
+    }
+
+    walk(targetDir, 0);
+    return results;
+}
+
 function stripSummaryNotes(contents) {
     if (!Array.isArray(contents)) return contents;
     return contents.filter(c => {
@@ -1809,6 +1904,71 @@ function startInternalProxy() {
                 return;
             }
 
+            
+            // Agent Effort & Reasoning profile endpoints
+            if (url.startsWith('/sx/get-agent-effort') && req.method === 'GET') {
+                try {
+                    const u = new URL('http://localhost' + url);
+                    const convId = (u.searchParams.get('convId') || '').replace(/^conv_/, '');
+                    const profile = getEffortProfile(convId);
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ ok: true, profile }));
+                } catch(e) {
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ ok: false, profile: { agentEffort: 'normal', reasoningEffort: 'normal' } }));
+                }
+                return;
+            }
+
+            if (url === '/sx/set-agent-effort' && req.method === 'POST') {
+                let rawBody = '';
+                req.on('data', chunk => rawBody += chunk);
+                req.on('end', () => {
+                    try {
+                        const data = JSON.parse(rawBody);
+                        const convId = (data.convId || '').replace(/^conv_/, '');
+                        const agentEffort = data.agentEffort || 'normal';
+                        const reasoningEffort = data.reasoningEffort || 'normal';
+                        loadAgentEffortState();
+                        if (convId) {
+                            agentEffortState[convId] = { agentEffort, reasoningEffort };
+                        }
+                        agentEffortState.global = { agentEffort, reasoningEffort };
+                        saveAgentEffortState();
+                        console.log(`[SX PROXY] Agent effort set for ${convId || 'global'}: agent=${agentEffort}, reasoning=${reasoningEffort}`);
+                        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ ok: true, profile: { agentEffort, reasoningEffort } }));
+                    } catch(e) {
+                        res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ ok: false, error: e.message }));
+                    }
+                });
+                return;
+            }
+
+            if (url === '/sx/generate-repo-map' && req.method === 'POST') {
+                let rawBody = '';
+                req.on('data', chunk => rawBody += chunk);
+                req.on('end', () => {
+                    try {
+                        const data = JSON.parse(rawBody || '{}');
+                        const targetDir = data.targetDir || process.cwd();
+                        const maxFiles = Number(data.maxFiles) || 50;
+                        const files = generateRepoMap(targetDir, maxFiles);
+                        let repoMapText = `[REPO MAP (${files.length} dosya)]: \n`;
+                        for (const f of files) {
+                            repoMapText += `- ${f.relPath} (${f.lineCount} satır)${f.symbols.length ? ' -> ' + f.symbols.join(', ') : ''}\n`;
+                        }
+                        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ ok: true, fileCount: files.length, repoMap: repoMapText, files }));
+                    } catch(e) {
+                        res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ ok: false, error: e.message }));
+                    }
+                });
+                return;
+            }
+
             // Handle fetchAvailableModels for language_server.exe
             if (url.includes('fetchAvailableModels')) {
                 loadConfigFromDisk();
@@ -2079,6 +2239,14 @@ function startInternalProxy() {
                         if (systemText && !systemText.includes('Otomatik Bağlam')) {
                             systemText += '\n\n[Profesyonel Mod] Uzun bağlamda önceki kararları özetleyip devam edin. Kırpma sonrası referansı kaybetmeyin; önceki kullanıcı isteğini hatırlayın.';
                         }
+                        const effortProfile = getEffortProfile(reqConvKey);
+                        if (effortProfile.agentEffort === 'ultra') {
+                            systemText += '\n\n[ULTRA CODE PROTOKOLÜ (TİTAN MODU): (1) Ön Tarama: Kod yazmadan önce dosya yapısını ve bağımlı modülleri incele. (2) Atomik Düzenleme: Sadece gereken satırları hedefle; dosyayı baştan sona silip yazma. (3) Kod Sonrası Zorunlu Doğrulama: Değişiklik yaptıktan sonra dosyayı tekrar kontrol et, syntax ve derleme hatalarını tara. (4) Self-Healing: Herhangi bir hata veya tutarsızlık tespit edersen kullanıcıya sormadan kendi kendine anında düzelt!]';
+                        } else if (effortProfile.agentEffort === 'high') {
+                            systemText += '\n\n[HIGH EFFORT PROTOKOLÜ: Kodlama öncesi mimari plan çıkar, etki alanını tara, değişiklik sonrası doğrula.]';
+                        } else if (effortProfile.agentEffort === 'low') {
+                            systemText += '\n\n[LOW EFFORT PROTOKOLÜ: Hızlı ve doğrudan yanıt ver, gereksiz arka plan taramalarını atla.]';
+                        }
                         const rawTools = innerReq.tools || reqJson.tools || [];
 
                         // Estimate chars consumed by system prompt + tool schemas
@@ -2208,6 +2376,14 @@ function startInternalProxy() {
                             };
                             if (systemText) payload.system = systemText;
                             if (anthropicTools) payload.tools = anthropicTools;
+                            if (effortProfile.reasoningEffort && effortProfile.reasoningEffort !== 'none') {
+                                let budget = 8192;
+                                if (effortProfile.reasoningEffort === 'low') budget = 2048;
+                                else if (effortProfile.reasoningEffort === 'high') budget = 16384;
+                                else if (effortProfile.reasoningEffort === 'max') budget = 32768;
+                                payload.thinking = { type: 'enabled', budget_tokens: budget };
+                                payload.max_tokens = Math.max(payload.max_tokens, budget + 4000);
+                            }
 
                             const budgetKey = `${provider?.name || provider?.baseUrl || ''}|${customModel?.modelId || customModel?.id || ''}`;
                             let anthBudget = historyTokenBudget;
@@ -2418,8 +2594,14 @@ function startInternalProxy() {
                             const actualOverheadTokens = Math.ceil((sysMsgChars + oaToolsChars) / 3.5);
                             // Real history budget based on actual OpenAI overhead measurement (reserve overhead + 16k buffer)
                             let realHistoryBudget = Math.max(3000, modelContextLimit - actualOverheadTokens - 16000);
-                            if (isFreeModel && realHistoryBudget > 70000) {
-                                realHistoryBudget = 70000;
+                            if (isFreeModel) {
+                                let freeCap = 120000;
+                                if (modelContextLimit >= 1000000) freeCap = 800000;
+                                else if (modelContextLimit >= 500000) freeCap = 450000;
+                                else if (modelContextLimit >= 250000) freeCap = 220000;
+                                else if (modelContextLimit >= 120000) freeCap = 110000;
+                                else freeCap = Math.max(30000, modelContextLimit - 10000);
+                                if (realHistoryBudget > freeCap) realHistoryBudget = freeCap;
                             }
                             if (isGroq) {
                                 realHistoryBudget = Math.min(realHistoryBudget, 1500);
@@ -2458,6 +2640,21 @@ function startInternalProxy() {
                                 // Groq service_tier omitted: user's org only has on_demand; default is safe
                             };
                             if (oaTools) payload.tools = oaTools;
+                            if (effortProfile.reasoningEffort && effortProfile.reasoningEffort !== 'none') {
+                                if (effortProfile.reasoningEffort === 'low') {
+                                    payload.reasoning_effort = 'low';
+                                    payload.reasoning = { effort: 'low', max_tokens: 2048 };
+                                } else if (effortProfile.reasoningEffort === 'high') {
+                                    payload.reasoning_effort = 'high';
+                                    payload.reasoning = { effort: 'high', max_tokens: 16384 };
+                                } else if (effortProfile.reasoningEffort === 'max') {
+                                    payload.reasoning_effort = 'high';
+                                    payload.reasoning = { effort: 'high', max_tokens: 32768 };
+                                } else {
+                                    payload.reasoning_effort = 'medium';
+                                    payload.reasoning = { effort: 'medium', max_tokens: 8192 };
+                                }
+                            }
 
                             const requestStartTime = Date.now();
                             let firstTokenTime = null;
