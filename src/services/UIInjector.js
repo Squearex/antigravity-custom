@@ -1529,9 +1529,11 @@ export class UIInjector {
                         const hasOtherBadges = !!rightBadges;
                         let reasoningLabel = '';
                         if (isReasoning) {
-                            const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || m.defaultReasoningEffort || 'default';
-                            const optObj = this.getModelReasoningOptions(m).find(o => o.id === curReasoning);
-                            reasoningLabel = optObj ? optObj.label : (curReasoning.charAt(0).toUpperCase() + curReasoning.slice(1));
+                            const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || 'default';
+                            const options = this.getModelReasoningOptions(m);
+                            const effectiveReasoning = options.some(o => o.id === curReasoning) ? curReasoning : (options[0]?.id || 'default');
+                            const optObj = options.find(o => o.id === effectiveReasoning);
+                            reasoningLabel = optObj ? optObj.label : 'Default';
                             if (hasOtherBadges) {
                                 rightBadges += `<span class="sx-reasoning-subtag is-badge" data-model-id="${m.id}" data-has-badges="true">${reasoningLabel}</span>`;
                             } else {
@@ -1759,10 +1761,11 @@ export class UIInjector {
 
         const m = this.state.getModels().find(mod => mod.id === modelId) || { id: modelId, name: modelName };
         const options = this.getModelReasoningOptions(m);
-        const curReasoning = (this._modelReasoning && this._modelReasoning[modelId]) || m.defaultReasoningEffort || 'default';
+        const curReasoning = (this._modelReasoning && this._modelReasoning[modelId]) || 'default';
+        const effectiveReasoning = options.some(o => o.id === curReasoning) ? curReasoning : (options[0]?.id || 'default');
 
         menu.innerHTML = options.map(opt => {
-            const isActive = curReasoning === opt.id || (!this._modelReasoning?.[modelId] && opt.id === 'default');
+            const isActive = opt.id === effectiveReasoning;
             const checkIcon = isActive
                 ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#86efac" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="color:#86efac;flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`
                 : '';
