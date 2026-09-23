@@ -2,6 +2,8 @@
  * SX Core SDK - QuotaMonitor
  * Tracks real-time context token usage, live draft token estimation, and provides interactive context popover.
  */
+import { attachPopoverAboveChat } from '../ui/floatingAnchor.js';
+
 export class QuotaMonitor {
     constructor(networkClient, modelManager, logger) {
         this.network = networkClient;
@@ -498,13 +500,6 @@ export class QuotaMonitor {
             backdrop-filter: blur(20px);
         `;
 
-        const rect = anchorEl.getBoundingClientRect();
-        const popLeft = Math.max(10, Math.min(window.innerWidth - 340, rect.left - 20));
-        pop.style.left = popLeft + 'px';
-
-        const boxTop = this.getPromptBoxTop();
-        pop.style.bottom = Math.max(12, window.innerHeight - boxTop + 10) + 'px';
-
         pop.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" id="sx-ctx-popover-header">
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -529,6 +524,7 @@ export class QuotaMonitor {
         `;
 
         document.body.appendChild(pop);
+        attachPopoverAboveChat(anchorEl, pop, { placement: 'top-start', gap: 10 });
         pop.dataset.convKey = (cleanConvId || 'new') + '_' + (targetModel?.id || '');
 
         pop.querySelector('#sx-ctx-popover-header').onclick = () => {

@@ -3,6 +3,8 @@
  * Tracks real-time LLM inference performance: TTFT, TPS, and accurate token count per message.
  * Ensures EACH message displays its OWN distinct performance metrics right next to its timestamp.
  */
+import { attachPopoverAboveChat } from '../ui/floatingAnchor.js';
+
 export class PerfMonitor {
     constructor(networkClient, modelManager, logger) {
         this.network = networkClient;
@@ -460,13 +462,6 @@ export class PerfMonitor {
             backdrop-filter: blur(20px);
         `;
 
-        const rect = anchorEl.getBoundingClientRect();
-        const popLeft = Math.max(10, Math.min(window.innerWidth - 340, rect.left - 20));
-        pop.style.left = popLeft + 'px';
-
-        const boxTop = this.getPromptBoxTop();
-        pop.style.bottom = Math.max(12, window.innerHeight - boxTop + 10) + 'px';
-
         pop.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" id="sx-perf-popover-header">
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -489,6 +484,7 @@ export class PerfMonitor {
         `;
 
         document.body.appendChild(pop);
+        attachPopoverAboveChat(anchorEl, pop, { placement: 'top-start', gap: 10 });
 
         pop.querySelector('#sx-perf-popover-header').onclick = () => {
             pop.remove();

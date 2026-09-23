@@ -5,6 +5,7 @@
  */
 import { SX_PRESETS } from './ModelManager.js';
 import { SX_THEME_PRESETS } from './ThemeEngine.js';
+import { attachPopoverAboveChat } from '../ui/floatingAnchor.js';
 
 export class UIInjector {
     constructor(eventBus, stateStore, modelManager, themeEngine, quotaMonitor, perfMonitor, networkClient, logger, metaResolver = null) {
@@ -2453,17 +2454,7 @@ export class UIInjector {
         document.body.appendChild(popover);
 
         // Position above entire message box (so it never blocks typing or prompt text)
-        const rect = anchorBtn.getBoundingClientRect();
-        const popoverWidth = 236;
-        let left = rect.left - (popoverWidth - rect.width) / 2;
-        if (left + popoverWidth > window.innerWidth - 10) {
-            left = window.innerWidth - popoverWidth - 10;
-        }
-        if (left < 10) left = 10;
-        popover.style.left = left + 'px';
-
-        const boxTop = this.getPromptBoxTop();
-        popover.style.bottom = Math.max(12, window.innerHeight - boxTop + 10) + 'px';
+        attachPopoverAboveChat(anchorBtn, popover, { placement: 'top', gap: 10 });
 
         const track = popover.querySelector('#sx-effort-slider-track');
         const thumb = popover.querySelector('#sx-effort-slider-thumb');
