@@ -40,12 +40,16 @@ export class PerfMonitor {
         try {
             if (this._observer) this._observer.disconnect();
             this._observer = new MutationObserver(() => {
-                // Debounced: streaming fires mutations per chunk; rescan at most ~1.5/s
+                // Debounced: streaming fires mutations per chunk; rescan at most ~2.5/s
                 if (this._obsTimer) return;
                 this._obsTimer = setTimeout(() => {
                     this._obsTimer = null;
-                    this.injectMetricsToMessageFooters();
-                }, 150);
+                    const convKey = this.models?.getActiveConversationKey();
+                    const cleanConvId = (convKey || '').replace(/^conv_/, '');
+                    this.fetchPerfStats(cleanConvId).then(() => {
+                        this.injectMetricsToMessageFooters();
+                    });
+                }, 200);
             });
             this._observer.observe(document.body, {
                 childList: true,
@@ -54,9 +58,13 @@ export class PerfMonitor {
         } catch(e) {}
 
         setInterval(() => {
-            this.injectMetricsToMessageFooters();
-            this.updatePerfButtonUI();
-        }, 1200);
+            const convKey = this.models?.getActiveConversationKey();
+            const cleanConvId = (convKey || '').replace(/^conv_/, '');
+            this.fetchPerfStats(cleanConvId).then(() => {
+                this.injectMetricsToMessageFooters();
+                this.updatePerfButtonUI();
+            });
+        }, 2000);
     }
 
     /**
@@ -91,7 +99,7 @@ export class PerfMonitor {
      * Retrieves real measured metrics for a specific message.
      * Returns null when no measurement exists — never fabricates numbers.
      */
-    getStatsForMessage(footerEl, isLastMessage = false) {
+    getStatsForMessage(footerEl, isLastMessage = false, indexFromEnd = 0, convId = '') {
         this._pruneStoredStats();
         const sig = this.getMessageSignature(footerEl);
         if (sig) {
@@ -99,22 +107,57 @@ export class PerfMonitor {
                 const saved = localStorage.getItem('sx_msg_perf_' + sig);
                 if (saved) {
                     const parsed = JSON.parse(saved);
-                    // Only trust entries that came from real measurements
-                    if (parsed && parsed.measured === true) return parsed;
+                    // Only trust entries that came from real measurements with real data
+                    if (parsed && parsed.measured === true && (parsed.tps > 0 || parsed.ttftMs > 0 || parsed.completionTokens > 0)) {
+                        return parsed;
+                    }
                 }
             } catch(e) {}
         }
 
-        // If this is the newly generated message and we have live streaming stats waiting
-        if (isLastMessage && this._latestLivePerf) {
-            const live = this._latestLivePerf;
+        // 1. If this is the newly generated message and we have live streaming stats waiting
+        if (isLastMessage && this._latestLivePerf && (this._latestLivePerf.tps > 0 || this._latestLivePerf.ttftMs > 0 || this._latestLivePerf.completionTokens > 0)) {
+            const live = { ...this._latestLivePerf, measured: true };
             this._latestLivePerf = null;
             if (sig) {
                 try {
-                    localStorage.setItem('sx_msg_perf_' + sig, JSON.stringify({ ...live, measured: true }));
+                    localStorage.setItem('sx_msg_perf_' + sig, JSON.stringify(live));
                 } catch(e) {}
             }
-            return { ...live, measured: true };
+            return live;
+        }
+
+        // 2. Match from convPerfHistory (reverse chronological index)
+        const cleanConvId = (convId || this.models?.getActiveConversationKey() || '').replace(/^conv_/, '');
+        const hist = this._perfHistory[cleanConvId] || this._perfHistory['new'] || this._perfHistory['last'] || [];
+        if (Array.isArray(hist) && hist.length > 0) {
+            const histIdx = hist.length - 1 - indexFromEnd;
+            if (histIdx >= 0 && hist[histIdx]) {
+                const item = hist[histIdx];
+                if (item && (item.tps > 0 || item.ttftMs > 0 || item.completionTokens > 0)) {
+                    const measured = { ...item, measured: true };
+                    if (sig) {
+                        try {
+                            localStorage.setItem('sx_msg_perf_' + sig, JSON.stringify(measured));
+                        } catch(e) {}
+                    }
+                    return measured;
+                }
+            }
+        }
+
+        // 3. Fallback for the latest message: use latest stats cache
+        if (isLastMessage) {
+            const latest = this.getLatestStats(cleanConvId);
+            if (latest && (latest.tps > 0 || latest.ttftMs > 0 || latest.completionTokens > 0)) {
+                const measured = { ...latest, measured: true };
+                if (sig) {
+                    try {
+                        localStorage.setItem('sx_msg_perf_' + sig, JSON.stringify(measured));
+                    } catch(e) {}
+                }
+                return measured;
+            }
         }
 
         return null;
@@ -227,7 +270,11 @@ export class PerfMonitor {
             const cleanConvId = (convId || '').replace(/^conv_/, '');
             const raw = await this.network.fetchPerfStats(cleanConvId);
             const stats = raw?.stats || raw;
-            if (stats && stats.ttftMs) {
+            if (raw?.history && Array.isArray(raw.history)) {
+                this._perfHistory[cleanConvId || 'new'] = raw.history;
+                this._perfHistory['last'] = raw.history;
+            }
+            if (stats && (stats.ttftMs || stats.tps || stats.completionTokens)) {
                 const measured = { ...stats, measured: true };
                 this._perfStatsCache[cleanConvId || 'new'] = measured;
                 this._perfStatsCache['last'] = measured;
@@ -244,8 +291,11 @@ export class PerfMonitor {
     injectMetricsToMessageFooters() {
         try {
             const now = Date.now();
-            if (this._lastScanTs && (now - this._lastScanTs < 500)) return;
+            if (this._lastScanTs && (now - this._lastScanTs < 300)) return;
             this._lastScanTs = now;
+
+            const convKey = this.models?.getActiveConversationKey();
+            const cleanConvId = (convKey || '').replace(/^conv_/, '');
 
             // Broader selector to reliably find message footer containing timestamps
             let footers = Array.from(document.querySelectorAll('.flex.w-full.items-start.gap-1 > .grow, [data-testid*="message-footer"], .message-footer'));
@@ -258,26 +308,39 @@ export class PerfMonitor {
             }
             if (!footers || footers.length === 0) return;
 
-            footers.forEach((footerEl, idx) => {
+            // Only target assistant message footers (avoiding prompt/user bubbles)
+            const validFooters = footers.filter(footerEl => {
                 const timeText = footerEl.childNodes[0]?.textContent?.trim() || footerEl.textContent?.trim() || '';
-                // Must contain timestamp format e.g. "1:03" or "21:21, 21.09.2026"
-                if (!/\b\d{1,2}:\d{2}\b/.test(timeText)) return;
+                return /\b\d{1,2}:\d{2}\b/.test(timeText) && !footerEl.closest('.items-end');
+            });
+            if (validFooters.length === 0) return;
 
-                const isLast = (idx === footers.length - 1);
-                const stats = this.getStatsForMessage(footerEl, isLast);
-                if (!stats && !isLast) return;
+            validFooters.forEach((footerEl, idx) => {
+                const isLast = (idx === validFooters.length - 1);
+                const indexFromEnd = validFooters.length - 1 - idx;
+                const stats = this.getStatsForMessage(footerEl, isLast, indexFromEnd, cleanConvId);
 
-                const ttftSec = stats ? (stats.ttftMs / 1000).toFixed(2) : '--';
-                const ttftStr = stats ? (stats.ttftMs >= 1000 ? `${ttftSec}s` : `${stats.ttftMs}ms`) : '--ms';
-                const tpsStr = stats ? (stats.tps || 0) : 0;
-                const tokDisp = stats ? `~${stats.completionTokens || 0} tok` : '--';
-                const splitStr = (stats && (stats.normalTokens != null || stats.thinkingTokens != null)) ? ` (${stats.normalTokens || 0}N / ${stats.thinkingTokens || 0}T)` : '';
-                const durStr = (stats && stats.durationMs) ? `${(stats.durationMs / 1000).toFixed(1)}s` : '';
+                // Never display unmeasured dummy zeroes
+                if (!stats || (!stats.tps && !stats.ttftMs && !stats.completionTokens)) {
+                    const existingBadge = footerEl.querySelector('.sx-msg-perf-metrics');
+                    if (existingBadge && existingBadge.getAttribute('data-measured') !== 'true') {
+                        existingBadge.remove();
+                    }
+                    return;
+                }
+
+                const ttftSec = stats.ttftMs ? (stats.ttftMs / 1000).toFixed(2) : '--';
+                const ttftStr = stats.ttftMs ? (stats.ttftMs >= 1000 ? `${ttftSec}s` : `${stats.ttftMs}ms`) : '--ms';
+                const tpsStr = (stats.tps != null && stats.tps > 0) ? stats.tps : 0;
+                const tokDisp = stats.completionTokens ? `~${stats.completionTokens} tok` : (stats.outputTokens ? `~${stats.outputTokens} tok` : '--');
+                const splitStr = (stats.thinkingTokens != null && stats.thinkingTokens > 0) ? ` (${stats.thinkingTokens}T)` : '';
+                const durVal = stats.totalMs || stats.generationMs || stats.durationMs;
+                const durStr = durVal ? `${(durVal / 1000).toFixed(1)}s` : '';
 
                 let speedColor = '#10b981';
-                if (stats && stats.tps < 20) speedColor = '#f43f5e';
-                else if (stats && stats.tps < 40) speedColor = '#eab308';
-                else if (stats && stats.tps < 80) speedColor = '#38bdf8';
+                if (stats.tps < 15) speedColor = '#f43f5e';
+                else if (stats.tps < 35) speedColor = '#eab308';
+                else if (stats.tps < 60) speedColor = '#38bdf8';
 
                 let badge = footerEl.querySelector('.sx-msg-perf-metrics');
                 if (!badge) {
@@ -293,21 +356,36 @@ export class PerfMonitor {
                         user-select: none;
                         vertical-align: middle;
                         line-height: 1;
-                        background: rgba(255, 255, 255, 0.03);
+                        background: rgba(255, 255, 255, 0.04);
                         border: 1px solid rgba(255, 255, 255, 0.08);
                         padding: 2px 7px;
                         border-radius: 6px;
+                        cursor: default;
+                        transition: background-color 0.15s ease;
                     `;
                     footerEl.appendChild(badge);
                 }
 
+                badge.setAttribute('data-measured', 'true');
+                const tooltipTitle = [
+                    `Model: ${stats.modelName || 'Active Model'}`,
+                    `İnferans Hızı: ${tpsStr} Token/Saniye`,
+                    `İlk Yanıt (TTFT): ${stats.ttftMs || 0}ms`,
+                    `Üretilen: ${stats.completionTokens || 0} token${stats.thinkingTokens ? ` (${stats.thinkingTokens} düşünce)` : ''}`,
+                    stats.promptTokens ? `İstem (Prompt): ~${stats.promptTokens} token` : '',
+                    durStr ? `Toplam Süre: ${durStr}` : '',
+                    stats.toolCalls ? `Araç Çağrısı: ${stats.toolCalls}` : '',
+                    stats.stopReason ? `Bitiş: ${stats.stopReason}` : ''
+                ].filter(Boolean).join('\n');
+
+                badge.title = tooltipTitle;
                 badge.innerHTML = `
-                    <span style="color: ${speedColor}; font-weight: 700;" title="İnferans Hızı: ${tpsStr} Token/Saniye">⚡ ${tpsStr} TPS</span>
+                    <span style="color: ${speedColor}; font-weight: 700;">⚡ ${tpsStr} TPS</span>
                     <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
-                    <span style="color: #38bdf8; font-weight: 600;" title="İlk Yanıt Süresi (TTFT): ${stats ? stats.ttftMs + 'ms' : '--'}">⏱️ ${ttftStr}</span>
+                    <span style="color: #38bdf8; font-weight: 600;">⏱️ ${ttftStr}</span>
                     <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
-                    <span style="color: rgba(255,255,255,0.7);" title="Toplam Üretilen Token: ${tokDisp}${splitStr}">📊 ${tokDisp}${splitStr}</span>
-                    ${durStr ? `<span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span><span style="color: rgba(255,255,255,0.5);" title="Toplam Süre: ${durStr}">⏳ ${durStr}</span>` : ''}
+                    <span style="color: rgba(255,255,255,0.85);">📊 ${tokDisp}${splitStr}</span>
+                    ${durStr ? `<span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span><span style="color: rgba(255,255,255,0.6);">⏳ ${durStr}</span>` : ''}
                 `;
             });
         } catch(e) {}

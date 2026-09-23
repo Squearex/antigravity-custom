@@ -366,7 +366,7 @@
     async fetchPerfStats(convId) {
       try {
         const res = await this.get(`/get-chat-perf-stats?convId=${encodeURIComponent(convId)}`);
-        return res?.stats || res || null;
+        return res && res.ok ? res : res?.stats ? res : null;
       } catch (e) {
         return null;
       }
@@ -2033,8 +2033,12 @@
           if (this._obsTimer) return;
           this._obsTimer = setTimeout(() => {
             this._obsTimer = null;
-            this.injectMetricsToMessageFooters();
-          }, 150);
+            const convKey = this.models?.getActiveConversationKey();
+            const cleanConvId = (convKey || "").replace(/^conv_/, "");
+            this.fetchPerfStats(cleanConvId).then(() => {
+              this.injectMetricsToMessageFooters();
+            });
+          }, 200);
         });
         this._observer.observe(document.body, {
           childList: true,
@@ -2043,9 +2047,13 @@
       } catch (e) {
       }
       setInterval(() => {
-        this.injectMetricsToMessageFooters();
-        this.updatePerfButtonUI();
-      }, 1200);
+        const convKey = this.models?.getActiveConversationKey();
+        const cleanConvId = (convKey || "").replace(/^conv_/, "");
+        this.fetchPerfStats(cleanConvId).then(() => {
+          this.injectMetricsToMessageFooters();
+          this.updatePerfButtonUI();
+        });
+      }, 2e3);
     }
     /**
      * Accurate Unicode-aware token counter
@@ -2076,7 +2084,7 @@
      * Retrieves real measured metrics for a specific message.
      * Returns null when no measurement exists — never fabricates numbers.
      */
-    getStatsForMessage(footerEl, isLastMessage = false) {
+    getStatsForMessage(footerEl, isLastMessage = false, indexFromEnd = 0, convId = "") {
       this._pruneStoredStats();
       const sig = this.getMessageSignature(footerEl);
       if (sig) {
@@ -2084,21 +2092,54 @@
           const saved = localStorage.getItem("sx_msg_perf_" + sig);
           if (saved) {
             const parsed = JSON.parse(saved);
-            if (parsed && parsed.measured === true) return parsed;
+            if (parsed && parsed.measured === true && (parsed.tps > 0 || parsed.ttftMs > 0 || parsed.completionTokens > 0)) {
+              return parsed;
+            }
           }
         } catch (e) {
         }
       }
-      if (isLastMessage && this._latestLivePerf) {
-        const live = this._latestLivePerf;
+      if (isLastMessage && this._latestLivePerf && (this._latestLivePerf.tps > 0 || this._latestLivePerf.ttftMs > 0 || this._latestLivePerf.completionTokens > 0)) {
+        const live = { ...this._latestLivePerf, measured: true };
         this._latestLivePerf = null;
         if (sig) {
           try {
-            localStorage.setItem("sx_msg_perf_" + sig, JSON.stringify({ ...live, measured: true }));
+            localStorage.setItem("sx_msg_perf_" + sig, JSON.stringify(live));
           } catch (e) {
           }
         }
-        return { ...live, measured: true };
+        return live;
+      }
+      const cleanConvId = (convId || this.models?.getActiveConversationKey() || "").replace(/^conv_/, "");
+      const hist = this._perfHistory[cleanConvId] || this._perfHistory["new"] || this._perfHistory["last"] || [];
+      if (Array.isArray(hist) && hist.length > 0) {
+        const histIdx = hist.length - 1 - indexFromEnd;
+        if (histIdx >= 0 && hist[histIdx]) {
+          const item = hist[histIdx];
+          if (item && (item.tps > 0 || item.ttftMs > 0 || item.completionTokens > 0)) {
+            const measured = { ...item, measured: true };
+            if (sig) {
+              try {
+                localStorage.setItem("sx_msg_perf_" + sig, JSON.stringify(measured));
+              } catch (e) {
+              }
+            }
+            return measured;
+          }
+        }
+      }
+      if (isLastMessage) {
+        const latest = this.getLatestStats(cleanConvId);
+        if (latest && (latest.tps > 0 || latest.ttftMs > 0 || latest.completionTokens > 0)) {
+          const measured = { ...latest, measured: true };
+          if (sig) {
+            try {
+              localStorage.setItem("sx_msg_perf_" + sig, JSON.stringify(measured));
+            } catch (e) {
+            }
+          }
+          return measured;
+        }
       }
       return null;
     }
@@ -2218,7 +2259,11 @@
         const cleanConvId = (convId || "").replace(/^conv_/, "");
         const raw = await this.network.fetchPerfStats(cleanConvId);
         const stats = raw?.stats || raw;
-        if (stats && stats.ttftMs) {
+        if (raw?.history && Array.isArray(raw.history)) {
+          this._perfHistory[cleanConvId || "new"] = raw.history;
+          this._perfHistory["last"] = raw.history;
+        }
+        if (stats && (stats.ttftMs || stats.tps || stats.completionTokens)) {
           const measured = { ...stats, measured: true };
           this._perfStatsCache[cleanConvId || "new"] = measured;
           this._perfStatsCache["last"] = measured;
@@ -2235,8 +2280,10 @@
     injectMetricsToMessageFooters() {
       try {
         const now = Date.now();
-        if (this._lastScanTs && now - this._lastScanTs < 500) return;
+        if (this._lastScanTs && now - this._lastScanTs < 300) return;
         this._lastScanTs = now;
+        const convKey = this.models?.getActiveConversationKey();
+        const cleanConvId = (convKey || "").replace(/^conv_/, "");
         let footers = Array.from(document.querySelectorAll('.flex.w-full.items-start.gap-1 > .grow, [data-testid*="message-footer"], .message-footer'));
         if (!footers || footers.length === 0) {
           footers = Array.from(document.querySelectorAll("div, span")).filter((el) => {
@@ -2246,22 +2293,33 @@
           });
         }
         if (!footers || footers.length === 0) return;
-        footers.forEach((footerEl, idx) => {
+        const validFooters = footers.filter((footerEl) => {
           const timeText = footerEl.childNodes[0]?.textContent?.trim() || footerEl.textContent?.trim() || "";
-          if (!/\b\d{1,2}:\d{2}\b/.test(timeText)) return;
-          const isLast = idx === footers.length - 1;
-          const stats = this.getStatsForMessage(footerEl, isLast);
-          if (!stats && !isLast) return;
-          const ttftSec = stats ? (stats.ttftMs / 1e3).toFixed(2) : "--";
-          const ttftStr = stats ? stats.ttftMs >= 1e3 ? `${ttftSec}s` : `${stats.ttftMs}ms` : "--ms";
-          const tpsStr = stats ? stats.tps || 0 : 0;
-          const tokDisp = stats ? `~${stats.completionTokens || 0} tok` : "--";
-          const splitStr = stats && (stats.normalTokens != null || stats.thinkingTokens != null) ? ` (${stats.normalTokens || 0}N / ${stats.thinkingTokens || 0}T)` : "";
-          const durStr = stats && stats.durationMs ? `${(stats.durationMs / 1e3).toFixed(1)}s` : "";
+          return /\b\d{1,2}:\d{2}\b/.test(timeText) && !footerEl.closest(".items-end");
+        });
+        if (validFooters.length === 0) return;
+        validFooters.forEach((footerEl, idx) => {
+          const isLast = idx === validFooters.length - 1;
+          const indexFromEnd = validFooters.length - 1 - idx;
+          const stats = this.getStatsForMessage(footerEl, isLast, indexFromEnd, cleanConvId);
+          if (!stats || !stats.tps && !stats.ttftMs && !stats.completionTokens) {
+            const existingBadge = footerEl.querySelector(".sx-msg-perf-metrics");
+            if (existingBadge && existingBadge.getAttribute("data-measured") !== "true") {
+              existingBadge.remove();
+            }
+            return;
+          }
+          const ttftSec = stats.ttftMs ? (stats.ttftMs / 1e3).toFixed(2) : "--";
+          const ttftStr = stats.ttftMs ? stats.ttftMs >= 1e3 ? `${ttftSec}s` : `${stats.ttftMs}ms` : "--ms";
+          const tpsStr = stats.tps != null && stats.tps > 0 ? stats.tps : 0;
+          const tokDisp = stats.completionTokens ? `~${stats.completionTokens} tok` : stats.outputTokens ? `~${stats.outputTokens} tok` : "--";
+          const splitStr = stats.thinkingTokens != null && stats.thinkingTokens > 0 ? ` (${stats.thinkingTokens}T)` : "";
+          const durVal = stats.totalMs || stats.generationMs || stats.durationMs;
+          const durStr = durVal ? `${(durVal / 1e3).toFixed(1)}s` : "";
           let speedColor = "#10b981";
-          if (stats && stats.tps < 20) speedColor = "#f43f5e";
-          else if (stats && stats.tps < 40) speedColor = "#eab308";
-          else if (stats && stats.tps < 80) speedColor = "#38bdf8";
+          if (stats.tps < 15) speedColor = "#f43f5e";
+          else if (stats.tps < 35) speedColor = "#eab308";
+          else if (stats.tps < 60) speedColor = "#38bdf8";
           let badge = footerEl.querySelector(".sx-msg-perf-metrics");
           if (!badge) {
             badge = document.createElement("span");
@@ -2276,20 +2334,34 @@
                         user-select: none;
                         vertical-align: middle;
                         line-height: 1;
-                        background: rgba(255, 255, 255, 0.03);
+                        background: rgba(255, 255, 255, 0.04);
                         border: 1px solid rgba(255, 255, 255, 0.08);
                         padding: 2px 7px;
                         border-radius: 6px;
+                        cursor: default;
+                        transition: background-color 0.15s ease;
                     `;
             footerEl.appendChild(badge);
           }
+          badge.setAttribute("data-measured", "true");
+          const tooltipTitle = [
+            `Model: ${stats.modelName || "Active Model"}`,
+            `\u0130nferans H\u0131z\u0131: ${tpsStr} Token/Saniye`,
+            `\u0130lk Yan\u0131t (TTFT): ${stats.ttftMs || 0}ms`,
+            `\xDCretilen: ${stats.completionTokens || 0} token${stats.thinkingTokens ? ` (${stats.thinkingTokens} d\xFC\u015F\xFCnce)` : ""}`,
+            stats.promptTokens ? `\u0130stem (Prompt): ~${stats.promptTokens} token` : "",
+            durStr ? `Toplam S\xFCre: ${durStr}` : "",
+            stats.toolCalls ? `Ara\xE7 \xC7a\u011Fr\u0131s\u0131: ${stats.toolCalls}` : "",
+            stats.stopReason ? `Biti\u015F: ${stats.stopReason}` : ""
+          ].filter(Boolean).join("\n");
+          badge.title = tooltipTitle;
           badge.innerHTML = `
-                    <span style="color: ${speedColor}; font-weight: 700;" title="\u0130nferans H\u0131z\u0131: ${tpsStr} Token/Saniye">\u26A1 ${tpsStr} TPS</span>
+                    <span style="color: ${speedColor}; font-weight: 700;">\u26A1 ${tpsStr} TPS</span>
                     <span style="color: rgba(255,255,255,0.25); font-size: 9px;">\u2022</span>
-                    <span style="color: #38bdf8; font-weight: 600;" title="\u0130lk Yan\u0131t S\xFCresi (TTFT): ${stats ? stats.ttftMs + "ms" : "--"}">\u23F1\uFE0F ${ttftStr}</span>
+                    <span style="color: #38bdf8; font-weight: 600;">\u23F1\uFE0F ${ttftStr}</span>
                     <span style="color: rgba(255,255,255,0.25); font-size: 9px;">\u2022</span>
-                    <span style="color: rgba(255,255,255,0.7);" title="Toplam \xDCretilen Token: ${tokDisp}${splitStr}">\u{1F4CA} ${tokDisp}${splitStr}</span>
-                    ${durStr ? `<span style="color: rgba(255,255,255,0.25); font-size: 9px;">\u2022</span><span style="color: rgba(255,255,255,0.5);" title="Toplam S\xFCre: ${durStr}">\u23F3 ${durStr}</span>` : ""}
+                    <span style="color: rgba(255,255,255,0.85);">\u{1F4CA} ${tokDisp}${splitStr}</span>
+                    ${durStr ? `<span style="color: rgba(255,255,255,0.25); font-size: 9px;">\u2022</span><span style="color: rgba(255,255,255,0.6);">\u23F3 ${durStr}</span>` : ""}
                 `;
         });
       } catch (e) {
@@ -3228,6 +3300,35 @@
             .sx-preset-btn { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); color: rgba(255,255,255,0.65); font-size: 11px; font-weight: 500; padding: 7px 5px; border-radius: 6px; cursor: pointer; text-align: center; }
             .sx-preset-btn.active { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); color: #fff; font-weight: 600; }
             .sx-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,0.06); }
+
+            /* Model selector menu wrapper: unified sleek single card */
+            [role="menu"]:has([data-testid="model-selector-panel"]) {
+                background: #14151b !important;
+                border: 1px solid rgba(255, 255, 255, 0.12) !important;
+                border-radius: 10px !important;
+                box-shadow: 0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+                backdrop-filter: blur(24px) !important;
+                padding: 0 !important;
+                overflow: hidden !important;
+                width: 320px !important;
+                min-width: 320px !important;
+                max-width: 340px !important;
+            }
+
+            [role="menu"] > [data-testid="model-selector-panel"],
+            [role="menu"] [data-testid="model-selector-panel"],
+            [data-testid="model-selector-panel"] {
+                background: transparent !important;
+                border: none !important;
+                border-radius: 0 !important;
+                box-shadow: none !important;
+                backdrop-filter: none !important;
+                padding: 0 !important;
+                width: 100% !important;
+                min-width: 0 !important;
+                max-width: 100% !important;
+                transform: none !important;
+            }
 
             /* Hide native model selector items instantly */
             [data-testid="model-selector-item"]:not(.sx-custom-model-item),
@@ -4455,28 +4556,57 @@
       if (!modelPanel || modelPanel.closest("[data-sx-usage-panel]")) return;
       const sxModels = this.state.getModels();
       if (!sxModels || sxModels.length === 0) return;
-      modelPanel.style.background = "#14151b";
-      modelPanel.style.border = "1px solid rgba(255, 255, 255, 0.12)";
-      modelPanel.style.borderRadius = "10px";
-      modelPanel.style.boxShadow = "0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08)";
-      modelPanel.style.backdropFilter = "blur(24px)";
-      modelPanel.style.width = "320px";
-      modelPanel.style.minWidth = "320px";
-      modelPanel.style.maxWidth = "340px";
-      modelPanel.style.padding = "0";
-      modelPanel.style.transition = "transform 0.08s ease-out";
+      const menuBox = modelPanel.closest('[role="menu"]') || modelPanel.parentElement;
+      const isMenu = menuBox && menuBox !== modelPanel;
+      if (isMenu) {
+        menuBox.style.setProperty("background", "#14151b", "important");
+        menuBox.style.setProperty("border", "1px solid rgba(255, 255, 255, 0.12)", "important");
+        menuBox.style.setProperty("border-radius", "10px", "important");
+        menuBox.style.setProperty("box-shadow", "0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08)", "important");
+        menuBox.style.setProperty("backdrop-filter", "blur(24px)", "important");
+        menuBox.style.setProperty("padding", "0", "important");
+        menuBox.style.setProperty("width", "320px", "important");
+        menuBox.style.setProperty("min-width", "320px", "important");
+        menuBox.style.setProperty("max-width", "340px", "important");
+        menuBox.style.setProperty("overflow", "hidden", "important");
+        menuBox.style.setProperty("outline", "none", "important");
+        menuBox.style.transition = "transform 0.08s ease-out";
+        modelPanel.style.setProperty("background", "transparent", "important");
+        modelPanel.style.setProperty("border", "none", "important");
+        modelPanel.style.setProperty("border-radius", "0", "important");
+        modelPanel.style.setProperty("box-shadow", "none", "important");
+        modelPanel.style.setProperty("backdrop-filter", "none", "important");
+        modelPanel.style.setProperty("padding", "0", "important");
+        modelPanel.style.setProperty("transform", "none", "important");
+        modelPanel.style.setProperty("width", "100%", "important");
+        modelPanel.style.setProperty("min-width", "0", "important");
+        modelPanel.style.setProperty("max-width", "100%", "important");
+      } else {
+        modelPanel.style.background = "#14151b";
+        modelPanel.style.border = "1px solid rgba(255, 255, 255, 0.12)";
+        modelPanel.style.borderRadius = "10px";
+        modelPanel.style.boxShadow = "0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08)";
+        modelPanel.style.backdropFilter = "blur(24px)";
+        modelPanel.style.width = "320px";
+        modelPanel.style.minWidth = "320px";
+        modelPanel.style.maxWidth = "340px";
+        modelPanel.style.padding = "0";
+        modelPanel.style.overflow = "hidden";
+        modelPanel.style.transition = "transform 0.08s ease-out";
+      }
+      const targetShiftBox = isMenu ? menuBox : modelPanel;
       const anchorBtn = document.querySelector('[data-testid="model-selector-trigger"]') || document.querySelector('[data-testid="model-selector-button"]') || document.querySelector('button[aria-haspopup="dialog"]') || document.querySelector('button[aria-haspopup="menu"]');
       const promptBox = anchorBtn?.closest("form") || anchorBtn?.closest('[data-testid="chat-input-container"]') || document.querySelector('form:has([data-testid="model-selector-trigger"])') || document.querySelector("form") || document.querySelector('[contenteditable="true"], textarea')?.closest("form, div.relative.flex, div.border");
       const adjustPosition = () => {
         try {
-          if (!promptBox || !modelPanel.isConnected) return;
+          if (!promptBox || !targetShiftBox.isConnected) return;
           const boxRect = promptBox.getBoundingClientRect();
-          const mRect = modelPanel.getBoundingClientRect();
+          const mRect = targetShiftBox.getBoundingClientRect();
           if (mRect.top < boxRect.top && mRect.bottom > boxRect.top - 4) {
             const shiftY = mRect.bottom - (boxRect.top - 8);
             const safeShift = Math.min(shiftY, Math.max(0, mRect.top - 12));
             if (safeShift > 0 && safeShift < 180) {
-              modelPanel.style.transform = `translateY(-${safeShift}px)`;
+              targetShiftBox.style.transform = `translateY(-${safeShift}px)`;
             }
           }
         } catch (e) {
@@ -4495,7 +4625,7 @@
       if (!searchWrap) {
         searchWrap = document.createElement("div");
         searchWrap.id = "sx-model-search-wrap";
-        searchWrap.style.cssText = "padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); background: #14151b !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box; border-top-left-radius: 10px; border-top-right-radius: 10px;";
+        searchWrap.style.cssText = "padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); background: #14151b !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box;";
         searchWrap.innerHTML = `
                 <div style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 10px;gap:7px;height:32px;box-sizing:border-box;width:100%;transition:border-color 0.15s;">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.3);flex-shrink:0;">
@@ -5025,7 +5155,7 @@
             `;
       }).join("");
       document.body.appendChild(menu);
-      const panel = triggerEl.closest('[data-testid="model-selector-panel"]') || triggerEl.closest(".sx-custom-model-panel") || document.querySelector('[data-testid="model-selector-panel"]') || triggerEl.closest('div[role="dialog"]') || triggerEl.closest(".overflow-y-auto")?.parentElement;
+      const panel = triggerEl.closest('[role="menu"]') || triggerEl.closest('[data-testid="model-selector-panel"]') || triggerEl.closest(".sx-custom-model-panel") || document.querySelector('[role="menu"]:has([data-testid="model-selector-panel"])') || document.querySelector('[data-testid="model-selector-panel"]') || triggerEl.closest('div[role="dialog"]') || triggerEl.closest(".overflow-y-auto")?.parentElement;
       const pRect = panel ? panel.getBoundingClientRect() : null;
       const tRect = triggerEl.getBoundingClientRect();
       let left = pRect ? pRect.right + 4 : tRect.right + 6;

@@ -228,6 +228,35 @@ export class UIInjector {
             .sx-preset-btn.active { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); color: #fff; font-weight: 600; }
             .sx-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,0.06); }
 
+            /* Model selector menu wrapper: unified sleek single card */
+            [role="menu"]:has([data-testid="model-selector-panel"]) {
+                background: #14151b !important;
+                border: 1px solid rgba(255, 255, 255, 0.12) !important;
+                border-radius: 10px !important;
+                box-shadow: 0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+                backdrop-filter: blur(24px) !important;
+                padding: 0 !important;
+                overflow: hidden !important;
+                width: 320px !important;
+                min-width: 320px !important;
+                max-width: 340px !important;
+            }
+
+            [role="menu"] > [data-testid="model-selector-panel"],
+            [role="menu"] [data-testid="model-selector-panel"],
+            [data-testid="model-selector-panel"] {
+                background: transparent !important;
+                border: none !important;
+                border-radius: 0 !important;
+                box-shadow: none !important;
+                backdrop-filter: none !important;
+                padding: 0 !important;
+                width: 100% !important;
+                min-width: 0 !important;
+                max-width: 100% !important;
+                transform: none !important;
+            }
+
             /* Hide native model selector items instantly */
             [data-testid="model-selector-item"]:not(.sx-custom-model-item),
             [data-testid="model-selector-panel"] [data-testid="model-selector-item"]:not(.sx-custom-model-item),
@@ -1531,18 +1560,49 @@ export class UIInjector {
         const sxModels = this.state.getModels();
         if (!sxModels || sxModels.length === 0) return;
 
-        modelPanel.style.background = '#14151b';
-        modelPanel.style.border = '1px solid rgba(255, 255, 255, 0.12)';
-        modelPanel.style.borderRadius = '10px';
-        modelPanel.style.boxShadow = '0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08)';
-        modelPanel.style.backdropFilter = 'blur(24px)';
-        modelPanel.style.width = '320px';
-        modelPanel.style.minWidth = '320px';
-        modelPanel.style.maxWidth = '340px';
-        modelPanel.style.padding = '0';
-        modelPanel.style.transition = 'transform 0.08s ease-out';
+        const menuBox = modelPanel.closest('[role="menu"]') || modelPanel.parentElement;
+        const isMenu = menuBox && menuBox !== modelPanel;
 
-        // Position model panel cleanly above the chat input box so it never covers what the user is typing
+        if (isMenu) {
+            menuBox.style.setProperty('background', '#14151b', 'important');
+            menuBox.style.setProperty('border', '1px solid rgba(255, 255, 255, 0.12)', 'important');
+            menuBox.style.setProperty('border-radius', '10px', 'important');
+            menuBox.style.setProperty('box-shadow', '0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08)', 'important');
+            menuBox.style.setProperty('backdrop-filter', 'blur(24px)', 'important');
+            menuBox.style.setProperty('padding', '0', 'important');
+            menuBox.style.setProperty('width', '320px', 'important');
+            menuBox.style.setProperty('min-width', '320px', 'important');
+            menuBox.style.setProperty('max-width', '340px', 'important');
+            menuBox.style.setProperty('overflow', 'hidden', 'important');
+            menuBox.style.setProperty('outline', 'none', 'important');
+            menuBox.style.transition = 'transform 0.08s ease-out';
+
+            modelPanel.style.setProperty('background', 'transparent', 'important');
+            modelPanel.style.setProperty('border', 'none', 'important');
+            modelPanel.style.setProperty('border-radius', '0', 'important');
+            modelPanel.style.setProperty('box-shadow', 'none', 'important');
+            modelPanel.style.setProperty('backdrop-filter', 'none', 'important');
+            modelPanel.style.setProperty('padding', '0', 'important');
+            modelPanel.style.setProperty('transform', 'none', 'important');
+            modelPanel.style.setProperty('width', '100%', 'important');
+            modelPanel.style.setProperty('min-width', '0', 'important');
+            modelPanel.style.setProperty('max-width', '100%', 'important');
+        } else {
+            modelPanel.style.background = '#14151b';
+            modelPanel.style.border = '1px solid rgba(255, 255, 255, 0.12)';
+            modelPanel.style.borderRadius = '10px';
+            modelPanel.style.boxShadow = '0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08)';
+            modelPanel.style.backdropFilter = 'blur(24px)';
+            modelPanel.style.width = '320px';
+            modelPanel.style.minWidth = '320px';
+            modelPanel.style.maxWidth = '340px';
+            modelPanel.style.padding = '0';
+            modelPanel.style.overflow = 'hidden';
+            modelPanel.style.transition = 'transform 0.08s ease-out';
+        }
+
+        // Position model menu cleanly above the chat input box so it never covers what the user is typing
+        const targetShiftBox = isMenu ? menuBox : modelPanel;
         const anchorBtn = document.querySelector('[data-testid="model-selector-trigger"]')
                        || document.querySelector('[data-testid="model-selector-button"]')
                        || document.querySelector('button[aria-haspopup="dialog"]')
@@ -1555,14 +1615,14 @@ export class UIInjector {
 
         const adjustPosition = () => {
             try {
-                if (!promptBox || !modelPanel.isConnected) return;
+                if (!promptBox || !targetShiftBox.isConnected) return;
                 const boxRect = promptBox.getBoundingClientRect();
-                const mRect = modelPanel.getBoundingClientRect();
+                const mRect = targetShiftBox.getBoundingClientRect();
                 if (mRect.top < boxRect.top && mRect.bottom > boxRect.top - 4) {
                     const shiftY = mRect.bottom - (boxRect.top - 8);
                     const safeShift = Math.min(shiftY, Math.max(0, mRect.top - 12));
                     if (safeShift > 0 && safeShift < 180) {
-                        modelPanel.style.transform = `translateY(-${safeShift}px)`;
+                        targetShiftBox.style.transform = `translateY(-${safeShift}px)`;
                     }
                 }
             } catch(e) {}
@@ -1583,7 +1643,7 @@ export class UIInjector {
         if (!searchWrap) {
             searchWrap = document.createElement('div');
             searchWrap.id = 'sx-model-search-wrap';
-            searchWrap.style.cssText = 'padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); background: #14151b !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box; border-top-left-radius: 10px; border-top-right-radius: 10px;';
+            searchWrap.style.cssText = 'padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); background: #14151b !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box;';
             searchWrap.innerHTML = `
                 <div style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 10px;gap:7px;height:32px;box-sizing:border-box;width:100%;transition:border-color 0.15s;">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.3);flex-shrink:0;">
@@ -2173,9 +2233,11 @@ export class UIInjector {
 
         document.body.appendChild(menu);
 
-        // Position directly outside on the right edge of modelPanel (Image 1 & 3 style)
-        const panel = triggerEl.closest('[data-testid="model-selector-panel"]')
+        // Position directly outside on the right edge of model menu (Image 1 & 3 style)
+        const panel = triggerEl.closest('[role="menu"]')
+                   || triggerEl.closest('[data-testid="model-selector-panel"]')
                    || triggerEl.closest('.sx-custom-model-panel')
+                   || document.querySelector('[role="menu"]:has([data-testid="model-selector-panel"])')
                    || document.querySelector('[data-testid="model-selector-panel"]')
                    || triggerEl.closest('div[role="dialog"]')
                    || triggerEl.closest('.overflow-y-auto')?.parentElement;
