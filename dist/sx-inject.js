@@ -3118,6 +3118,10 @@
                   }
                   if (n.matches?.('[role="dialog"]') || n.closest?.('[role="dialog"]') || n.querySelector?.('[role="dialog"]')) {
                     this.trySXModelsSettingsInject();
+                    this.trySXAppearanceSettingsInject();
+                  }
+                  if (n.matches?.('[role="listbox"]') || n.querySelector?.('[role="listbox"]') || n.closest?.('[role="listbox"]')) {
+                    this.trySXAppearanceSettingsInject();
                   }
                 }
               }
@@ -4231,14 +4235,104 @@
     }
     trySXAppearanceSettingsInject() {
       const dialog = document.querySelector('[role="dialog"]');
-      if (!dialog) return;
-      const nativeCombos = dialog.querySelectorAll('button[role="combobox"]');
-      nativeCombos.forEach((b) => {
-        if (b.style.display === "none") b.style.removeProperty("display");
-      });
-      const nativeListbox = document.querySelector('[role="listbox"]');
-      if (nativeListbox && nativeListbox.style.display === "none") {
-        nativeListbox.style.removeProperty("display");
+      if (dialog) {
+        const nativeCombos = dialog.querySelectorAll('button[role="combobox"]');
+        nativeCombos.forEach((b) => {
+          if (b.style.display === "none") b.style.removeProperty("display");
+        });
+        const all = Array.from(dialog.querySelectorAll("*"));
+        const darkThemeH3 = all.find((el) => el.children.length === 0 && (el.textContent.trim() === "Dark Theme" || el.textContent.trim() === "Koyu Tema"));
+        if (darkThemeH3) {
+          const card = darkThemeH3.closest(".space-y-2") || darkThemeH3.closest(".border") || darkThemeH3.parentElement?.parentElement;
+          if (card && !card.querySelector("#sx-quick-presets-bar")) {
+            const pillBar = document.createElement("div");
+            pillBar.id = "sx-quick-presets-bar";
+            pillBar.style.cssText = "display:flex;align-items:center;gap:5px;padding:6px 10px;margin:6px 0 8px 0;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.07);border-radius:8px;overflow-x:auto;flex-wrap:wrap;box-sizing:border-box;";
+            const label = document.createElement("span");
+            label.style.cssText = "font-size:11px;font-weight:700;color:#38bdf8;display:flex;align-items:center;gap:3px;margin-right:4px;flex-shrink:0;user-select:none;";
+            label.innerHTML = "\u26A1 <span>SX:</span>";
+            pillBar.appendChild(label);
+            SX_THEME_PRESETS.forEach((p) => {
+              const pill = document.createElement("button");
+              pill.type = "button";
+              pill.className = "sx-preset-pill";
+              pill.style.cssText = "display:inline-flex;align-items:center;gap:4.5px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);padding:3px 8px;border-radius:5px;cursor:pointer;font-size:11px;font-weight:500;color:rgba(255,255,255,0.85);transition:all 0.15s ease;flex-shrink:0;user-select:none;font-family:inherit;";
+              pill.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:${p.primary};box-shadow:0 0 4px ${p.primary}88;"></span>${p.name.replace("SX ", "")}`;
+              pill.addEventListener("mouseenter", () => {
+                pill.style.background = "rgba(255,255,255,0.1)";
+                pill.style.borderColor = p.primary;
+                pill.style.color = "#ffffff";
+              });
+              pill.addEventListener("mouseleave", () => {
+                pill.style.background = "rgba(255,255,255,0.05)";
+                pill.style.borderColor = "rgba(255,255,255,0.1)";
+                pill.style.color = "rgba(255,255,255,0.85)";
+              });
+              pill.addEventListener("click", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.theme.applyPreset(p, true);
+              });
+              pillBar.appendChild(pill);
+            });
+            const presetRow = Array.from(card.querySelectorAll("*")).find((el) => el.textContent.trim() === "Preset" || el.textContent.trim() === "Haz\u0131r Ayar")?.closest(".py-2") || card.querySelector('button[role="combobox"]')?.closest(".flex");
+            if (presetRow && presetRow.parentElement) {
+              presetRow.parentElement.insertBefore(pillBar, presetRow.nextElementSibling);
+            } else {
+              card.appendChild(pillBar);
+            }
+          }
+        }
+      }
+      const listbox = document.querySelector('[role="listbox"]');
+      if (listbox && !listbox.querySelector(".sx-custom-preset-option")) {
+        const allOpts = Array.from(listbox.querySelectorAll('[role="option"], [data-radix-collection-item]'));
+        const isThemeListbox = allOpts.some((o) => {
+          const txt = o.innerText || o.textContent || "";
+          return /Dark|Light|Tokyo|Ocean|Matrix|Default|Tema/i.test(txt);
+        });
+        if (isThemeListbox) {
+          const targetContainer = listbox.querySelector("[data-radix-select-viewport]") || listbox;
+          const sep = document.createElement("div");
+          sep.className = "sx-preset-separator";
+          sep.style.cssText = "height:1px;background:rgba(255,255,255,0.08);margin:5px 6px;";
+          targetContainer.appendChild(sep);
+          const hdr = document.createElement("div");
+          hdr.className = "sx-preset-header";
+          hdr.style.cssText = "padding:6px 10px 3px 10px;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#38bdf8;display:flex;align-items:center;gap:4px;user-select:none;";
+          hdr.innerHTML = "<span>\u26A1</span> <span>SX Custom Presets</span>";
+          targetContainer.appendChild(hdr);
+          SX_THEME_PRESETS.forEach((p) => {
+            const opt = document.createElement("div");
+            opt.setAttribute("role", "option");
+            opt.className = "sx-custom-preset-option";
+            opt.style.cssText = "padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12.5px;border-radius:6px;transition:background 0.12s ease;margin:1px 4px;user-select:none;color:rgba(255,255,255,0.85);";
+            opt.innerHTML = `
+                        <span style="width:8px;height:8px;border-radius:50%;background:${p.primary};box-shadow:0 0 6px ${p.primary}88;flex-shrink:0;"></span>
+                        <span class="truncate" style="font-weight:500;color:rgba(255,255,255,0.92);flex:1;">${p.name}</span>
+                        <span style="font-size:9.5px;color:${p.primary};background:${p.primary}18;border:1px solid ${p.primary}33;padding:1px 6px;border-radius:4px;font-weight:700;flex-shrink:0;">${p.badge}</span>
+                    `;
+            opt.addEventListener("mouseenter", () => {
+              opt.style.background = "rgba(255,255,255,0.08)";
+              opt.style.color = "#ffffff";
+            });
+            opt.addEventListener("mouseleave", () => {
+              opt.style.background = "transparent";
+              opt.style.color = "rgba(255,255,255,0.85)";
+            });
+            opt.addEventListener("click", (e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              this.theme.applyPreset(p, true);
+              const combo = document.querySelector('[role="dialog"] button[role="combobox"] span') || document.querySelector('button[role="combobox"][data-state="open"] span');
+              if (combo) combo.innerText = p.name;
+              const openCombo = document.querySelector('button[role="combobox"][data-state="open"]');
+              if (openCombo) openCombo.click();
+              else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+            });
+            targetContainer.appendChild(opt);
+          });
+        }
       }
     }
     hookDOM() {
