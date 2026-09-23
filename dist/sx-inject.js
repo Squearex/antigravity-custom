@@ -267,12 +267,16 @@
     _buildUrl(path) {
       if (path.startsWith("http://") || path.startsWith("https://")) return path;
       let cleanPath = path;
-      if (this.baseUrl.endsWith("/sx") && cleanPath.startsWith("/sx/")) {
-        cleanPath = cleanPath.slice(3);
-      } else if (!cleanPath.startsWith("/")) {
+      const base = this.baseUrl.replace(/\/+$/, "");
+      if (base.endsWith("/sx")) {
+        while (cleanPath.startsWith("/sx/") || cleanPath === "/sx") {
+          cleanPath = cleanPath.slice(3);
+        }
+      }
+      if (!cleanPath.startsWith("/")) {
         cleanPath = "/" + cleanPath;
       }
-      return `${this.baseUrl}${cleanPath}`;
+      return `${base}${cleanPath}`;
     }
     async get(path) {
       const url = this._buildUrl(path);
@@ -3059,11 +3063,16 @@
         }
         const settingsTarget = e.target.closest('[role="dialog"] [role="tab"], [role="dialog"] button, [data-testid*="settings"], button[aria-label*="Settings" i]');
         if (settingsTarget) {
+          const dialog = document.querySelector('[role="dialog"]');
+          if (dialog && /model/i.test(settingsTarget.textContent || "")) {
+            dialog.classList.add("sx-models-tab-active");
+          } else if (dialog && settingsTarget.getAttribute("role") === "tab") {
+            dialog.classList.remove("sx-models-tab-active");
+          }
           this.trySXModelsSettingsInject();
           requestAnimationFrame(() => this.trySXModelsSettingsInject());
-          setTimeout(() => this.trySXModelsSettingsInject(), 15);
-          setTimeout(() => this.trySXModelsSettingsInject(), 40);
-          setTimeout(() => this.trySXModelsSettingsInject(), 100);
+          setTimeout(() => this.trySXModelsSettingsInject(), 10);
+          setTimeout(() => this.trySXModelsSettingsInject(), 35);
         }
       }, true);
       try {
@@ -3184,16 +3193,17 @@
             .sx-preset-btn.active { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); color: #fff; font-weight: 600; }
             .sx-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,0.06); }
 
-            /* Instant 0ms suppression of native model items & headers in model selector panel */
-            [data-testid="model-selector-panel"] [data-testid="model-selector-item"]:not(.sx-custom-model-item) {
-                display: none !important;
-            }
-            [data-testid="model-selector-panel"] [data-testid="model-selector-header"] {
+            /* Instant 0ms global suppression of native model items & headers */
+            [data-testid="model-selector-item"]:not(.sx-custom-model-item),
+            [data-testid="model-selector-panel"] [data-testid="model-selector-item"]:not(.sx-custom-model-item),
+            [data-testid="model-selector-header"] {
                 display: none !important;
             }
 
-            /* Instant suppression of native settings panel content when custom SX content is mounted */
-            [role="dialog"] div:has(#sx-content-wrapper) > *:not(#sx-content-wrapper) {
+            /* Instant suppression of native settings panel content when custom SX content is mounted or active */
+            [role="dialog"] div:has(#sx-content-wrapper) > *:not(#sx-content-wrapper),
+            [role="dialog"].sx-models-tab-active [role="tabpanel"] > *:not(#sx-content-wrapper),
+            [role="dialog"]:has([role="tab"][aria-selected="true"][data-tab-name="models"]) [role="tabpanel"] > *:not(#sx-content-wrapper) {
                 display: none !important;
             }
 
@@ -3830,31 +3840,20 @@
       this._lastSettingsScan = scanTs;
       const activeTab = dialog.querySelector('[role="tab"][aria-selected="true"], [role="tab"].active, button[data-state="active"]');
       const isModelsTabActive = activeTab && /models/i.test(activeTab.textContent || "");
-      let rightPanel = null;
-      const MARKERS = ["Gemini Models", "Model Credits", "Your Plan"];
-      outer: for (const marker of MARKERS) {
-        for (const el of Array.from(dialog.querySelectorAll("*"))) {
-          if (el.textContent && el.textContent.trim() === marker) {
-            let anc = el.parentElement;
-            while (anc && anc !== dialog) {
-              const cs = window.getComputedStyle(anc);
-              if (cs.overflowY === "auto" || cs.overflowY === "scroll") {
-                rightPanel = anc;
-                break;
-              }
-              anc = anc.parentElement;
-            }
-            if (rightPanel) break outer;
-          }
-        }
+      if (isModelsTabActive) {
+        dialog.classList.add("sx-models-tab-active");
+      } else if (activeTab && activeTab.getAttribute("role") === "tab") {
+        dialog.classList.remove("sx-models-tab-active");
       }
-      if (!rightPanel && isModelsTabActive) {
-        const scrollables = Array.from(dialog.querySelectorAll("div")).filter((el) => {
-          const cs = window.getComputedStyle(el);
-          return (cs.overflowY === "auto" || cs.overflowY === "scroll") && el.clientHeight > 80;
-        });
-        if (scrollables.length > 0) {
-          rightPanel = scrollables[scrollables.length - 1];
+      let rightPanel = dialog.querySelector('[role="tabpanel"]') || dialog.querySelector(".overflow-y-auto") || dialog.querySelector("main");
+      if (!rightPanel) {
+        const MARKERS = ["Gemini Models", "Model Credits", "Your Plan"];
+        for (const marker of MARKERS) {
+          const heading = Array.from(dialog.querySelectorAll("h1, h2, h3, h4, div, span")).find((el) => el.textContent && el.textContent.trim() === marker);
+          if (heading) {
+            rightPanel = heading.closest('[role="tabpanel"]') || heading.closest(".overflow-y-auto") || heading.parentElement?.parentElement;
+            if (rightPanel) break;
+          }
         }
       }
       if (!rightPanel) return;

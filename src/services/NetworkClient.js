@@ -11,12 +11,16 @@ export class NetworkClient {
     _buildUrl(path) {
         if (path.startsWith('http://') || path.startsWith('https://')) return path;
         let cleanPath = path;
-        if (this.baseUrl.endsWith('/sx') && cleanPath.startsWith('/sx/')) {
-            cleanPath = cleanPath.slice(3);
-        } else if (!cleanPath.startsWith('/')) {
+        const base = this.baseUrl.replace(/\/+$/, '');
+        if (base.endsWith('/sx')) {
+            while (cleanPath.startsWith('/sx/') || cleanPath === '/sx') {
+                cleanPath = cleanPath.slice(3);
+            }
+        }
+        if (!cleanPath.startsWith('/')) {
             cleanPath = '/' + cleanPath;
         }
-        return `${this.baseUrl}${cleanPath}`;
+        return `${base}${cleanPath}`;
     }
 
     async get(path) {

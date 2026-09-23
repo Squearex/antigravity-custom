@@ -133,9 +133,9 @@ function bumpStreamProgress(convKey, chars) {
 
 // Agent loop breaker: models sometimes call the same tool with identical args
 // over and over (e.g. view_file with bad params), burning the whole context.
-// Completed tool calls are tracked per conversation; on 5 consecutive identical
-const LOOP_GUARD_THRESHOLD = 5;
-const LOOP_GUARD_REWARN_EVERY = 10;
+// Completed tool calls are tracked per conversation; on 3 consecutive identical
+const LOOP_GUARD_THRESHOLD = 3;
+const LOOP_GUARD_REWARN_EVERY = 5;
 const READ_ONLY_TOOLS = new Set([
     'view_file', 'grep_search', 'list_dir', 'find_by_name',
     'read_url_content', 'list_files', 'read_file', 'manage_subagents', 'read_command',
@@ -161,7 +161,7 @@ function recordToolCall(convKey, name, argsStr) {
         } else if (READ_ONLY_TOOLS.has(toolNameStr)) {
             const rCount = (loopGuardReadOnlyCounts[convKey] || 0) + 1;
             loopGuardReadOnlyCounts[convKey] = rCount;
-            if (rCount >= 10 && rCount % 5 === 0) {
+            if (rCount >= 8 && rCount % 4 === 0) {
                 loopGuardPending[convKey] = {
                     name: 'read_only_loop',
                     args: `${toolNameStr} (art arda ${rCount} okuma)`,
@@ -1029,7 +1029,20 @@ function sanitizeOpenAIMessages(messages) {
         cleaned.push({ role: 'user', content: 'Hello' });
     }
 
-    return cleaned;
+    // Pass 2: merge consecutive user messages to satisfy upstream providers requiring role alternation
+    const merged = [];
+    for (const m of cleaned) {
+        const prev = merged[merged.length - 1];
+        if (prev && m && prev.role === m.role && !m.tool_calls && !prev.tool_calls && m.role === 'user') {
+            const c1 = typeof prev.content === 'string' ? prev.content : JSON.stringify(prev.content || '');
+            const c2 = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
+            prev.content = c1 + '\n\n' + c2;
+        } else {
+            merged.push(m);
+        }
+    }
+
+    return merged;
 }
 
 function sanitizeAnthropicMessages(messages) {
