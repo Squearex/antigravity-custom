@@ -3160,7 +3160,7 @@
           const targetTxt = (settingsTarget.textContent || "").trim().toLowerCase();
           if (targetTxt.includes("model")) {
             this._selectedSettingsTab = "models";
-          } else if (["general", "application", "appearance", "customization", "browser", "conversation", "shortcut", "feedback"].some((k) => targetTxt.includes(k))) {
+          } else if (["general", "genel", "application", "uygulama", "appearance", "g\xF6r\xFCn\xFCm", "customization", "\xF6zelle\u015Ftirme", "browser", "taray\u0131c\u0131", "conversation", "sohbet", "shortcut", "k\u0131sayol", "feedback", "geri bildirim"].some((k) => targetTxt.includes(k))) {
             this._selectedSettingsTab = targetTxt;
           }
           this.trySXModelsSettingsInject();
@@ -4016,113 +4016,102 @@
       setTimeout(() => overlay.querySelector("#sx-m-prov").focus(), 50);
     }
     trySXModelsSettingsInject() {
-      const isSettingsDialog = (d) => {
-        if (!d || d.nodeType !== 1) return false;
-        const text = (d.textContent || "").toLowerCase();
-        if (text.includes("delete conversation") || text.includes("delete this") || text.includes("silmek istedi\u011Finize")) return false;
-        const hasGeneral = text.includes("general") || text.includes("genel");
-        const hasOtherTab = text.includes("appearance") || text.includes("g\xF6r\xFCn\xFCm") || text.includes("shortcuts") || text.includes("customization") || text.includes("models");
-        return hasGeneral && hasOtherTab;
-      };
-      document.querySelectorAll("#sx-content-wrapper").forEach((wrap) => {
-        const parentDialog = wrap.closest('[role="dialog"]');
-        if (!parentDialog || !isSettingsDialog(parentDialog)) {
-          const parent = wrap.parentElement;
-          if (parent) {
-            Array.from(parent.children).forEach((c) => c.style.removeProperty("display"));
+      try {
+        const isSettingsDialog = (d) => {
+          if (!d || d.nodeType !== 1) return false;
+          const text = (d.textContent || "").toLowerCase();
+          if (text.includes("delete conversation") || text.includes("delete this") || text.includes("silmek istedi\u011Finize")) return false;
+          return text.includes("general") || text.includes("genel") || text.includes("appearance") || text.includes("g\xF6r\xFCn\xFCm") || text.includes("models") || text.includes("shortcuts") || !!d.querySelector('[role="tablist"], [role="tab"], nav');
+        };
+        document.querySelectorAll("#sx-content-wrapper").forEach((wrap) => {
+          const parentDialog = wrap.closest('[role="dialog"]');
+          if (!parentDialog || !isSettingsDialog(parentDialog)) {
+            const parent = wrap.parentElement;
+            if (parent) {
+              Array.from(parent.children).forEach((c) => c.style.removeProperty("display"));
+            }
+            wrap.remove();
           }
-          wrap.remove();
+        });
+        const allDialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+        const dialog = allDialogs.find(isSettingsDialog);
+        if (!dialog) {
+          this._selectedSettingsTab = null;
+          return;
         }
-      });
-      const allDialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
-      const dialog = allDialogs.find(isSettingsDialog);
-      if (!dialog) {
-        this._selectedSettingsTab = null;
-        return;
-      }
-      this.injectGlobalStyles();
-      const activeTabBtn = dialog.querySelector('button[aria-selected="true"], button[data-state="active"], [role="tab"][aria-selected="true"], [role="tab"].active');
-      const activeTabTxt = (activeTabBtn?.textContent || "").trim().toLowerCase();
-      const isExplicitOtherTab = activeTabTxt && ["general", "application", "appearance", "customization", "browser", "shortcut"].some((k) => activeTabTxt.includes(k));
-      const existingWrap = dialog.querySelector("#sx-content-wrapper");
-      if (isExplicitOtherTab) {
-        if (existingWrap) {
-          const rp = existingWrap.parentElement;
-          if (rp) {
-            Array.from(rp.children).forEach((c) => {
-              if (c.id === "sx-content-wrapper") {
-                c.remove();
-              } else {
-                c.style.removeProperty("display");
-              }
-            });
-          } else {
+        this.injectGlobalStyles();
+        const tabList = dialog.querySelector('[role="tablist"], nav, aside');
+        let rightPanel = dialog.querySelector('[role="tabpanel"]');
+        if (!rightPanel && tabList && tabList.parentElement) {
+          const siblings = Array.from(tabList.parentElement.children).filter((el) => el !== tabList);
+          if (siblings.length === 1) {
+            rightPanel = siblings[0];
+          }
+        }
+        if (!rightPanel) {
+          const scrollContainers = Array.from(dialog.querySelectorAll(".overflow-y-auto, main"));
+          rightPanel = scrollContainers.find((c) => (!tabList || !c.contains(tabList)) && c !== dialog);
+        }
+        if (!rightPanel || rightPanel === dialog || tabList && rightPanel.contains(tabList)) return;
+        const activeTabBtn = dialog.querySelector('[role="tab"][aria-selected="true"], [role="tab"][data-state="active"], button[aria-selected="true"], button[data-state="active"], nav button.active');
+        let activeTabTxt = (activeTabBtn?.textContent || "").trim().toLowerCase();
+        if (!activeTabTxt && this._selectedSettingsTab) {
+          activeTabTxt = this._selectedSettingsTab;
+        }
+        const isExplicitOtherTab = ["general", "genel", "appearance", "g\xF6r\xFCn\xFCm", "application", "uygulama", "shortcut", "k\u0131sayol", "customization", "\xF6zelle\u015Ftirme", "browser", "taray\u0131c\u0131"].some((k) => activeTabTxt.includes(k));
+        const panelText = (rightPanel.textContent || "").toLowerCase();
+        const hasNativeModelsText = ["manage your model quota", "model credits", "your plan", "custom quota"].some((m) => panelText.includes(m));
+        const isModelsActive = !isExplicitOtherTab && (activeTabTxt.includes("model") || hasNativeModelsText || this._selectedSettingsTab === "models");
+        const existingWrap = dialog.querySelector("#sx-content-wrapper");
+        if (!isModelsActive) {
+          if (existingWrap) {
+            const rp = existingWrap.parentElement;
             existingWrap.remove();
+            if (rp) {
+              Array.from(rp.children).forEach((c) => c.style.removeProperty("display"));
+            }
           }
+          return;
         }
-        return;
-      }
-      if (existingWrap) {
-        const rp = existingWrap.parentElement;
-        if (rp) {
-          Array.from(rp.children).forEach((c) => {
-            if (c.id !== "sx-content-wrapper" && c.style.display !== "none") {
+        if (existingWrap && rightPanel.contains(existingWrap)) {
+          Array.from(rightPanel.children).forEach((c) => {
+            if (c.id !== "sx-content-wrapper") {
               c.style.setProperty("display", "none", "important");
+            } else {
+              c.style.removeProperty("display");
             }
           });
+          return;
         }
-        return;
-      }
-      const fullContent = (dialog.textContent || "").toLowerCase();
-      const MARKERS = ["manage your model quota", "model credits", "your plan", "enable ai credit", "custom quota", "models & usage"];
-      const hasModelsContent = MARKERS.some((m) => fullContent.includes(m)) || activeTabTxt && activeTabTxt.includes("model");
-      if (!hasModelsContent) {
-        return;
-      }
-      const markerEl = Array.from(dialog.querySelectorAll("h1, h2, h3, h4, div, span, p")).find((el) => {
-        const txt = (el.textContent || "").trim().toLowerCase();
-        return txt === "models & usage" || txt === "manage your model quota and credits." || txt === "model credits" || txt === "manage your model quota" || txt === "your plan" || txt === "custom quota";
-      });
-      if (!markerEl) return;
-      let rightPanel = markerEl;
-      while (rightPanel && rightPanel.parentElement && rightPanel.parentElement !== dialog) {
-        const parentText = (rightPanel.parentElement.textContent || "").toLowerCase();
-        if (parentText.includes("general") && (parentText.includes("appearance") || parentText.includes("shortcuts"))) {
-          break;
-        }
-        rightPanel = rightPanel.parentElement;
-      }
-      if (!rightPanel || rightPanel === dialog) return;
-      const rpText = (rightPanel.textContent || "").toLowerCase();
-      if (rpText.includes("general") && rpText.includes("appearance")) return;
-      Array.from(rightPanel.children).forEach((c) => {
-        c.style.setProperty("display", "none", "important");
-      });
-      const sxWrap = document.createElement("div");
-      sxWrap.id = "sx-content-wrapper";
-      sxWrap.style.cssText = "padding: 0 32px 32px 32px; box-sizing: border-box; width: 100%;";
-      rightPanel.appendChild(sxWrap);
-      const sxHeader = document.createElement("div");
-      sxHeader.id = "sx-custom-engine-header";
-      sxHeader.innerHTML = `
+        if (existingWrap) existingWrap.remove();
+        Array.from(rightPanel.children).forEach((c) => {
+          c.style.setProperty("display", "none", "important");
+        });
+        const sxWrap = document.createElement("div");
+        sxWrap.id = "sx-content-wrapper";
+        sxWrap.style.cssText = "padding: 0 32px 32px 32px; box-sizing: border-box; width: 100%; height: 100%; overflow-y: auto;";
+        rightPanel.appendChild(sxWrap);
+        const sxHeader = document.createElement("div");
+        sxHeader.id = "sx-custom-engine-header";
+        sxHeader.innerHTML = `
             <div style="padding:20px 0 14px 0;">
                 <div style="font-size:22px;font-weight:700;color:rgba(255,255,255,0.92);letter-spacing:-0.5px;">Models &amp; Usage</div>
                 <div style="font-size:13px;color:rgba(255,255,255,0.4);margin-top:4px;">Do\u011Frudan custom provider ba\u011Flant\u0131s\u0131 aktif.</div>
             </div>
         `;
-      sxWrap.appendChild(sxHeader);
-      const provSec = document.createElement("div");
-      provSec.id = "sx-providers-section";
-      provSec.className = "sx-section";
-      sxWrap.appendChild(provSec);
-      const modelsSec = document.createElement("div");
-      modelsSec.id = "sx-models-section";
-      modelsSec.className = "sx-section";
-      sxWrap.appendChild(modelsSec);
-      const renderProviders = () => {
-        const providers = this.state.getProviders();
-        const models = this.state.getModels();
-        let html = `
+        sxWrap.appendChild(sxHeader);
+        const provSec = document.createElement("div");
+        provSec.id = "sx-providers-section";
+        provSec.className = "sx-section";
+        sxWrap.appendChild(provSec);
+        const modelsSec = document.createElement("div");
+        modelsSec.id = "sx-models-section";
+        modelsSec.className = "sx-section";
+        sxWrap.appendChild(modelsSec);
+        const renderProviders = () => {
+          const providers = this.state.getProviders();
+          const models = this.state.getModels();
+          let html = `
                 <div class="sx-section-header">
                     <div style="display:flex;align-items:center;gap:6px;">
                         <div class="sx-section-title">Providers</div>
@@ -4131,12 +4120,12 @@
                     <button type="button" class="sx-btn sx-btn-primary" id="sx-add-prov-btn">+ Add Provider</button>
                 </div>
             `;
-        if (!providers.length) {
-          html += '<div class="sx-empty-hint">Hen\xFCz provider eklenmedi.<br>OpenRouter, Anthropic veya OpenAI uyumlu bir sa\u011Flay\u0131c\u0131 ekleyin.</div>';
-        } else {
-          providers.forEach((p) => {
-            const count = models.filter((m) => m.providerId === p.id).length;
-            html += `
+          if (!providers.length) {
+            html += '<div class="sx-empty-hint">Hen\xFCz provider eklenmedi.<br>OpenRouter, Anthropic veya OpenAI uyumlu bir sa\u011Flay\u0131c\u0131 ekleyin.</div>';
+          } else {
+            providers.forEach((p) => {
+              const count = models.filter((m) => m.providerId === p.id).length;
+              html += `
                         <div class="sx-card">
                             <div class="sx-card-dot" style="background:#38bdf8;"></div>
                             <div class="sx-card-info">
@@ -4153,68 +4142,68 @@
                             </div>
                         </div>
                     `;
-          });
-        }
-        provSec.innerHTML = html;
-        provSec.querySelector("#sx-add-prov-btn").onclick = () => this.openProviderModal(null, () => {
-          renderProviders();
-          renderModels();
-        });
-        provSec.querySelectorAll(".test-p").forEach((b) => {
-          b.onclick = async (e) => {
-            e.stopPropagation();
-            const origText = b.textContent;
-            b.disabled = true;
-            b.textContent = "\u23F3...";
-            try {
-              const res = await this.network.post("/sx/test-provider", { providerId: b.dataset.id });
-              if (res && res.ok) {
-                b.textContent = `\u2713 ${res.latency || 0}ms`;
-                b.style.color = "#86efac";
-                b.style.borderColor = "rgba(134,239,172,0.4)";
-              } else {
-                b.textContent = `\u2715 ${res?.status || "Hata"}`;
-                b.style.color = "#f87171";
-                b.style.borderColor = "rgba(248,113,113,0.4)";
-              }
-            } catch (err) {
-              b.textContent = "\u2715 Hata";
-              b.style.color = "#f87171";
-            }
-            setTimeout(() => {
-              b.disabled = false;
-              b.textContent = origText;
-              b.style.color = "";
-              b.style.borderColor = "";
-            }, 3500);
-          };
-        });
-        provSec.querySelectorAll(".edit-p").forEach((b) => {
-          b.onclick = () => {
-            const p = this.state.getProviders().find((x) => x.id === b.dataset.id);
-            if (p) this.openProviderModal(p, () => {
-              renderProviders();
-              renderModels();
             });
-          };
-        });
-        provSec.querySelectorAll(".del-p").forEach((b) => {
-          b.onclick = () => {
-            if (!confirm("Bu provider ve modellerini sil?")) return;
-            this.state.setProviders(this.state.getProviders().filter((x) => x.id !== b.dataset.id));
-            this.state.setModels(this.state.getModels().filter((x) => x.providerId !== b.dataset.id));
+          }
+          provSec.innerHTML = html;
+          provSec.querySelector("#sx-add-prov-btn").onclick = () => this.openProviderModal(null, () => {
             renderProviders();
             renderModels();
-          };
-        });
-      };
-      const renderModels = () => {
-        const allModels = this.state.getModels();
-        const providers = this.state.getProviders();
-        const searchQuery = (this._modelSearchQuery || "").toLowerCase().trim();
-        const filteredModels = searchQuery ? allModels.filter((m) => (m.name || "").toLowerCase().includes(searchQuery) || (m.modelId || "").toLowerCase().includes(searchQuery)) : allModels;
-        const subagentCount = allModels.filter((m) => m.isSubagent).length;
-        let html = `
+          });
+          provSec.querySelectorAll(".test-p").forEach((b) => {
+            b.onclick = async (e) => {
+              e.stopPropagation();
+              const origText = b.textContent;
+              b.disabled = true;
+              b.textContent = "\u23F3...";
+              try {
+                const res = await this.network.post("/sx/test-provider", { providerId: b.dataset.id });
+                if (res && res.ok) {
+                  b.textContent = `\u2713 ${res.latency || 0}ms`;
+                  b.style.color = "#86efac";
+                  b.style.borderColor = "rgba(134,239,172,0.4)";
+                } else {
+                  b.textContent = `\u2715 ${res?.status || "Hata"}`;
+                  b.style.color = "#f87171";
+                  b.style.borderColor = "rgba(248,113,113,0.4)";
+                }
+              } catch (err) {
+                b.textContent = "\u2715 Hata";
+                b.style.color = "#f87171";
+              }
+              setTimeout(() => {
+                b.disabled = false;
+                b.textContent = origText;
+                b.style.color = "";
+                b.style.borderColor = "";
+              }, 3500);
+            };
+          });
+          provSec.querySelectorAll(".edit-p").forEach((b) => {
+            b.onclick = () => {
+              const p = this.state.getProviders().find((x) => x.id === b.dataset.id);
+              if (p) this.openProviderModal(p, () => {
+                renderProviders();
+                renderModels();
+              });
+            };
+          });
+          provSec.querySelectorAll(".del-p").forEach((b) => {
+            b.onclick = () => {
+              if (!confirm("Bu provider ve modellerini sil?")) return;
+              this.state.setProviders(this.state.getProviders().filter((x) => x.id !== b.dataset.id));
+              this.state.setModels(this.state.getModels().filter((x) => x.providerId !== b.dataset.id));
+              renderProviders();
+              renderModels();
+            };
+          });
+        };
+        const renderModels = () => {
+          const allModels = this.state.getModels();
+          const providers = this.state.getProviders();
+          const searchQuery = (this._modelSearchQuery || "").toLowerCase().trim();
+          const filteredModels = searchQuery ? allModels.filter((m) => (m.name || "").toLowerCase().includes(searchQuery) || (m.modelId || "").toLowerCase().includes(searchQuery)) : allModels;
+          const subagentCount = allModels.filter((m) => m.isSubagent).length;
+          let html = `
                 <div class="sx-section-header">
                     <div style="display:flex;align-items:center;gap:6px;">
                         <div class="sx-section-title">Models</div>
@@ -4229,33 +4218,33 @@
                     <input type="text" id="sx-models-search-input" value="${this.sxEsc(this._modelSearchQuery || "")}" placeholder="\u{1F50D} Model ad\u0131 veya ID filtrele..." style="width:100%;height:32px;box-sizing:border-box;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:0 10px;font-size:12px;color:#ffffff;outline:none;transition:border-color 0.15s ease;" />
                 </div>
             `;
-        if (!filteredModels.length) {
-          html += searchQuery ? `<div class="sx-empty-hint">"${this.sxEsc(searchQuery)}" ile e\u015Fle\u015Fen model bulunamad\u0131.</div>` : '<div class="sx-empty-hint">Hen\xFCz model eklenmedi.<br>Yukar\u0131dan bir provider ekleyip model tan\u0131mlay\u0131n.</div>';
-        } else {
-          const grouped = /* @__PURE__ */ new Map();
-          filteredModels.forEach((m) => {
-            const p = providers.find((x) => x.id === m.providerId);
-            const pName = p ? p.name : "Di\u011Fer / Tan\u0131ms\u0131z";
-            if (!grouped.has(pName)) grouped.set(pName, []);
-            grouped.get(pName).push(m);
-          });
-          grouped.forEach((pModels, pName) => {
-            html += `
+          if (!filteredModels.length) {
+            html += searchQuery ? `<div class="sx-empty-hint">"${this.sxEsc(searchQuery)}" ile e\u015Fle\u015Fen model bulunamad\u0131.</div>` : '<div class="sx-empty-hint">Hen\xFCz model eklenmedi.<br>Yukar\u0131dan bir provider ekleyip model tan\u0131mlay\u0131n.</div>';
+          } else {
+            const grouped = /* @__PURE__ */ new Map();
+            filteredModels.forEach((m) => {
+              const p = providers.find((x) => x.id === m.providerId);
+              const pName = p ? p.name : "Di\u011Fer / Tan\u0131ms\u0131z";
+              if (!grouped.has(pName)) grouped.set(pName, []);
+              grouped.get(pName).push(m);
+            });
+            grouped.forEach((pModels, pName) => {
+              html += `
                         <div class="sx-provider-group-header" style="margin:14px 0 8px 0;padding-bottom:5px;border-bottom:1px solid rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:space-between;">
                             <span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.85);text-transform:uppercase;letter-spacing:0.5px;">${this.sxEsc(pName)}</span>
                             <span style="font-size:10.5px;color:rgba(255,255,255,0.45);font-weight:600;">${pModels.length} model</span>
                         </div>
                         <div class="sx-models-list" style="margin-bottom:12px;">
                     `;
-            pModels.forEach((m) => {
-              const ctxTag = this.models.formatContextSize(m.contextLength);
-              const badgeBits = [];
-              if (ctxTag) badgeBits.push(`<span style="font-size:9.5px;font-weight:700;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.2);padding:0 5px;border-radius:4px;">${ctxTag}</span>`);
-              if (this.models.isVisionModel(m)) badgeBits.push('<span style="font-size:9.5px;font-weight:600;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0 5px;border-radius:4px;">Vision</span>');
-              if (m.supportsTools === true) badgeBits.push('<span style="font-size:9.5px;font-weight:600;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0 5px;border-radius:4px;">Tools</span>');
-              const isSub = !!m.isSubagent;
-              const subStyle = isSub ? "background:rgba(56,189,248,0.18);border:1px solid rgba(56,189,248,0.45);color:#38bdf8;font-weight:600;" : "background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.45);";
-              html += `
+              pModels.forEach((m) => {
+                const ctxTag = this.models.formatContextSize(m.contextLength);
+                const badgeBits = [];
+                if (ctxTag) badgeBits.push(`<span style="font-size:9.5px;font-weight:700;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.2);padding:0 5px;border-radius:4px;">${ctxTag}</span>`);
+                if (this.models.isVisionModel(m)) badgeBits.push('<span style="font-size:9.5px;font-weight:600;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0 5px;border-radius:4px;">Vision</span>');
+                if (m.supportsTools === true) badgeBits.push('<span style="font-size:9.5px;font-weight:600;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0 5px;border-radius:4px;">Tools</span>');
+                const isSub = !!m.isSubagent;
+                const subStyle = isSub ? "background:rgba(56,189,248,0.18);border:1px solid rgba(56,189,248,0.45);color:#38bdf8;font-weight:600;" : "background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.45);";
+                html += `
                             <div class="sx-model-card" style="display:flex;align-items:center;gap:10px;">
                                 <div class="sx-model-name" style="flex:1.2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${this.sxEsc(m.name)}</div>
                                 <div class="sx-model-id" style="flex:1.4;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:rgba(255,255,255,0.45);">${this.sxEsc(m.modelId)}</div>
@@ -4269,51 +4258,54 @@
                                 </div>
                             </div>
                         `;
+              });
+              html += "</div>";
             });
-            html += "</div>";
-          });
-        }
-        modelsSec.innerHTML = html;
-        const searchInput = modelsSec.querySelector("#sx-models-search-input");
-        if (searchInput) {
-          searchInput.oninput = (e) => {
-            this._modelSearchQuery = e.target.value;
-            renderModels();
-            const nextInput = modelsSec.querySelector("#sx-models-search-input");
-            if (nextInput) {
-              nextInput.focus();
-              nextInput.selectionStart = nextInput.selectionEnd = nextInput.value.length;
-            }
-          };
-        }
-        modelsSec.querySelectorAll(".subagent-toggle").forEach((b) => {
-          b.onclick = (e) => {
-            e.stopPropagation();
-            const mod = allModels.find((x) => x.id === b.dataset.id);
-            if (mod) {
-              mod.isSubagent = !mod.isSubagent;
-              this.state.setModels(allModels);
+          }
+          modelsSec.innerHTML = html;
+          const searchInput = modelsSec.querySelector("#sx-models-search-input");
+          if (searchInput) {
+            searchInput.oninput = (e) => {
+              this._modelSearchQuery = e.target.value;
               renderModels();
-            }
-          };
-        });
-        modelsSec.querySelector("#sx-add-model-btn").onclick = () => this.openModelModal(null, () => renderModels());
-        modelsSec.querySelectorAll(".edit-m").forEach((b) => {
-          b.onclick = () => {
-            const m = this.state.getModels().find((x) => x.id === b.dataset.id);
-            if (m) this.openModelModal(m, () => renderModels());
-          };
-        });
-        modelsSec.querySelectorAll(".del-m").forEach((b) => {
-          b.onclick = () => {
-            if (!confirm("Bu modeli sil?")) return;
-            this.state.setModels(this.state.getModels().filter((x) => x.id !== b.dataset.id));
-            renderModels();
-          };
-        });
-      };
-      renderProviders();
-      renderModels();
+              const nextInput = modelsSec.querySelector("#sx-models-search-input");
+              if (nextInput) {
+                nextInput.focus();
+                nextInput.selectionStart = nextInput.selectionEnd = nextInput.value.length;
+              }
+            };
+          }
+          modelsSec.querySelectorAll(".subagent-toggle").forEach((b) => {
+            b.onclick = (e) => {
+              e.stopPropagation();
+              const mod = allModels.find((x) => x.id === b.dataset.id);
+              if (mod) {
+                mod.isSubagent = !mod.isSubagent;
+                this.state.setModels(allModels);
+                renderModels();
+              }
+            };
+          });
+          modelsSec.querySelector("#sx-add-model-btn").onclick = () => this.openModelModal(null, () => renderModels());
+          modelsSec.querySelectorAll(".edit-m").forEach((b) => {
+            b.onclick = () => {
+              const m = this.state.getModels().find((x) => x.id === b.dataset.id);
+              if (m) this.openModelModal(m, () => renderModels());
+            };
+          });
+          modelsSec.querySelectorAll(".del-m").forEach((b) => {
+            b.onclick = () => {
+              if (!confirm("Bu modeli sil?")) return;
+              this.state.setModels(this.state.getModels().filter((x) => x.id !== b.dataset.id));
+              renderModels();
+            };
+          });
+        };
+        renderProviders();
+        renderModels();
+      } catch (e) {
+        this.logger.error("UIInjector", "Settings inject error:", e);
+      }
     }
     trySXAppearanceSettingsInject() {
       const dialog = document.querySelector('[role="dialog"]');
