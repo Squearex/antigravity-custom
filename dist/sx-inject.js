@@ -3063,16 +3063,10 @@
         }
         const settingsTarget = e.target.closest('[role="dialog"] [role="tab"], [role="dialog"] button, [data-testid*="settings"], button[aria-label*="Settings" i]');
         if (settingsTarget) {
-          const dialog = document.querySelector('[role="dialog"]');
-          if (dialog && /model/i.test(settingsTarget.textContent || "")) {
-            dialog.classList.add("sx-models-tab-active");
-          } else if (dialog && settingsTarget.getAttribute("role") === "tab") {
-            dialog.classList.remove("sx-models-tab-active");
-          }
           this.trySXModelsSettingsInject();
           requestAnimationFrame(() => this.trySXModelsSettingsInject());
-          setTimeout(() => this.trySXModelsSettingsInject(), 10);
-          setTimeout(() => this.trySXModelsSettingsInject(), 35);
+          setTimeout(() => this.trySXModelsSettingsInject(), 25);
+          setTimeout(() => this.trySXModelsSettingsInject(), 80);
         }
       }, true);
       try {
@@ -3193,17 +3187,10 @@
             .sx-preset-btn.active { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); color: #fff; font-weight: 600; }
             .sx-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,0.06); }
 
-            /* Instant 0ms global suppression of native model items & headers */
+            /* Hide native model selector items instantly */
             [data-testid="model-selector-item"]:not(.sx-custom-model-item),
             [data-testid="model-selector-panel"] [data-testid="model-selector-item"]:not(.sx-custom-model-item),
             [data-testid="model-selector-header"] {
-                display: none !important;
-            }
-
-            /* Instant suppression of native settings panel content when custom SX content is mounted or active */
-            [role="dialog"] div:has(#sx-content-wrapper) > *:not(#sx-content-wrapper),
-            [role="dialog"].sx-models-tab-active [role="tabpanel"] > *:not(#sx-content-wrapper),
-            [role="dialog"]:has([role="tab"][aria-selected="true"][data-tab-name="models"]) [role="tabpanel"] > *:not(#sx-content-wrapper) {
                 display: none !important;
             }
 
@@ -3830,31 +3817,49 @@
         return;
       }
       this.injectGlobalStyles();
-      const existingWrap = dialog.querySelector("#sx-content-wrapper");
-      if (existingWrap) {
-        const rp = existingWrap.parentElement;
-        if (rp) Array.from(rp.children).forEach((c) => {
-          if (c.id === "sx-content-wrapper") return;
-          c.style.setProperty("display", "none", "important");
-        });
-        return;
-      }
       const scanTs = Date.now();
       if (this._lastSettingsScan && scanTs - this._lastSettingsScan < 0 && !document.querySelector("#sx-content-wrapper")) return;
       this._lastSettingsScan = scanTs;
       const activeTab = dialog.querySelector('[role="tab"][aria-selected="true"], [role="tab"].active, button[data-state="active"]');
       const isModelsTabActive = activeTab && /models/i.test(activeTab.textContent || "");
-      if (isModelsTabActive) {
-        dialog.classList.add("sx-models-tab-active");
-      } else if (activeTab && activeTab.getAttribute("role") === "tab") {
-        dialog.classList.remove("sx-models-tab-active");
-      }
       const MARKERS = ["Gemini Models", "Model Credits", "Your Plan"];
       const hasModelsMarker = MARKERS.some((m) => dialogText.includes(m.toLowerCase()));
+      const existingWrap = dialog.querySelector("#sx-content-wrapper");
       if (!isModelsTabActive && !hasModelsMarker) {
+        if (existingWrap) {
+          const rp = existingWrap.parentElement;
+          if (rp) {
+            Array.from(rp.children).forEach((c) => {
+              if (c.id === "sx-content-wrapper") {
+                c.remove();
+              } else {
+                c.style.removeProperty("display");
+              }
+            });
+          } else {
+            existingWrap.remove();
+          }
+        }
         return;
       }
-      let rightPanel = dialog.querySelector('[role="tabpanel"]') || dialog.querySelector(".overflow-y-auto") || dialog.querySelector("main");
+      if (existingWrap) {
+        const rp = existingWrap.parentElement;
+        if (rp) {
+          Array.from(rp.children).forEach((c) => {
+            if (c.id === "sx-content-wrapper") return;
+            c.style.setProperty("display", "none", "important");
+          });
+        }
+        return;
+      }
+      const tabList = dialog.querySelector('[role="tablist"], nav');
+      let rightPanel = dialog.querySelector('[role="tabpanel"]');
+      if (!rightPanel && tabList && tabList.parentElement) {
+        const siblings = Array.from(tabList.parentElement.children).filter((el) => el !== tabList);
+        if (siblings.length === 1) {
+          rightPanel = siblings[0];
+        }
+      }
       if (!rightPanel) {
         for (const marker of MARKERS) {
           const heading = Array.from(dialog.querySelectorAll("h1, h2, h3, h4, div, span")).find((el) => el.textContent && el.textContent.trim() === marker);
@@ -3864,7 +3869,11 @@
           }
         }
       }
-      if (!rightPanel) return;
+      if (!rightPanel) {
+        const scrollContainers = Array.from(dialog.querySelectorAll(".overflow-y-auto, main"));
+        rightPanel = scrollContainers.find((c) => (!tabList || !c.contains(tabList)) && c !== dialog);
+      }
+      if (!rightPanel || rightPanel === dialog || tabList && rightPanel.contains(tabList)) return;
       Array.from(rightPanel.children).forEach((c) => {
         c.style.setProperty("display", "none", "important");
       });
