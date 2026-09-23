@@ -4464,27 +4464,14 @@
       if (!modelPanel || modelPanel.closest("[data-sx-usage-panel]")) return;
       const sxModels = this.state.getModels();
       if (!sxModels || sxModels.length === 0) return;
-      try {
-        const promptBox = document.querySelector('[contenteditable="true"], textarea')?.closest("form, div.relative.flex, div.border");
-        if (promptBox) {
-          const boxTop = promptBox.getBoundingClientRect().top;
-          const popper = modelPanel.closest("[data-radix-popper-content-wrapper]") || modelPanel;
-          const pRect = popper.getBoundingClientRect();
-          if (pRect.bottom > boxTop - 4) {
-            const shiftY = pRect.bottom - (boxTop - 8);
-            if (shiftY > 0 && pRect.top - shiftY > 15 && !popper.dataset.sxShifted) {
-              popper.dataset.sxShifted = "true";
-              popper.style.transform = (popper.style.transform || "") + ` translateY(-${shiftY}px)`;
-            }
-          }
-        }
-      } catch (e) {
-      }
+      modelPanel.style.background = "#14151b";
+      modelPanel.style.borderRadius = "8px";
+      modelPanel.style.overflow = "hidden";
       let searchWrap = modelPanel.querySelector("#sx-model-search-wrap");
       if (!searchWrap) {
         searchWrap = document.createElement("div");
         searchWrap.id = "sx-model-search-wrap";
-        searchWrap.style.cssText = "padding: 8px 8px 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.06); background: inherit; position: sticky; top: 0; z-index: 10; box-sizing: border-box;";
+        searchWrap.style.cssText = "padding: 8px 8px 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.06); background: #14151b !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box; border-top-left-radius: 8px; border-top-right-radius: 8px;";
         searchWrap.innerHTML = `
                 <div style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 10px;gap:7px;height:32px;box-sizing:border-box;width:100%;transition:border-color 0.15s;">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.3);flex-shrink:0;">
