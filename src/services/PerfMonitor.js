@@ -256,30 +256,24 @@ export class PerfMonitor {
 
     getLatestStats(convId) {
         const clean = (convId || '').replace(/^conv_/, '');
-        if (clean && this._perfStatsCache[clean]) return this._perfStatsCache[clean];
-        if (this._perfStatsCache['new']) return this._perfStatsCache['new'];
-        if (this._perfStatsCache['last']) return this._perfStatsCache['last'];
-
-        try {
-            const saved = localStorage.getItem('sx_last_perf_stats');
-            if (saved) return JSON.parse(saved);
-        } catch(e) {}
+        if (clean && clean !== 'new' && this._perfStatsCache[clean]) {
+            return this._perfStatsCache[clean];
+        }
         return null;
     }
 
     async fetchPerfStats(convId) {
         try {
             const cleanConvId = (convId || '').replace(/^conv_/, '');
+            if (!cleanConvId || cleanConvId === 'new') return null;
             const raw = await this.network.fetchPerfStats(cleanConvId);
             const stats = raw?.stats || raw;
             if (raw?.history && Array.isArray(raw.history)) {
-                this._perfHistory[cleanConvId || 'new'] = raw.history;
-                this._perfHistory['last'] = raw.history;
+                this._perfHistory[cleanConvId] = raw.history;
             }
             if (stats && (stats.ttftMs || stats.tps || stats.completionTokens)) {
                 const measured = { ...stats, measured: true };
-                this._perfStatsCache[cleanConvId || 'new'] = measured;
-                this._perfStatsCache['last'] = measured;
+                this._perfStatsCache[cleanConvId] = measured;
                 this.updatePerfButtonUI();
                 return measured;
             }

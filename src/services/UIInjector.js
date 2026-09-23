@@ -90,6 +90,9 @@ export class UIInjector {
                     this._selectedSettingsTab = 'models';
                 } else if (['general', 'genel', 'application', 'uygulama', 'appearance', 'görünüm', 'customization', 'özelleştirme', 'browser', 'tarayıcı', 'conversation', 'sohbet', 'shortcut', 'kısayol', 'feedback', 'geri bildirim'].some(k => targetTxt.includes(k))) {
                     this._selectedSettingsTab = targetTxt;
+                } else if (!settingsTarget.closest('[role="dialog"]')) {
+                    // Clicked an opener trigger outside dialog: reset tab so it doesn't force models
+                    this._selectedSettingsTab = null;
                 }
                 this.trySXModelsSettingsInject();
                 requestAnimationFrame(() => this.trySXModelsSettingsInject());
@@ -256,6 +259,13 @@ export class UIInjector {
                 min-width: 0 !important;
                 max-width: 100% !important;
                 transform: none !important;
+            }
+
+            /* Hide native model selector items instantly to prevent duplicates */
+            [data-testid="model-selector-item"]:not(.sx-custom-model-item),
+            [data-testid="model-selector-panel"] [data-testid="model-selector-item"]:not(.sx-custom-model-item),
+            [data-testid="model-selector-header"] {
+                display: none !important;
             }
 
             /* Custom model item layout with two-row support to prevent title truncation */
@@ -987,28 +997,36 @@ export class UIInjector {
             // 4. Check which tab is currently active
             const activeTabBtn = dialog.querySelector('[role="tab"][aria-selected="true"], [role="tab"][data-state="active"], button[aria-selected="true"], button[data-state="active"], nav button.active');
             let activeTabTxt = (activeTabBtn?.textContent || '').trim().toLowerCase();
-            if (!activeTabTxt && this._selectedSettingsTab) {
-                activeTabTxt = this._selectedSettingsTab;
-            }
 
-            const isExplicitOtherTab = ['general', 'genel', 'appearance', 'görünüm', 'application', 'uygulama', 'shortcut', 'kısayol', 'customization', 'özelleştirme', 'browser', 'tarayıcı'].some(k => activeTabTxt.includes(k));
+            const isExplicitOtherTab = ['general', 'genel', 'appearance', 'görünüm', 'application', 'uygulama', 'shortcut', 'kısayol', 'customization', 'özelleştirme', 'browser', 'tarayıcı', 'conversation', 'sohbet', 'feedback'].some(k => activeTabTxt.includes(k));
 
             const panelText = (rightPanel.textContent || '').toLowerCase();
             const hasNativeModelsText = ['manage your model quota', 'model credits', 'your plan', 'custom quota'].some(m => panelText.includes(m));
 
-            const isModelsActive = !isExplicitOtherTab && (activeTabTxt.includes('model') || hasNativeModelsText || this._selectedSettingsTab === 'models');
+            const isModelsActive = !isExplicitOtherTab && (activeTabTxt.includes('model') || (hasNativeModelsText && !activeTabTxt) || (this._selectedSettingsTab === 'models' && (!activeTabTxt || activeTabTxt.includes('model'))));
 
             const existingWrap = dialog.querySelector('#sx-content-wrapper');
 
             // If user is NOT on Models tab, cleanly remove custom wrap and restore native view!
             if (!isModelsActive) {
                 if (existingWrap) {
-                    const rp = existingWrap.parentElement;
                     existingWrap.remove();
-                    if (rp) {
-                        Array.from(rp.children).forEach(c => c.style.removeProperty('display'));
-                    }
                 }
+                if (rightPanel) {
+                    Array.from(rightPanel.children).forEach(c => {
+                        if (c.style.display === 'none') {
+                            c.style.removeProperty('display');
+                        }
+                    });
+                }
+                // Also scan dialog tabpanels to unhide anything inadvertently hidden
+                dialog.querySelectorAll('[role="tabpanel"]').forEach(tp => {
+                    Array.from(tp.children).forEach(c => {
+                        if (c.id !== 'sx-content-wrapper' && c.style.display === 'none') {
+                            c.style.removeProperty('display');
+                        }
+                    });
+                });
                 return;
             }
 
@@ -1446,7 +1464,7 @@ export class UIInjector {
                 const activeM = sxModels.find(m => m.id === activeId);
                 if (activeM) {
                     const s = trigger.querySelector('.truncate') || trigger.querySelector('span') || trigger;
-                    const displayName = activeM.name && activeM.name.toLowerCase().startsWith('sx') ? activeM.name : `sx ${activeM.name || 'Model'}`;
+                    const displayName = activeM.name || 'Model';
                     if (s && s.dataset.sxKey !== activeM.id) {
                         s.dataset.sxKey = activeM.id;
                         s.textContent = displayName;
@@ -1588,14 +1606,20 @@ export class UIInjector {
 
             input.addEventListener('input', () => {
                 const q = input.value.trim().toLowerCase();
-                const allItems = modelPanel.querySelectorAll('[data-testid="model-selector-item"], .sx-custom-model-item');
+                const items = modelPanel.querySelectorAll('.sx-custom-model-item');
                 let visibleCount = 0;
-                allItems.forEach(item => {
+                items.forEach(item => {
                     const lbl = (item.getAttribute('data-model-label') || item.innerText || '').toLowerCase();
                     const match = !q || lbl.includes(q);
                     item.style.display = match ? '' : 'none';
                     item.classList.toggle('is-hidden', !match);
                     if (match) visibleCount++;
+                });
+
+                modelPanel.querySelectorAll('.sx-provider-header').forEach(hdr => {
+                    const pId = hdr.getAttribute('data-provider-id');
+                    const hasVisible = Array.from(modelPanel.querySelectorAll(`.sx-custom-model-item[data-sx-provider="${pId}"]`)).some(it => !it.classList.contains('is-hidden') && it.style.display !== 'none');
+                    hdr.style.display = hasVisible ? 'flex' : 'none';
                 });
 
                 let emptyMsg = modelPanel.querySelector('#sx-model-search-empty');
@@ -1626,6 +1650,9 @@ export class UIInjector {
         if (listContainer) {
             const nativeItems = Array.from(listContainer.querySelectorAll('[data-testid="model-selector-item"]:not(.sx-custom-model-item)'));
             const sampleNative = nativeItems[0];
+            nativeItems.forEach(item => {
+                item.style.display = 'none';
+            });
 
             if (!document.getElementById('sx-custom-model-style')) {
                 const st = document.createElement('style');
@@ -1849,127 +1876,156 @@ export class UIInjector {
                 marker.style.display = 'none';
                 listContainer.appendChild(marker);
 
+                const groups = {};
+                providers.forEach(p => { groups[p.id] = []; });
+                groups['other'] = [];
+
                 sxModels.forEach(m => {
-                    const isSelected = m.id === activeId;
-                    const isVision = this.models.isVisionModel(m);
-                    const isReasoning = this.isModelSupportingReasoning(m);
-                    const displayName = m.name && m.name.toLowerCase().startsWith('sx') ? m.name : `sx ${m.name || 'Model'}`;
+                    const pId = m.providerId || 'other';
+                    if (!groups[pId]) groups[pId] = [];
+                    groups[pId].push(m);
+                });
 
-                    let rightBadges = '';
-                    let ctxTag = this.models.formatContextSize(m.contextLength);
-                    if (!ctxTag) {
-                        const mLow = (m.modelId || m.name || '').toLowerCase();
-                        if (mLow.includes('1m') || mLow.includes('ultra')) ctxTag = '1M';
-                        else if (mLow.includes('256k') || mLow.includes('pro')) ctxTag = '256k';
-                        else if (mLow.includes('128k')) ctxTag = '128k';
-                    }
-                    if (ctxTag) {
-                        rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;">${ctxTag}</span>`;
-                    }
-                    if (isVision) {
-                        rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Vision</span>`;
-                    }
-                    if (m.supportsTools === true) {
-                        rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Tools</span>`;
-                    }
+                Object.keys(groups).forEach(pId => {
+                    const groupModels = groups[pId];
+                    if (!groupModels || groupModels.length === 0) return;
 
-                    const hasOtherBadges = !!rightBadges;
-                    let reasoningLabel = '';
-                    if (isReasoning) {
-                        const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || 'default';
-                        const options = this.getModelReasoningOptions(m);
-                        const effectiveReasoning = options.some(o => o.id === curReasoning) ? curReasoning : (options[0]?.id || 'default');
-                        const optObj = options.find(o => o.id === effectiveReasoning);
-                        reasoningLabel = optObj ? optObj.label : 'Default';
-                        if (hasOtherBadges) {
-                            rightBadges += `<span class="sx-reasoning-subtag is-badge" data-model-id="${m.id}" data-has-badges="true">${reasoningLabel}</span>`;
-                        } else {
-                            rightBadges += `<span class="sx-reasoning-subtag" data-model-id="${m.id}" data-has-badges="false">(${reasoningLabel})</span>`;
-                        }
-                    }
+                    const pMeta = this.models.getProviderMeta(pId);
 
-                    const hasBadges = !!rightBadges;
-                    const item = document.createElement('div');
-                    item.className = 'sx-custom-model-item' + (isSelected ? ' is-selected' : '') + (hasBadges ? ' has-badges' : '');
-                    item.dataset.modelId = m.id;
-                    item.dataset.modelLabel = displayName;
-                    item.dataset.sxProvider = m.providerId || 'other';
-
-                    const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-
-                    item.innerHTML = `
-                        <div class="sx-model-info-col">
-                            <div class="sx-model-title" title="${this.sxEsc(displayName)}">${this.sxEsc(displayName)}</div>
-                            ${hasBadges ? `<div class="sx-model-badges-row">${rightBadges}</div>` : ''}
-                        </div>
-                        <div class="sx-model-right-actions">
-                            <div class="sx-model-check-slot">
-                                ${isSelected ? checkSvg : ''}
-                            </div>
-                            <div class="sx-model-arrow-slot">
-                                ${isReasoning ? `
-                                    <div class="sx-model-chevron-hint" title="Reasoning: ${this.sxEsc(reasoningLabel)}">
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
-                                            <polyline points="9 18 15 12 9 6"></polyline>
-                                        </svg>
-                                    </div>
-                                ` : ''}
-                            </div>
-                        </div>
+                    const header = document.createElement('div');
+                    header.className = 'sx-provider-header';
+                    header.setAttribute('data-provider-id', pId);
+                    header.innerHTML = `
+                        <span style="width:6px;height:6px;border-radius:50%;background:${pMeta.color};display:inline-block;"></span>
+                        <span style="font-size:10px;font-weight:700;color:${pMeta.color};text-transform:uppercase;letter-spacing:0.5px;">${this.sxEsc(pMeta.name)}</span>
                     `;
+                    listContainer.appendChild(header);
 
-                    // Row hover and direct trigger click for reasoning submenu
-                    item.addEventListener('mouseenter', () => {
+                    groupModels.forEach(m => {
+                        const isSelected = m.id === activeId;
+                        const isVision = this.models.isVisionModel(m);
+                        const isReasoning = this.isModelSupportingReasoning(m);
+                        const displayName = m.name || 'Model';
+
+                        let rightBadges = '';
+                        let ctxTag = this.models.formatContextSize(m.contextLength);
+                        if (!ctxTag) {
+                            const mLow = (m.modelId || m.name || '').toLowerCase();
+                            if (mLow.includes('1m') || mLow.includes('ultra')) ctxTag = '1M';
+                            else if (mLow.includes('256k') || mLow.includes('pro')) ctxTag = '256k';
+                            else if (mLow.includes('128k')) ctxTag = '128k';
+                        }
+                        if (ctxTag) {
+                            rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;">${ctxTag}</span>`;
+                        }
+                        if (isVision) {
+                            rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Vision</span>`;
+                        }
+                        if (m.supportsTools === true) {
+                            rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Tools</span>`;
+                        }
+
+                        const hasOtherBadges = !!rightBadges;
+                        let reasoningLabel = '';
                         if (isReasoning) {
+                            const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || 'default';
+                            const options = this.getModelReasoningOptions(m);
+                            const effectiveReasoning = options.some(o => o.id === curReasoning) ? curReasoning : (options[0]?.id || 'default');
+                            const optObj = options.find(o => o.id === effectiveReasoning);
+                            reasoningLabel = optObj ? optObj.label : 'Default';
+                            if (hasOtherBadges) {
+                                rightBadges += `<span class="sx-reasoning-subtag is-badge" data-model-id="${m.id}" data-has-badges="true">${reasoningLabel}</span>`;
+                            } else {
+                                rightBadges += `<span class="sx-reasoning-subtag" data-model-id="${m.id}" data-has-badges="false">(${reasoningLabel})</span>`;
+                            }
+                        }
+
+                        const hasBadges = !!rightBadges;
+                        const item = document.createElement('div');
+                        item.className = 'sx-custom-model-item' + (isSelected ? ' is-selected' : '') + (hasBadges ? ' has-badges' : '');
+                        item.dataset.modelId = m.id;
+                        item.dataset.modelLabel = displayName;
+                        item.dataset.sxProvider = pId;
+
+                        const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
+                        item.innerHTML = `
+                            <div class="sx-model-info-col">
+                                <div class="sx-model-title" title="${this.sxEsc(displayName)}">${this.sxEsc(displayName)}</div>
+                                ${hasBadges ? `<div class="sx-model-badges-row">${rightBadges}</div>` : ''}
+                            </div>
+                            <div class="sx-model-right-actions">
+                                <div class="sx-model-check-slot">
+                                    ${isSelected ? checkSvg : ''}
+                                </div>
+                                <div class="sx-model-arrow-slot">
+                                    ${isReasoning ? `
+                                        <div class="sx-model-chevron-hint" title="Reasoning: ${this.sxEsc(reasoningLabel)}">
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
+                                                <polyline points="9 18 15 12 9 6"></polyline>
+                                            </svg>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        `;
+
+                        // Row hover and direct trigger click for reasoning submenu
+                        item.addEventListener('mouseenter', () => {
+                            if (isReasoning) {
+                                if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
+                                this.openModelReasoningSubmenu(item, m.id, m.name);
+                            } else {
+                                this.closeModelReasoningSubmenu();
+                            }
+                        });
+
+                        item.addEventListener('mouseleave', (e) => {
+                            const toEl = e.relatedTarget;
+                            if (toEl && (toEl.closest('#sx-nested-reasoning-menu') || toEl.closest('.sx-custom-model-item') === item)) {
+                                return;
+                            }
                             if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
-                            this.openModelReasoningSubmenu(item, m.id, m.name);
-                        } else {
-                            this.closeModelReasoningSubmenu();
-                        }
-                    });
-
-                    item.addEventListener('mouseleave', (e) => {
-                        const toEl = e.relatedTarget;
-                        if (toEl && (toEl.closest('#sx-nested-reasoning-menu') || toEl.closest('.sx-custom-model-item') === item)) {
-                            return;
-                        }
-                        if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
-                        this._menuCloseTimeout = setTimeout(() => {
-                            this.closeModelReasoningSubmenu();
-                        }, 200);
-                    });
-
-                    const cHint = item.querySelector('.sx-model-chevron-hint');
-                    if (cHint) {
-                        cHint.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            this.openModelReasoningSubmenu(item, m.id, m.name);
+                            this._menuCloseTimeout = setTimeout(() => {
+                                this.closeModelReasoningSubmenu();
+                            }, 200);
                         });
-                    }
 
-                    item.addEventListener('click', () => {
-                        const cKey = this.models.getActiveConversationKey();
-                        this.models.setActiveModelForConversation(m.id, cKey, true);
+                        const cHint = item.querySelector('.sx-model-chevron-hint');
+                        if (cHint) {
+                            cHint.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                this.openModelReasoningSubmenu(item, m.id, m.name);
+                            });
+                        }
 
-                        listContainer.querySelectorAll('.sx-custom-model-item').forEach(el => {
-                            el.classList.remove('is-selected');
-                            const cs = el.querySelector('.sx-model-check-slot');
-                            if (cs) cs.innerHTML = '';
+                        item.addEventListener('click', () => {
+                            const cKey = this.models.getActiveConversationKey();
+                            this.models.setActiveModelForConversation(m.id, cKey, true);
+
+                            listContainer.querySelectorAll('.sx-custom-model-item').forEach(el => {
+                                el.classList.remove('is-selected');
+                                const cs = el.querySelector('.sx-model-check-slot');
+                                if (cs) cs.innerHTML = '';
+                            });
+                            item.classList.add('is-selected');
+                            const cs = item.querySelector('.sx-model-check-slot');
+                            if (cs) cs.innerHTML = checkSvg;
+
+                            this.quota?.updateContextButtonUI();
+
+                            // Close popper
+                            if (sampleNative) sampleNative.click();
+                            setTimeout(() => this.hookDOM(), 30);
                         });
-                        item.classList.add('is-selected');
-                        const cs = item.querySelector('.sx-model-check-slot');
-                        if (cs) cs.innerHTML = checkSvg;
 
-                        this.quota?.updateContextButtonUI();
-
-                        // Close popper
-                        if (sampleNative) sampleNative.click();
-                        setTimeout(() => this.hookDOM(), 30);
+                        listContainer.appendChild(item);
                     });
-
-                    listContainer.appendChild(item);
                 });
             } else {
+                nativeItems.forEach(item => {
+                    if (item.style.display !== 'none') item.style.display = 'none';
+                });
                 // Sync checkmarks & reasoning labels
                 const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
                 listContainer.querySelectorAll('.sx-custom-model-item').forEach(el => {

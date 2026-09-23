@@ -535,17 +535,56 @@ export class QuotaMonitor {
         const liveMetrics = this.calculateLiveContextMetrics(cleanConvId, targetModel);
         const cacheKey = (cleanConvId || 'new') + '_' + (targetModel?.id || '');
         const cached = this._contextDetailsCache[cacheKey]?.data;
-        if (cached) {
+        if (cached && cached.items && cached.items.length > 0) {
             this.renderPopoverDetails(pop, cached, liveMetrics);
+        } else {
+            this.renderEmptyPopoverState(pop, cleanConvId, targetModel, liveMetrics);
         }
 
         this.fetchContextDetails(cleanConvId, targetModel).then(data => {
-            if (pop.isConnected && data) {
+            if (pop.isConnected && data && data.items && data.items.length > 0) {
                 const updatedLive = this.calculateLiveContextMetrics(cleanConvId, targetModel);
                 this.renderPopoverDetails(pop, data, updatedLive);
                 this.updateContextRing(updatedLive);
+            } else if (pop.isConnected && (!cached || !cached.items || cached.items.length === 0)) {
+                this.renderEmptyPopoverState(pop, cleanConvId, targetModel, liveMetrics);
             }
         });
+    }
+
+    renderEmptyPopoverState(pop, cleanConvId, targetModel, liveMetrics) {
+        const statText = pop.querySelector('#sx-ctx-stat-text');
+        const progBar = pop.querySelector('#sx-ctx-progress-bar');
+        const itemsList = pop.querySelector('#sx-ctx-items-list');
+
+        const maxCtx = targetModel?.contextLength || 128000;
+        const maxDisp = this._fmt(maxCtx);
+
+        if (statText) statText.innerText = `0 / ${maxDisp} (%0)`;
+        if (progBar) {
+            progBar.style.width = '0%';
+            progBar.style.background = '#38bdf8';
+        }
+
+        let convLine = pop.querySelector('#sx-ctx-convline');
+        if (!convLine) {
+            convLine = document.createElement('div');
+            convLine.id = 'sx-ctx-convline';
+            convLine.style.cssText = 'font-size:10.5px;color:rgba(255,255,255,0.35);font-family:ui-monospace,monospace;margin:-6px 0 10px 0;';
+            const bar = pop.querySelector('#sx-ctx-progress-bar')?.parentElement;
+            if (bar && bar.parentElement) bar.parentElement.insertBefore(convLine, bar.nextSibling);
+            else pop.appendChild(convLine);
+        }
+        convLine.textContent = `yeni sohbet • 0 token`;
+
+        if (itemsList) {
+            itemsList.innerHTML = `
+                <div style="font-size:12px;color:#94a3b8;text-align:center;padding:14px 0;line-height:1.5;">
+                    Bu sohbette henüz mesaj yok.<br>
+                    <span style="font-size:11px;color:#64748b;">Mesaj yazdıkça context token kullanımı burada görünecektir.</span>
+                </div>
+            `;
+        }
     }
 
     renderPopoverDetails(pop, data, liveMetrics) {

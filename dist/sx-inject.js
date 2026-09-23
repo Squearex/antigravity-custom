@@ -1167,9 +1167,8 @@
       const placeholderEnum = "MODEL_PLACEHOLDER_M" + slotNum;
       const hasVision = this.isVisionModel(m);
       const hasTools = this.supportsTools(m);
-      const displayName = m.name && m.name.toLowerCase().startsWith("sx") ? m.name : `sx ${m.name || "Model"}`;
       return {
-        label: displayName,
+        label: m.name,
         modelOrAlias: { model: placeholderEnum },
         supportsImages: hasVision,
         supportsTools: hasTools,
@@ -1226,7 +1225,7 @@
       if (sxModels && sxModels.length > 0) {
         return [{
           name: "Recommended",
-          groups: [{ groupName: "AI Models", modelLabels: sxModels.map((m) => m.name && m.name.toLowerCase().startsWith("sx") ? m.name : `sx ${m.name || "Model"}`) }]
+          groups: [{ groupName: "AI Models", modelLabels: sxModels.map((m) => m.name) }]
         }];
       }
       return [{
@@ -3231,16 +3230,50 @@
       const liveMetrics = this.calculateLiveContextMetrics(cleanConvId, targetModel);
       const cacheKey = (cleanConvId || "new") + "_" + (targetModel?.id || "");
       const cached = this._contextDetailsCache[cacheKey]?.data;
-      if (cached) {
+      if (cached && cached.items && cached.items.length > 0) {
         this.renderPopoverDetails(pop, cached, liveMetrics);
+      } else {
+        this.renderEmptyPopoverState(pop, cleanConvId, targetModel, liveMetrics);
       }
       this.fetchContextDetails(cleanConvId, targetModel).then((data) => {
-        if (pop.isConnected && data) {
+        if (pop.isConnected && data && data.items && data.items.length > 0) {
           const updatedLive = this.calculateLiveContextMetrics(cleanConvId, targetModel);
           this.renderPopoverDetails(pop, data, updatedLive);
           this.updateContextRing(updatedLive);
+        } else if (pop.isConnected && (!cached || !cached.items || cached.items.length === 0)) {
+          this.renderEmptyPopoverState(pop, cleanConvId, targetModel, liveMetrics);
         }
       });
+    }
+    renderEmptyPopoverState(pop, cleanConvId, targetModel, liveMetrics) {
+      const statText = pop.querySelector("#sx-ctx-stat-text");
+      const progBar = pop.querySelector("#sx-ctx-progress-bar");
+      const itemsList = pop.querySelector("#sx-ctx-items-list");
+      const maxCtx = targetModel?.contextLength || 128e3;
+      const maxDisp = this._fmt(maxCtx);
+      if (statText) statText.innerText = `0 / ${maxDisp} (%0)`;
+      if (progBar) {
+        progBar.style.width = "0%";
+        progBar.style.background = "#38bdf8";
+      }
+      let convLine = pop.querySelector("#sx-ctx-convline");
+      if (!convLine) {
+        convLine = document.createElement("div");
+        convLine.id = "sx-ctx-convline";
+        convLine.style.cssText = "font-size:10.5px;color:rgba(255,255,255,0.35);font-family:ui-monospace,monospace;margin:-6px 0 10px 0;";
+        const bar = pop.querySelector("#sx-ctx-progress-bar")?.parentElement;
+        if (bar && bar.parentElement) bar.parentElement.insertBefore(convLine, bar.nextSibling);
+        else pop.appendChild(convLine);
+      }
+      convLine.textContent = `yeni sohbet \u2022 0 token`;
+      if (itemsList) {
+        itemsList.innerHTML = `
+                <div style="font-size:12px;color:#94a3b8;text-align:center;padding:14px 0;line-height:1.5;">
+                    Bu sohbette hen\xFCz mesaj yok.<br>
+                    <span style="font-size:11px;color:#64748b;">Mesaj yazd\u0131k\xE7a context token kullan\u0131m\u0131 burada g\xF6r\xFCnecektir.</span>
+                </div>
+            `;
+      }
     }
     renderPopoverDetails(pop, data, liveMetrics) {
       if (!data || !data.items) return;
@@ -3596,29 +3629,23 @@
     }
     getLatestStats(convId) {
       const clean = (convId || "").replace(/^conv_/, "");
-      if (clean && this._perfStatsCache[clean]) return this._perfStatsCache[clean];
-      if (this._perfStatsCache["new"]) return this._perfStatsCache["new"];
-      if (this._perfStatsCache["last"]) return this._perfStatsCache["last"];
-      try {
-        const saved = localStorage.getItem("sx_last_perf_stats");
-        if (saved) return JSON.parse(saved);
-      } catch (e) {
+      if (clean && clean !== "new" && this._perfStatsCache[clean]) {
+        return this._perfStatsCache[clean];
       }
       return null;
     }
     async fetchPerfStats(convId) {
       try {
         const cleanConvId = (convId || "").replace(/^conv_/, "");
+        if (!cleanConvId || cleanConvId === "new") return null;
         const raw = await this.network.fetchPerfStats(cleanConvId);
         const stats = raw?.stats || raw;
         if (raw?.history && Array.isArray(raw.history)) {
-          this._perfHistory[cleanConvId || "new"] = raw.history;
-          this._perfHistory["last"] = raw.history;
+          this._perfHistory[cleanConvId] = raw.history;
         }
         if (stats && (stats.ttftMs || stats.tps || stats.completionTokens)) {
           const measured = { ...stats, measured: true };
-          this._perfStatsCache[cleanConvId || "new"] = measured;
-          this._perfStatsCache["last"] = measured;
+          this._perfStatsCache[cleanConvId] = measured;
           this.updatePerfButtonUI();
           return measured;
         }
@@ -4539,6 +4566,8 @@
             this._selectedSettingsTab = "models";
           } else if (["general", "genel", "application", "uygulama", "appearance", "g\xF6r\xFCn\xFCm", "customization", "\xF6zelle\u015Ftirme", "browser", "taray\u0131c\u0131", "conversation", "sohbet", "shortcut", "k\u0131sayol", "feedback", "geri bildirim"].some((k) => targetTxt.includes(k))) {
             this._selectedSettingsTab = targetTxt;
+          } else if (!settingsTarget.closest('[role="dialog"]')) {
+            this._selectedSettingsTab = null;
           }
           this.trySXModelsSettingsInject();
           requestAnimationFrame(() => this.trySXModelsSettingsInject());
@@ -4695,6 +4724,13 @@
                 min-width: 0 !important;
                 max-width: 100% !important;
                 transform: none !important;
+            }
+
+            /* Hide native model selector items instantly to prevent duplicates */
+            [data-testid="model-selector-item"]:not(.sx-custom-model-item),
+            [data-testid="model-selector-panel"] [data-testid="model-selector-item"]:not(.sx-custom-model-item),
+            [data-testid="model-selector-header"] {
+                display: none !important;
             }
 
             /* Custom model item layout with two-row support to prevent title truncation */
@@ -5425,22 +5461,29 @@
         if (!rightPanel || rightPanel === dialog || tabList && rightPanel.contains(tabList)) return;
         const activeTabBtn = dialog.querySelector('[role="tab"][aria-selected="true"], [role="tab"][data-state="active"], button[aria-selected="true"], button[data-state="active"], nav button.active');
         let activeTabTxt = (activeTabBtn?.textContent || "").trim().toLowerCase();
-        if (!activeTabTxt && this._selectedSettingsTab) {
-          activeTabTxt = this._selectedSettingsTab;
-        }
-        const isExplicitOtherTab = ["general", "genel", "appearance", "g\xF6r\xFCn\xFCm", "application", "uygulama", "shortcut", "k\u0131sayol", "customization", "\xF6zelle\u015Ftirme", "browser", "taray\u0131c\u0131"].some((k) => activeTabTxt.includes(k));
+        const isExplicitOtherTab = ["general", "genel", "appearance", "g\xF6r\xFCn\xFCm", "application", "uygulama", "shortcut", "k\u0131sayol", "customization", "\xF6zelle\u015Ftirme", "browser", "taray\u0131c\u0131", "conversation", "sohbet", "feedback"].some((k) => activeTabTxt.includes(k));
         const panelText = (rightPanel.textContent || "").toLowerCase();
         const hasNativeModelsText = ["manage your model quota", "model credits", "your plan", "custom quota"].some((m) => panelText.includes(m));
-        const isModelsActive = !isExplicitOtherTab && (activeTabTxt.includes("model") || hasNativeModelsText || this._selectedSettingsTab === "models");
+        const isModelsActive = !isExplicitOtherTab && (activeTabTxt.includes("model") || hasNativeModelsText && !activeTabTxt || this._selectedSettingsTab === "models" && (!activeTabTxt || activeTabTxt.includes("model")));
         const existingWrap = dialog.querySelector("#sx-content-wrapper");
         if (!isModelsActive) {
           if (existingWrap) {
-            const rp = existingWrap.parentElement;
             existingWrap.remove();
-            if (rp) {
-              Array.from(rp.children).forEach((c) => c.style.removeProperty("display"));
-            }
           }
+          if (rightPanel) {
+            Array.from(rightPanel.children).forEach((c) => {
+              if (c.style.display === "none") {
+                c.style.removeProperty("display");
+              }
+            });
+          }
+          dialog.querySelectorAll('[role="tabpanel"]').forEach((tp) => {
+            Array.from(tp.children).forEach((c) => {
+              if (c.id !== "sx-content-wrapper" && c.style.display === "none") {
+                c.style.removeProperty("display");
+              }
+            });
+          });
           return;
         }
         if (existingWrap && rightPanel.contains(existingWrap)) {
@@ -5829,7 +5872,7 @@
           const activeM = sxModels.find((m) => m.id === activeId);
           if (activeM) {
             const s = trigger.querySelector(".truncate") || trigger.querySelector("span") || trigger;
-            const displayName = activeM.name && activeM.name.toLowerCase().startsWith("sx") ? activeM.name : `sx ${activeM.name || "Model"}`;
+            const displayName = activeM.name || "Model";
             if (s && s.dataset.sxKey !== activeM.id) {
               s.dataset.sxKey = activeM.id;
               s.textContent = displayName;
@@ -5959,14 +6002,19 @@
         });
         input.addEventListener("input", () => {
           const q = input.value.trim().toLowerCase();
-          const allItems = modelPanel.querySelectorAll('[data-testid="model-selector-item"], .sx-custom-model-item');
+          const items = modelPanel.querySelectorAll(".sx-custom-model-item");
           let visibleCount = 0;
-          allItems.forEach((item) => {
+          items.forEach((item) => {
             const lbl = (item.getAttribute("data-model-label") || item.innerText || "").toLowerCase();
             const match = !q || lbl.includes(q);
             item.style.display = match ? "" : "none";
             item.classList.toggle("is-hidden", !match);
             if (match) visibleCount++;
+          });
+          modelPanel.querySelectorAll(".sx-provider-header").forEach((hdr) => {
+            const pId = hdr.getAttribute("data-provider-id");
+            const hasVisible = Array.from(modelPanel.querySelectorAll(`.sx-custom-model-item[data-sx-provider="${pId}"]`)).some((it) => !it.classList.contains("is-hidden") && it.style.display !== "none");
+            hdr.style.display = hasVisible ? "flex" : "none";
           });
           let emptyMsg = modelPanel.querySelector("#sx-model-search-empty");
           if (visibleCount === 0) {
@@ -5991,6 +6039,9 @@
       if (listContainer) {
         const nativeItems = Array.from(listContainer.querySelectorAll('[data-testid="model-selector-item"]:not(.sx-custom-model-item)'));
         const sampleNative = nativeItems[0];
+        nativeItems.forEach((item) => {
+          item.style.display = "none";
+        });
         if (!document.getElementById("sx-custom-model-style")) {
           const st = document.createElement("style");
           st.id = "sx-custom-model-style";
@@ -6210,112 +6261,138 @@
           marker.className = "sx-custom-list-injected";
           marker.style.display = "none";
           listContainer.appendChild(marker);
+          const groups = {};
+          providers.forEach((p) => {
+            groups[p.id] = [];
+          });
+          groups["other"] = [];
           sxModels.forEach((m) => {
-            const isSelected = m.id === activeId;
-            const isVision = this.models.isVisionModel(m);
-            const isReasoning = this.isModelSupportingReasoning(m);
-            const displayName = m.name && m.name.toLowerCase().startsWith("sx") ? m.name : `sx ${m.name || "Model"}`;
-            let rightBadges = "";
-            let ctxTag = this.models.formatContextSize(m.contextLength);
-            if (!ctxTag) {
-              const mLow = (m.modelId || m.name || "").toLowerCase();
-              if (mLow.includes("1m") || mLow.includes("ultra")) ctxTag = "1M";
-              else if (mLow.includes("256k") || mLow.includes("pro")) ctxTag = "256k";
-              else if (mLow.includes("128k")) ctxTag = "128k";
-            }
-            if (ctxTag) {
-              rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;">${ctxTag}</span>`;
-            }
-            if (isVision) {
-              rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Vision</span>`;
-            }
-            if (m.supportsTools === true) {
-              rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Tools</span>`;
-            }
-            const hasOtherBadges = !!rightBadges;
-            let reasoningLabel = "";
-            if (isReasoning) {
-              const curReasoning = this._modelReasoning && this._modelReasoning[m.id] || "default";
-              const options = this.getModelReasoningOptions(m);
-              const effectiveReasoning = options.some((o) => o.id === curReasoning) ? curReasoning : options[0]?.id || "default";
-              const optObj = options.find((o) => o.id === effectiveReasoning);
-              reasoningLabel = optObj ? optObj.label : "Default";
-              if (hasOtherBadges) {
-                rightBadges += `<span class="sx-reasoning-subtag is-badge" data-model-id="${m.id}" data-has-badges="true">${reasoningLabel}</span>`;
-              } else {
-                rightBadges += `<span class="sx-reasoning-subtag" data-model-id="${m.id}" data-has-badges="false">(${reasoningLabel})</span>`;
-              }
-            }
-            const hasBadges = !!rightBadges;
-            const item = document.createElement("div");
-            item.className = "sx-custom-model-item" + (isSelected ? " is-selected" : "") + (hasBadges ? " has-badges" : "");
-            item.dataset.modelId = m.id;
-            item.dataset.modelLabel = displayName;
-            item.dataset.sxProvider = m.providerId || "other";
-            const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-            item.innerHTML = `
-                        <div class="sx-model-info-col">
-                            <div class="sx-model-title" title="${this.sxEsc(displayName)}">${this.sxEsc(displayName)}</div>
-                            ${hasBadges ? `<div class="sx-model-badges-row">${rightBadges}</div>` : ""}
-                        </div>
-                        <div class="sx-model-right-actions">
-                            <div class="sx-model-check-slot">
-                                ${isSelected ? checkSvg : ""}
-                            </div>
-                            <div class="sx-model-arrow-slot">
-                                ${isReasoning ? `
-                                    <div class="sx-model-chevron-hint" title="Reasoning: ${this.sxEsc(reasoningLabel)}">
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
-                                            <polyline points="9 18 15 12 9 6"></polyline>
-                                        </svg>
-                                    </div>
-                                ` : ""}
-                            </div>
-                        </div>
+            const pId = m.providerId || "other";
+            if (!groups[pId]) groups[pId] = [];
+            groups[pId].push(m);
+          });
+          Object.keys(groups).forEach((pId) => {
+            const groupModels = groups[pId];
+            if (!groupModels || groupModels.length === 0) return;
+            const pMeta = this.models.getProviderMeta(pId);
+            const header = document.createElement("div");
+            header.className = "sx-provider-header";
+            header.setAttribute("data-provider-id", pId);
+            header.innerHTML = `
+                        <span style="width:6px;height:6px;border-radius:50%;background:${pMeta.color};display:inline-block;"></span>
+                        <span style="font-size:10px;font-weight:700;color:${pMeta.color};text-transform:uppercase;letter-spacing:0.5px;">${this.sxEsc(pMeta.name)}</span>
                     `;
-            item.addEventListener("mouseenter", () => {
+            listContainer.appendChild(header);
+            groupModels.forEach((m) => {
+              const isSelected = m.id === activeId;
+              const isVision = this.models.isVisionModel(m);
+              const isReasoning = this.isModelSupportingReasoning(m);
+              const displayName = m.name || "Model";
+              let rightBadges = "";
+              let ctxTag = this.models.formatContextSize(m.contextLength);
+              if (!ctxTag) {
+                const mLow = (m.modelId || m.name || "").toLowerCase();
+                if (mLow.includes("1m") || mLow.includes("ultra")) ctxTag = "1M";
+                else if (mLow.includes("256k") || mLow.includes("pro")) ctxTag = "256k";
+                else if (mLow.includes("128k")) ctxTag = "128k";
+              }
+              if (ctxTag) {
+                rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;">${ctxTag}</span>`;
+              }
+              if (isVision) {
+                rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Vision</span>`;
+              }
+              if (m.supportsTools === true) {
+                rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Tools</span>`;
+              }
+              const hasOtherBadges = !!rightBadges;
+              let reasoningLabel = "";
               if (isReasoning) {
+                const curReasoning = this._modelReasoning && this._modelReasoning[m.id] || "default";
+                const options = this.getModelReasoningOptions(m);
+                const effectiveReasoning = options.some((o) => o.id === curReasoning) ? curReasoning : options[0]?.id || "default";
+                const optObj = options.find((o) => o.id === effectiveReasoning);
+                reasoningLabel = optObj ? optObj.label : "Default";
+                if (hasOtherBadges) {
+                  rightBadges += `<span class="sx-reasoning-subtag is-badge" data-model-id="${m.id}" data-has-badges="true">${reasoningLabel}</span>`;
+                } else {
+                  rightBadges += `<span class="sx-reasoning-subtag" data-model-id="${m.id}" data-has-badges="false">(${reasoningLabel})</span>`;
+                }
+              }
+              const hasBadges = !!rightBadges;
+              const item = document.createElement("div");
+              item.className = "sx-custom-model-item" + (isSelected ? " is-selected" : "") + (hasBadges ? " has-badges" : "");
+              item.dataset.modelId = m.id;
+              item.dataset.modelLabel = displayName;
+              item.dataset.sxProvider = pId;
+              const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+              item.innerHTML = `
+                            <div class="sx-model-info-col">
+                                <div class="sx-model-title" title="${this.sxEsc(displayName)}">${this.sxEsc(displayName)}</div>
+                                ${hasBadges ? `<div class="sx-model-badges-row">${rightBadges}</div>` : ""}
+                            </div>
+                            <div class="sx-model-right-actions">
+                                <div class="sx-model-check-slot">
+                                    ${isSelected ? checkSvg : ""}
+                                </div>
+                                <div class="sx-model-arrow-slot">
+                                    ${isReasoning ? `
+                                        <div class="sx-model-chevron-hint" title="Reasoning: ${this.sxEsc(reasoningLabel)}">
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
+                                                <polyline points="9 18 15 12 9 6"></polyline>
+                                            </svg>
+                                        </div>
+                                    ` : ""}
+                                </div>
+                            </div>
+                        `;
+              item.addEventListener("mouseenter", () => {
+                if (isReasoning) {
+                  if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
+                  this.openModelReasoningSubmenu(item, m.id, m.name);
+                } else {
+                  this.closeModelReasoningSubmenu();
+                }
+              });
+              item.addEventListener("mouseleave", (e) => {
+                const toEl = e.relatedTarget;
+                if (toEl && (toEl.closest("#sx-nested-reasoning-menu") || toEl.closest(".sx-custom-model-item") === item)) {
+                  return;
+                }
                 if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
-                this.openModelReasoningSubmenu(item, m.id, m.name);
-              } else {
-                this.closeModelReasoningSubmenu();
-              }
-            });
-            item.addEventListener("mouseleave", (e) => {
-              const toEl = e.relatedTarget;
-              if (toEl && (toEl.closest("#sx-nested-reasoning-menu") || toEl.closest(".sx-custom-model-item") === item)) {
-                return;
-              }
-              if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
-              this._menuCloseTimeout = setTimeout(() => {
-                this.closeModelReasoningSubmenu();
-              }, 200);
-            });
-            const cHint = item.querySelector(".sx-model-chevron-hint");
-            if (cHint) {
-              cHint.addEventListener("click", (e) => {
-                e.stopPropagation();
-                this.openModelReasoningSubmenu(item, m.id, m.name);
+                this._menuCloseTimeout = setTimeout(() => {
+                  this.closeModelReasoningSubmenu();
+                }, 200);
               });
-            }
-            item.addEventListener("click", () => {
-              const cKey = this.models.getActiveConversationKey();
-              this.models.setActiveModelForConversation(m.id, cKey, true);
-              listContainer.querySelectorAll(".sx-custom-model-item").forEach((el) => {
-                el.classList.remove("is-selected");
-                const cs2 = el.querySelector(".sx-model-check-slot");
-                if (cs2) cs2.innerHTML = "";
+              const cHint = item.querySelector(".sx-model-chevron-hint");
+              if (cHint) {
+                cHint.addEventListener("click", (e) => {
+                  e.stopPropagation();
+                  this.openModelReasoningSubmenu(item, m.id, m.name);
+                });
+              }
+              item.addEventListener("click", () => {
+                const cKey = this.models.getActiveConversationKey();
+                this.models.setActiveModelForConversation(m.id, cKey, true);
+                listContainer.querySelectorAll(".sx-custom-model-item").forEach((el) => {
+                  el.classList.remove("is-selected");
+                  const cs2 = el.querySelector(".sx-model-check-slot");
+                  if (cs2) cs2.innerHTML = "";
+                });
+                item.classList.add("is-selected");
+                const cs = item.querySelector(".sx-model-check-slot");
+                if (cs) cs.innerHTML = checkSvg;
+                this.quota?.updateContextButtonUI();
+                if (sampleNative) sampleNative.click();
+                setTimeout(() => this.hookDOM(), 30);
               });
-              item.classList.add("is-selected");
-              const cs = item.querySelector(".sx-model-check-slot");
-              if (cs) cs.innerHTML = checkSvg;
-              this.quota?.updateContextButtonUI();
-              if (sampleNative) sampleNative.click();
-              setTimeout(() => this.hookDOM(), 30);
+              listContainer.appendChild(item);
             });
-            listContainer.appendChild(item);
           });
         } else {
+          nativeItems.forEach((item) => {
+            if (item.style.display !== "none") item.style.display = "none";
+          });
           const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
           listContainer.querySelectorAll(".sx-custom-model-item").forEach((el) => {
             const sel = el.dataset.modelId === activeId;
