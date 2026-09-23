@@ -137,5 +137,12 @@ export const SX_BUILD = '2026.09.22-r13';
     window.SX_THEME_PRESETS = SX_THEME_PRESETS;
     window.sxApplyThemePreset = (p, s = true) => theme.applyPreset(p, s);
 
+    // Global hotkey: Enable Ctrl+R and F5 to reload window in Antigravity
+    window.addEventListener('keydown', (e) => {
+        if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') || e.key === 'F5') {
+            window.location.reload();
+        }
+    }, true);
+
     logger.info('Core', 'SX Core SDK initialized successfully.');
 })();

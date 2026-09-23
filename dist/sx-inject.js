@@ -4476,21 +4476,27 @@
       modelPanel.style.maxWidth = "340px";
       modelPanel.style.padding = "0";
       modelPanel.style.transition = "transform 0.08s ease-out";
-      try {
-        const promptBox = document.querySelector('[contenteditable="true"], textarea')?.closest("form, div.relative.flex, div.border");
-        if (promptBox) {
+      const anchorBtn = document.querySelector('[data-testid="model-selector-trigger"]') || document.querySelector('[data-testid="model-selector-button"]') || document.querySelector('button[aria-haspopup="dialog"]') || document.querySelector('button[aria-haspopup="menu"]');
+      const promptBox = anchorBtn?.closest("form") || anchorBtn?.closest('[data-testid="chat-input-container"]') || document.querySelector('form:has([data-testid="model-selector-trigger"])') || document.querySelector("form") || document.querySelector('[contenteditable="true"], textarea')?.closest("form, div.relative.flex, div.border");
+      const adjustPosition = () => {
+        try {
+          if (!promptBox || !modelPanel.isConnected) return;
           const boxRect = promptBox.getBoundingClientRect();
           const mRect = modelPanel.getBoundingClientRect();
           if (mRect.top < boxRect.top && mRect.bottom > boxRect.top - 4) {
             const shiftY = mRect.bottom - (boxRect.top - 8);
             const safeShift = Math.min(shiftY, Math.max(0, mRect.top - 12));
-            if (safeShift > 0 && safeShift < 160) {
+            if (safeShift > 0 && safeShift < 180) {
               modelPanel.style.transform = `translateY(-${safeShift}px)`;
             }
           }
+        } catch (e) {
         }
-      } catch (e) {
-      }
+      };
+      adjustPosition();
+      setTimeout(adjustPosition, 25);
+      setTimeout(adjustPosition, 60);
+      setTimeout(adjustPosition, 140);
       const scrollContainer = modelPanel.querySelector(".overflow-y-auto");
       if (scrollContainer) {
         scrollContainer.style.maxHeight = "340px";
@@ -6272,6 +6278,11 @@
     };
     window.SX_THEME_PRESETS = SX_THEME_PRESETS;
     window.sxApplyThemePreset = (p, s = true) => theme.applyPreset(p, s);
+    window.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r" || e.key === "F5") {
+        window.location.reload();
+      }
+    }, true);
     logger.info("Core", "SX Core SDK initialized successfully.");
   })();
 })();
