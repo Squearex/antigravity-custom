@@ -460,12 +460,24 @@ export class QuotaMonitor {
     }
 
     toggleContextPopover(anchorEl) {
+        // Mutual exclusion: Close other open popovers
+        const otherPerf = document.getElementById('sx-perf-popover');
+        if (otherPerf) otherPerf.remove();
+        const otherEffort = document.getElementById('sx-effort-slider-popover');
+        if (otherEffort) otherEffort.remove();
+        const infoModal = document.getElementById('sx-effort-info-modal');
+        if (infoModal) infoModal.remove();
+
         let pop = document.getElementById('sx-context-popover');
         if (pop) {
             pop.remove();
             if (anchorEl) anchorEl.classList.remove('sx-active');
             return;
         }
+
+        document.querySelectorAll('.sx-active').forEach(el => {
+            if (el !== anchorEl) el.classList.remove('sx-active');
+        });
 
         const convKey = this.models.getActiveConversationKey();
         const cleanConvId = (convKey || '').replace(/^conv_/, '');

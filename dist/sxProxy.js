@@ -1993,6 +1993,58 @@ function startInternalProxy() {
                 return;
             }
 
+            if (url === '/sx/test-provider' && req.method === 'POST') {
+                let rawBody = '';
+                req.on('data', chunk => rawBody += chunk);
+                req.on('end', async () => {
+                    try {
+                        const data = JSON.parse(rawBody || '{}');
+                        const provId = data.providerId;
+                        loadConfigFromDisk();
+                        const prov = inMemoryConfig.providers.find(p => p.id === provId);
+                        if (!prov) {
+                            res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                            res.end(JSON.stringify({ ok: false, error: 'Provider not found' }));
+                            return;
+                        }
+                        const t0 = Date.now();
+                        const base = (prov.baseUrl || 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
+                        const testUrl = base + (base.endsWith('/v1') ? '/models' : '/v1/models');
+                        const headers = {};
+                        if (prov.apiKey) {
+                            if (prov.protocol === 'anthropic') {
+                                headers['x-api-key'] = prov.apiKey;
+                                headers['anthropic-version'] = '2023-06-01';
+                            } else {
+                                headers['Authorization'] = 'Bearer ' + prov.apiKey;
+                            }
+                        }
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 7000);
+                        const fetchRes = await fetch(testUrl, {
+                            method: 'GET',
+                            headers,
+                            signal: controller.signal
+                        }).catch(err => {
+                            return { ok: false, status: 0, statusText: err.message };
+                        });
+                        clearTimeout(timeoutId);
+                        const latency = Date.now() - t0;
+                        if (fetchRes && (fetchRes.ok || (fetchRes.status >= 200 && fetchRes.status < 500))) {
+                            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                            res.end(JSON.stringify({ ok: fetchRes.ok, status: fetchRes.status, latency, statusText: fetchRes.statusText }));
+                        } else {
+                            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                            res.end(JSON.stringify({ ok: false, status: fetchRes?.status || 500, latency, error: fetchRes?.statusText || 'Host unreachable' }));
+                        }
+                    } catch(e) {
+                        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ ok: false, error: e.message }));
+                    }
+                });
+                return;
+            }
+
             // Handle fetchAvailableModels for language_server.exe
             if (url.includes('fetchAvailableModels')) {
                 loadConfigFromDisk();
@@ -2197,6 +2249,32 @@ function startInternalProxy() {
                         if (!customModel) {
                             customModel = inMemoryConfig.models[0];
                         }
+
+                        // Subagent model pool routing
+                        const isSubagentReq = !!(
+                            innerReq.labels?.is_subagent ||
+                            reqJson.labels?.is_subagent ||
+                            innerReq.labels?.agent_type === 'subagent' ||
+                            reqJson.labels?.agent_type === 'subagent' ||
+                            (reqJson.requestId && String(reqJson.requestId).toLowerCase().includes('subagent')) ||
+                            (innerReq.requestId && String(innerReq.requestId).toLowerCase().includes('subagent')) ||
+                            ['flash_lite', 'flash', 'pro'].includes(String(innerReq.model || reqJson.model || '').toLowerCase())
+                        );
+
+                        if (isSubagentReq) {
+                            const subPool = inMemoryConfig.models.filter(m => m.isSubagent);
+                            if (subPool.length > 0) {
+                                if (subPool.length === 1) {
+                                    customModel = subPool[0];
+                                } else {
+                                    if (typeof global._subagentPoolIdx !== 'number') global._subagentPoolIdx = 0;
+                                    customModel = subPool[global._subagentPoolIdx % subPool.length];
+                                    global._subagentPoolIdx = (global._subagentPoolIdx + 1) % subPool.length;
+                                }
+                                console.log(`[SX PROXY] Subagent request routed to Subagent Pool: ${customModel.name} (${customModel.id})`);
+                            }
+                        }
+
                         const provider = customModel ? inMemoryConfig.providers.find(p => p.id === customModel.providerId) : inMemoryConfig.providers[0];
 
                         console.log(`[SX PROXY] Stream generation requested: model=${requestedModel} -> slotIdx=${modelIdx} -> customModel=${customModel?.name} (${customModel?.modelId})`);

@@ -244,39 +244,47 @@ export class PerfMonitor {
     injectMetricsToMessageFooters() {
         try {
             const now = Date.now();
-            if (this._lastScanTs && (now - this._lastScanTs < 600)) return;
+            if (this._lastScanTs && (now - this._lastScanTs < 500)) return;
             this._lastScanTs = now;
-            const footers = Array.from(document.querySelectorAll('.flex.w-full.items-start.gap-1 > .grow'));
+
+            // Broader selector to reliably find message footer containing timestamps
+            let footers = Array.from(document.querySelectorAll('.flex.w-full.items-start.gap-1 > .grow, [data-testid*="message-footer"], .message-footer'));
+            if (!footers || footers.length === 0) {
+                footers = Array.from(document.querySelectorAll('div, span')).filter(el => {
+                    if (el.children.length > 2) return false;
+                    const txt = el.textContent.trim();
+                    return /\b\d{1,2}:\d{2}\b/.test(txt) && txt.length < 35 && !el.closest('#sx-perf-popover') && !el.closest('#sx-context-popover') && !el.closest('#sx-effort-slider-popover');
+                });
+            }
             if (!footers || footers.length === 0) return;
 
             footers.forEach((footerEl, idx) => {
-                const timeText = footerEl.childNodes[0]?.textContent?.trim() || '';
+                const timeText = footerEl.childNodes[0]?.textContent?.trim() || footerEl.textContent?.trim() || '';
                 // Must contain timestamp format e.g. "1:03" or "21:21, 21.09.2026"
                 if (!/\b\d{1,2}:\d{2}\b/.test(timeText)) return;
 
                 const isLast = (idx === footers.length - 1);
                 const stats = this.getStatsForMessage(footerEl, isLast);
                 if (!stats && !isLast) return;
-                // Always render badge: if stats missing, show minimal wait state
-                const hasData = stats && (stats.ttftMs || stats.tps || stats.completionTokens > 0);
 
                 const ttftSec = stats ? (stats.ttftMs / 1000).toFixed(2) : '--';
                 const ttftStr = stats ? (stats.ttftMs >= 1000 ? `${ttftSec}s` : `${stats.ttftMs}ms`) : '--ms';
                 const tpsStr = stats ? (stats.tps || 0) : 0;
                 const tokDisp = stats ? `~${stats.completionTokens || 0} tok` : '--';
-                const splitStr = (stats && (stats.normalTokens != null || stats.thinkingTokens != null)) ? ` N${stats.normalTokens || 0}/T${stats.thinkingTokens || 0}` : '';
+                const splitStr = (stats && (stats.normalTokens != null || stats.thinkingTokens != null)) ? ` (${stats.normalTokens || 0}N / ${stats.thinkingTokens || 0}T)` : '';
+                const durStr = (stats && stats.durationMs) ? `${(stats.durationMs / 1000).toFixed(1)}s` : '';
 
                 let speedColor = '#10b981';
-                if (stats.tps < 20) speedColor = '#f43f5e';
-                else if (stats.tps < 40) speedColor = '#eab308';
-                else if (stats.tps < 80) speedColor = '#38bdf8';
+                if (stats && stats.tps < 20) speedColor = '#f43f5e';
+                else if (stats && stats.tps < 40) speedColor = '#eab308';
+                else if (stats && stats.tps < 80) speedColor = '#38bdf8';
 
                 let badge = footerEl.querySelector('.sx-msg-perf-metrics');
                 if (!badge) {
                     badge = document.createElement('span');
                     badge.className = 'sx-msg-perf-metrics';
                     badge.style.cssText = `
-                        margin-left: auto;
+                        margin-left: 8px;
                         display: inline-flex;
                         align-items: center;
                         gap: 5px;
@@ -285,24 +293,35 @@ export class PerfMonitor {
                         user-select: none;
                         vertical-align: middle;
                         line-height: 1;
+                        background: rgba(255, 255, 255, 0.03);
+                        border: 1px solid rgba(255, 255, 255, 0.08);
+                        padding: 2px 7px;
+                        border-radius: 6px;
                     `;
                     footerEl.appendChild(badge);
                 }
 
-                const safeColor = stats ? (stats.tps < 20 ? '#f43f5e' : stats.tps < 40 ? '#eab308' : stats.tps < 80 ? '#38bdf8' : '#10b981') : '#38bdf8';
                 badge.innerHTML = `
-                    <span style="color: #64748b; font-size: 10px;">•</span>
-                    <span style="color: ${safeColor}; font-weight: 700;" title="İnferans Hızı: ${tpsStr} Token/Saniye">⚡ ${tpsStr} TPS</span>
-                    <span style="color: #64748b; font-size: 10px;">•</span>
+                    <span style="color: ${speedColor}; font-weight: 700;" title="İnferans Hızı: ${tpsStr} Token/Saniye">⚡ ${tpsStr} TPS</span>
+                    <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
                     <span style="color: #38bdf8; font-weight: 600;" title="İlk Yanıt Süresi (TTFT): ${stats ? stats.ttftMs + 'ms' : '--'}">⏱️ ${ttftStr}</span>
-                    <span style="color: #64748b; font-size: 10px;">•</span>
-                    <span style="color: #94a3b8;" title="Bu Mesaj İçin Üretilen Token: ${tokDisp}${splitStr}">${tokDisp}${splitStr}</span>
+                    <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
+                    <span style="color: rgba(255,255,255,0.7);" title="Toplam Üretilen Token: ${tokDisp}${splitStr}">📊 ${tokDisp}${splitStr}</span>
+                    ${durStr ? `<span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span><span style="color: rgba(255,255,255,0.5);" title="Toplam Süre: ${durStr}">⏳ ${durStr}</span>` : ''}
                 `;
             });
         } catch(e) {}
     }
 
     togglePerfPopover(anchorEl) {
+        // Mutual exclusion: Close other open popovers
+        const otherCtx = document.getElementById('sx-context-popover');
+        if (otherCtx) otherCtx.remove();
+        const otherEffort = document.getElementById('sx-effort-slider-popover');
+        if (otherEffort) otherEffort.remove();
+        const infoModal = document.getElementById('sx-effort-info-modal');
+        if (infoModal) infoModal.remove();
+
         let pop = document.getElementById('sx-perf-popover');
         if (pop) {
             pop.remove();
@@ -310,6 +329,10 @@ export class PerfMonitor {
             this._currentRenderFn = null;
             return;
         }
+
+        document.querySelectorAll('.sx-active').forEach(el => {
+            if (el !== anchorEl) el.classList.remove('sx-active');
+        });
 
         const convKey = this.models.getActiveConversationKey();
         const cleanConvId = (convKey || '').replace(/^conv_/, '');

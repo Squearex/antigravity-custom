@@ -1005,6 +1005,7 @@ export class UIInjector {
                                 <div class="sx-card-sub">${this.sxEsc(p.baseUrl || '')}</div>
                             </div>
                             <div class="sx-card-actions">
+                                <button type="button" class="sx-btn test-p" data-id="${p.id}" style="padding:2px 8px;font-size:11px;height:24px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.85);border-radius:4px;cursor:pointer;" title="Provider Bağlantısını Test Et">⚡ Test</button>
                                 <button class="sx-icon-btn edit-p" data-id="${p.id}" title="Edit">✎</button>
                                 <button class="sx-icon-btn del del-p" data-id="${p.id}" title="Delete">✕</button>
                             </div>
@@ -1014,6 +1015,35 @@ export class UIInjector {
             }
             provSec.innerHTML = html;
             provSec.querySelector('#sx-add-prov-btn').onclick = () => this.openProviderModal(null, () => { renderProviders(); renderModels(); });
+            provSec.querySelectorAll('.test-p').forEach(b => {
+                b.onclick = async (e) => {
+                    e.stopPropagation();
+                    const origText = b.textContent;
+                    b.disabled = true;
+                    b.textContent = '⏳...';
+                    try {
+                        const res = await this.network.post('/sx/test-provider', { providerId: b.dataset.id });
+                        if (res && res.ok) {
+                            b.textContent = `✓ ${res.latency || 0}ms`;
+                            b.style.color = '#86efac';
+                            b.style.borderColor = 'rgba(134,239,172,0.4)';
+                        } else {
+                            b.textContent = `✕ ${res?.status || 'Hata'}`;
+                            b.style.color = '#f87171';
+                            b.style.borderColor = 'rgba(248,113,113,0.4)';
+                        }
+                    } catch(err) {
+                        b.textContent = '✕ Hata';
+                        b.style.color = '#f87171';
+                    }
+                    setTimeout(() => {
+                        b.disabled = false;
+                        b.textContent = origText;
+                        b.style.color = '';
+                        b.style.borderColor = '';
+                    }, 3500);
+                };
+            });
             provSec.querySelectorAll('.edit-p').forEach(b => {
                 b.onclick = () => { const p = this.state.getProviders().find(x => x.id === b.dataset.id); if (p) this.openProviderModal(p, () => { renderProviders(); renderModels(); }); };
             });
@@ -1028,44 +1058,113 @@ export class UIInjector {
         };
 
         const renderModels = () => {
-            const models = this.state.getModels();
+            const allModels = this.state.getModels();
             const providers = this.state.getProviders();
+            const searchQuery = (this._modelSearchQuery || '').toLowerCase().trim();
+
+            const filteredModels = searchQuery
+                ? allModels.filter(m => (m.name || '').toLowerCase().includes(searchQuery) || (m.modelId || '').toLowerCase().includes(searchQuery))
+                : allModels;
+
+            const subagentCount = allModels.filter(m => m.isSubagent).length;
+
             let html = `
                 <div class="sx-section-header">
                     <div style="display:flex;align-items:center;gap:6px;">
                         <div class="sx-section-title">Models</div>
-                        <span class="sx-section-count">(${models.length})</span>
+                        <span class="sx-section-count">(${allModels.length})</span>
                     </div>
-                    <button type="button" class="sx-btn sx-btn-primary" id="sx-add-model-btn">+ Add Model</button>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <span style="font-size:11px;color:rgba(255,255,255,0.5);" title="Subagent isteklerini yürütebilecek seçili modeller">🤖 Subagent Havuzu: <strong style="color:${subagentCount > 0 ? '#38bdf8' : 'rgba(255,255,255,0.6)'};">${subagentCount} seçili</strong></span>
+                        <button type="button" class="sx-btn sx-btn-primary" id="sx-add-model-btn">+ Add Model</button>
+                    </div>
+                </div>
+                <div style="margin:8px 0 12px 0;">
+                    <input type="text" id="sx-models-search-input" value="${this.sxEsc(this._modelSearchQuery || '')}" placeholder="🔍 Model adı veya ID filtrele..." style="width:100%;height:32px;box-sizing:border-box;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:6px;padding:0 10px;font-size:12px;color:#ffffff;outline:none;transition:border-color 0.15s ease;" />
                 </div>
             `;
-            if (!models.length) {
-                html += '<div class="sx-empty-hint">Henüz model eklenmedi.<br>Yukarıdan bir provider ekleyip model tanımlayın.</div>';
+
+            if (!filteredModels.length) {
+                html += searchQuery
+                    ? `<div class="sx-empty-hint">"${this.sxEsc(searchQuery)}" ile eşleşen model bulunamadı.</div>`
+                    : '<div class="sx-empty-hint">Henüz model eklenmedi.<br>Yukarıdan bir provider ekleyip model tanımlayın.</div>';
             } else {
-                html += '<div class="sx-models-list">';
-                models.forEach(m => {
+                // Group by Provider
+                const grouped = new Map();
+                filteredModels.forEach(m => {
                     const p = providers.find(x => x.id === m.providerId);
-                    const ctxTag = this.models.formatContextSize(m.contextLength);
-                    const badgeBits = [];
-                    if (ctxTag) badgeBits.push(`<span style="font-size:9.5px;font-weight:700;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.2);padding:0 5px;border-radius:4px;">${ctxTag}</span>`);
-                    if (this.models.isVisionModel(m)) badgeBits.push('<span style="font-size:9.5px;font-weight:600;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0 5px;border-radius:4px;">Vision</span>');
-                    if (m.supportsTools === true) badgeBits.push('<span style="font-size:9.5px;font-weight:600;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0 5px;border-radius:4px;">Tools</span>');
-                    html += `
-                        <div class="sx-model-card">
-                            <div class="sx-model-name">${this.sxEsc(m.name)}</div>
-                            <div class="sx-model-id">${this.sxEsc(m.modelId)}</div>
-                            <div style="display:flex;gap:4px;flex-shrink:0;">${badgeBits.join('')}</div>
-                            <div class="sx-model-prov">${this.sxEsc(p ? p.name : '?')}</div>
-                            <div class="sx-card-actions">
-                                <button class="sx-icon-btn edit-m" data-id="${m.id}" title="Edit">✎</button>
-                                <button class="sx-icon-btn del del-m" data-id="${m.id}" title="Delete">✕</button>
-                            </div>
-                        </div>
-                    `;
+                    const pName = p ? p.name : 'Diğer / Tanımsız';
+                    if (!grouped.has(pName)) grouped.set(pName, []);
+                    grouped.get(pName).push(m);
                 });
-                html += '</div>';
+
+                grouped.forEach((pModels, pName) => {
+                    html += `
+                        <div class="sx-provider-group-header" style="margin:14px 0 8px 0;padding-bottom:5px;border-bottom:1px solid rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:space-between;">
+                            <span style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.85);text-transform:uppercase;letter-spacing:0.5px;">${this.sxEsc(pName)}</span>
+                            <span style="font-size:10.5px;color:rgba(255,255,255,0.45);font-weight:600;">${pModels.length} model</span>
+                        </div>
+                        <div class="sx-models-list" style="margin-bottom:12px;">
+                    `;
+
+                    pModels.forEach(m => {
+                        const ctxTag = this.models.formatContextSize(m.contextLength);
+                        const badgeBits = [];
+                        if (ctxTag) badgeBits.push(`<span style="font-size:9.5px;font-weight:700;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.2);padding:0 5px;border-radius:4px;">${ctxTag}</span>`);
+                        if (this.models.isVisionModel(m)) badgeBits.push('<span style="font-size:9.5px;font-weight:600;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0 5px;border-radius:4px;">Vision</span>');
+                        if (m.supportsTools === true) badgeBits.push('<span style="font-size:9.5px;font-weight:600;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0 5px;border-radius:4px;">Tools</span>');
+
+                        const isSub = !!m.isSubagent;
+                        const subStyle = isSub
+                            ? 'background:rgba(56,189,248,0.18);border:1px solid rgba(56,189,248,0.45);color:#38bdf8;font-weight:600;'
+                            : 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.45);';
+
+                        html += `
+                            <div class="sx-model-card" style="display:flex;align-items:center;gap:10px;">
+                                <div class="sx-model-name" style="flex:1.2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${this.sxEsc(m.name)}</div>
+                                <div class="sx-model-id" style="flex:1.4;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:rgba(255,255,255,0.45);">${this.sxEsc(m.modelId)}</div>
+                                <div style="display:flex;gap:4px;flex-shrink:0;">${badgeBits.join('')}</div>
+                                <button type="button" class="sx-btn subagent-toggle" data-id="${m.id}" style="height:22px;padding:0 8px;font-size:10.5px;border-radius:4px;cursor:pointer;transition:all 0.15s ease;flex-shrink:0;${subStyle}" title="Bu modeli subagent havuzuna ekle / çıkar">
+                                    🤖 ${isSub ? 'Subagent ✓' : 'Subagent'}
+                                </button>
+                                <div class="sx-card-actions" style="flex-shrink:0;">
+                                    <button class="sx-icon-btn edit-m" data-id="${m.id}" title="Edit">✎</button>
+                                    <button class="sx-icon-btn del del-m" data-id="${m.id}" title="Delete">✕</button>
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    html += '</div>';
+                });
             }
             modelsSec.innerHTML = html;
+
+            const searchInput = modelsSec.querySelector('#sx-models-search-input');
+            if (searchInput) {
+                searchInput.oninput = (e) => {
+                    this._modelSearchQuery = e.target.value;
+                    renderModels();
+                    const nextInput = modelsSec.querySelector('#sx-models-search-input');
+                    if (nextInput) {
+                        nextInput.focus();
+                        nextInput.selectionStart = nextInput.selectionEnd = nextInput.value.length;
+                    }
+                };
+            }
+
+            modelsSec.querySelectorAll('.subagent-toggle').forEach(b => {
+                b.onclick = (e) => {
+                    e.stopPropagation();
+                    const mod = allModels.find(x => x.id === b.dataset.id);
+                    if (mod) {
+                        mod.isSubagent = !mod.isSubagent;
+                        this.state.setModels(allModels);
+                        renderModels();
+                    }
+                };
+            });
+
             modelsSec.querySelector('#sx-add-model-btn').onclick = () => this.openModelModal(null, () => renderModels());
             modelsSec.querySelectorAll('.edit-m').forEach(b => {
                 b.onclick = () => { const m = this.state.getModels().find(x => x.id === b.dataset.id); if (m) this.openModelModal(m, () => renderModels()); };
@@ -1438,13 +1537,13 @@ export class UIInjector {
                     .sx-nested-menu {
                         position: fixed !important;
                         z-index: 999999 !important;
-                        background: #1e1e1e !important;
-                        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+                        background: #14151b !important;
+                        border: 1px solid rgba(255, 255, 255, 0.14) !important;
                         border-radius: 8px !important;
                         padding: 4px !important;
                         min-width: 125px !important;
-                        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7) !important;
-                        backdrop-filter: blur(20px) !important;
+                        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
+                        backdrop-filter: blur(24px) !important;
                         font-family: inherit !important;
                         display: flex !important;
                         flex-direction: column !important;
@@ -1477,20 +1576,21 @@ export class UIInjector {
                     .sx-effort-popover {
                         position: fixed !important;
                         z-index: 100000 !important;
-                        width: 232px !important;
+                        width: 236px !important;
                         border-radius: 12px !important;
-                        background: #1e1e20 !important;
-                        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-                        padding: 13px 15px !important;
-                        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65) !important;
-                        backdrop-filter: blur(20px) !important;
+                        background: #14151b !important;
+                        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+                        padding: 14px 16px !important;
+                        box-shadow: 0 24px 56px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
+                        backdrop-filter: blur(24px) !important;
                         font-family: inherit !important;
                         box-sizing: border-box !important;
                     }
                     .sx-effort-track {
-                        height: 20px !important;
-                        border-radius: 10px !important;
-                        background: #4a4a4f !important;
+                        height: 22px !important;
+                        border-radius: 11px !important;
+                        background: rgba(255, 255, 255, 0.06) !important;
+                        border: 1px solid rgba(255, 255, 255, 0.1) !important;
                         position: relative !important;
                         display: flex !important;
                         align-items: center !important;
@@ -1499,14 +1599,18 @@ export class UIInjector {
                         cursor: pointer !important;
                         user-select: none !important;
                         box-sizing: border-box !important;
+                        transition: background 0.15s ease !important;
+                    }
+                    .sx-effort-track:hover {
+                        background: rgba(255, 255, 255, 0.09) !important;
                     }
                     .sx-effort-dot {
                         position: absolute !important;
-                        top: 8px !important;
+                        top: 9px !important;
                         width: 4px !important;
                         height: 4px !important;
                         border-radius: 50% !important;
-                        background: rgba(255, 255, 255, 0.5) !important;
+                        background: rgba(255, 255, 255, 0.3) !important;
                         pointer-events: none !important;
                         transform: translateX(-50%) !important;
                     }
@@ -1515,9 +1619,9 @@ export class UIInjector {
                         top: 2px !important;
                         width: 16px !important;
                         height: 16px !important;
-                        border-radius: 5px !important;
+                        border-radius: 6px !important;
                         background: #ffffff !important;
-                        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45) !important;
+                        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.25) !important;
                         pointer-events: none !important;
                         transition: left 0.12s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
                     }
@@ -1984,6 +2088,16 @@ export class UIInjector {
             return;
         }
 
+        // Mutual exclusion: Close other popovers and help modal
+        const perfPop = document.getElementById('sx-perf-popover');
+        if (perfPop) perfPop.remove();
+        const ctxPop = document.getElementById('sx-context-popover');
+        if (ctxPop) ctxPop.remove();
+        const infoModal = document.getElementById('sx-effort-info-modal');
+        if (infoModal) infoModal.remove();
+        const infoBdrop = document.getElementById('sx-effort-info-backdrop');
+        if (infoBdrop) infoBdrop.remove();
+
         const popover = document.createElement('div');
         popover.id = 'sx-effort-slider-popover';
         popover.className = 'sx-effort-popover';
@@ -2011,7 +2125,7 @@ export class UIInjector {
                     <span>Effort</span>
                     <strong id="sx-effort-popover-val" style="color:${curLvl.color};font-weight:700;">${curLvl.label}</strong>
                 </div>
-                <div class="sx-help-icon" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:1px solid rgba(255,255,255,0.3);color:rgba(255,255,255,0.6);font-size:10px;cursor:help;" title="Ajanın problem çözme derinliği ve analitik gayret seviyesi. Ultra Code en derin Titan self-healing modunu açar.">?</div>
+                <button type="button" id="sx-effort-help-btn" class="sx-help-icon" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;min-width:18px;min-height:18px;border-radius:50%;border:1px solid rgba(255,255,255,0.25);background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.7);font-size:11px;font-weight:600;cursor:pointer;line-height:1;box-sizing:border-box;flex-shrink:0;aspect-ratio:1/1;padding:0;transition:all 0.15s ease;" title="Effort ve Titan Self-Healing Rehberi">?</button>
             </div>
             <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:rgba(255,255,255,0.45);margin:10px 0 6px 0;user-select:none;">
                 <span>Faster</span>
@@ -2033,7 +2147,7 @@ export class UIInjector {
 
         document.body.appendChild(popover);
 
-        // Position above anchorBtn (Image 2 style)
+        // Position above anchorBtn
         const rect = anchorBtn.getBoundingClientRect();
         const popoverWidth = 232;
         let left = rect.left - (popoverWidth - rect.width) / 2;
@@ -2091,6 +2205,14 @@ export class UIInjector {
             window.addEventListener('mouseup', onMouseUp);
         });
 
+        const helpBtn = popover.querySelector('#sx-effort-help-btn');
+        if (helpBtn) {
+            helpBtn.onclick = (e) => {
+                e.stopPropagation();
+                this.showEffortHelpModal();
+            };
+        }
+
         const scanBtn = popover.querySelector('#sx-popover-scan-btn');
         if (scanBtn) {
             scanBtn.onclick = async () => {
@@ -2120,6 +2242,114 @@ export class UIInjector {
             };
             document.addEventListener('click', onDocClick);
         }, 20);
+    }
+
+    showEffortHelpModal() {
+        const existing = document.getElementById('sx-effort-info-modal');
+        if (existing) {
+            existing.remove();
+            const b = document.getElementById('sx-effort-info-backdrop');
+            if (b) b.remove();
+            return;
+        }
+
+        const modal = document.createElement('div');
+        modal.id = 'sx-effort-info-modal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 490px;
+            max-width: 90vw;
+            max-height: 85vh;
+            overflow-y: auto;
+            background: #14151b;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 14px;
+            padding: 22px 24px;
+            box-shadow: 0 28px 64px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(28px);
+            z-index: 100002;
+            color: #ffffff;
+            font-family: inherit;
+            box-sizing: border-box;
+        `;
+
+        modal.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <div style="width:28px;height:28px;border-radius:8px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.3);display:flex;align-items:center;justify-content:center;color:#fbbf24;font-size:14px;font-weight:700;">⚡</div>
+                    <div>
+                        <div style="font-size:15px;font-weight:700;color:#ffffff;line-height:1.2;">Effort & Titan Self-Healing</div>
+                        <div style="font-size:11.5px;color:rgba(255,255,255,0.45);">Ajan Gayret ve Otonom Hata Onarım Rehberi</div>
+                    </div>
+                </div>
+                <button type="button" id="sx-close-effort-modal" style="background:transparent;border:none;color:rgba(255,255,255,0.5);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:6px;transition:all 0.15s ease;" onmouseenter="this.style.color='#ffffff';this.style.background='rgba(255,255,255,0.08)'" onmouseleave="this.style.color='rgba(255,255,255,0.5)';this.style.background='transparent'">✕</button>
+            </div>
+
+            <div style="font-size:12.5px;line-height:1.6;color:rgba(255,255,255,0.85);margin-bottom:16px;">
+                <div style="font-weight:700;color:#38bdf8;margin-bottom:6px;font-size:13px;">🧠 Effort Seviyeleri (Faster ➔ Smarter)</div>
+                <div style="display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,0.03);padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.07);">
+                    <div><strong style="color:rgba(255,255,255,0.6);">Low:</strong> En hızlı yanıt, minimal token tüketimi. Basit sorular ve tek satırlık düzenlemeler.</div>
+                    <div><strong style="color:rgba(255,255,255,0.9);">Normal:</strong> Standart dengeli mod. Tipik kod geliştirme ve soru yanıtlama.</div>
+                    <div><strong style="color:#38bdf8;">High:</strong> Derin kod analizi, mimari tasarım ve çoklu dosya akıl yürütmesi.</div>
+                    <div><strong style="color:#ffffff;">Max:</strong> Maksimum düşünme payı. Kompleks algoritmalar ve kapsamlı refactoring.</div>
+                    <div><strong style="color:#fbbf24;">Ultra Code (Titan):</strong> En akıllı seviye. Kod değişikliklerini atomik yapar, test ve linter döngülerini otomatik yönetir.</div>
+                </div>
+            </div>
+
+            <div style="font-size:12.5px;line-height:1.6;color:rgba(255,255,255,0.85);">
+                <div style="font-weight:700;color:#fbbf24;margin-bottom:6px;font-size:13px;">🛡️ Titan Self-Healing Protokolü Nedir?</div>
+                <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-bottom:8px;">
+                    Ultra Code modunda devreye giren Titan Self-Healing, ajanın yazdığı kodları kendi kendine doğrulaması ve hataları onarması için 4 aşamalı bir güvenlik kalkanıdır:
+                </div>
+                <div style="display:flex;flex-direction:column;gap:8px;background:rgba(245,158,11,0.04);padding:12px;border-radius:8px;border:1px solid rgba(245,158,11,0.18);">
+                    <div style="display:flex;gap:8px;">
+                        <span style="font-weight:700;color:#fbbf24;flex-shrink:0;">1.</span>
+                        <div><strong style="color:#ffffff;">Repo Haritası (Repo-Map):</strong> Projedeki fonksiyonları ve tipleri AST bazlı tarar, modele doğrudan doğruya ilgili sembolleri aktarır.</div>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <span style="font-weight:700;color:#fbbf24;flex-shrink:0;">2.</span>
+                        <div><strong style="color:#ffffff;">Atomik Kod Değişimi:</strong> Dosyayı baştan sona silip yazmak yerine yalnızca hedeflenen satır bloğunu değiştirir; bozulmaları önler.</div>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <span style="font-weight:700;color:#fbbf24;flex-shrink:0;">3.</span>
+                        <div><strong style="color:#ffffff;">Otomatik Doğrulama:</strong> Kod yazıldıktan hemen sonra syntax ve lint kontrolleri arka planda otomatik koşturulur.</div>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <span style="font-weight:700;color:#fbbf24;flex-shrink:0;">4.</span>
+                        <div><strong style="color:#ffffff;">Otonom Onarım:</strong> Herhangi bir hata veya linter kırılması tespit edilirse ajan anında uyarılır ve insan müdahalesine gerek kalmadan hatayı düzeltir.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top:18px;display:flex;justify-content:flex-end;">
+                <button type="button" id="sx-ok-effort-modal" style="height:30px;padding:0 18px;border-radius:6px;font-size:12px;font-weight:600;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.18);color:#ffffff;cursor:pointer;transition:all 0.15s ease;" onmouseenter="this.style.background='rgba(255,255,255,0.18)'" onmouseleave="this.style.background='rgba(255,255,255,0.1)'">Anladım</button>
+            </div>
+        `;
+
+        const backdrop = document.createElement('div');
+        backdrop.id = 'sx-effort-info-backdrop';
+        backdrop.style.cssText = `
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            z-index: 100001;
+        `;
+
+        const closeIt = () => {
+            modal.remove();
+            backdrop.remove();
+        };
+
+        backdrop.onclick = closeIt;
+        document.body.appendChild(backdrop);
+        document.body.appendChild(modal);
+
+        modal.querySelector('#sx-close-effort-modal').onclick = closeIt;
+        modal.querySelector('#sx-ok-effort-modal').onclick = closeIt;
     }
 }
 
