@@ -946,6 +946,114 @@ export class UIInjector {
         setTimeout(() => overlay.querySelector('#sx-m-prov').focus(), 50);
     }
 
+    findSettingsLayout(dialog) {
+        if (!dialog) return { sidebar: null, rightPanel: null };
+
+        // 1. Locate the sidebar container
+        const navButtons = Array.from(dialog.querySelectorAll('button, [role="tab"], a, div[role="button"]')).filter(el => {
+            if (el.closest('#sx-content-wrapper')) return false;
+            const txt = (el.textContent || '').trim().toLowerCase();
+            return ['general', 'genel', 'appearance', 'görünüm', 'shortcuts', 'kısayol', 'application', 'uygulama', 'models', 'customization', 'özelleştirme'].some(k => txt === k || txt.startsWith(k));
+        });
+
+        let sidebar = null;
+        if (navButtons.length > 0) {
+            let cur = navButtons[0];
+            while (cur && cur.parentElement && cur.parentElement !== dialog) {
+                const p = cur.parentElement;
+                if (navButtons.filter(b => p.contains(b)).length >= 2) {
+                    sidebar = cur;
+                    if (p.children.length >= 2 && Array.from(p.children).some(c => c !== cur && (c.classList.contains('flex-1') || c.offsetWidth > cur.offsetWidth))) {
+                        sidebar = cur;
+                        break;
+                    }
+                }
+                cur = p;
+            }
+            if (!sidebar) sidebar = navButtons[0].closest('nav, aside, [role="tablist"]') || navButtons[0].parentElement;
+        }
+
+        if (!sidebar) {
+            const userEl = Array.from(dialog.querySelectorAll('div, span, button')).find(el => {
+                if (el.closest('#sx-content-wrapper')) return false;
+                const t = (el.textContent || '').toLowerCase();
+                return t.includes('@') || t.includes('sx developer') || t.includes('developer@');
+            });
+            if (userEl) {
+                let cur = userEl;
+                while (cur && cur.parentElement && cur.parentElement !== dialog) {
+                    if (cur.parentElement.children.length >= 2) {
+                        sidebar = cur;
+                        break;
+                    }
+                    cur = cur.parentElement;
+                }
+            }
+        }
+
+        // 2. Locate rightPanel: the column containing the main settings content
+        let rightPanel = null;
+
+        // Strategy A: Find native models content markers
+        const nativeContentEl = Array.from(dialog.querySelectorAll('h1, h2, h3, h4, div, span, p')).find(el => {
+            if (el.closest('#sx-content-wrapper')) return false;
+            if (sidebar && sidebar.contains(el)) return false;
+            const t = (el.textContent || '').trim().toLowerCase();
+            return t === 'manage your model quota and credits.' ||
+                   t === 'manage your model quota' ||
+                   t === 'model credits' ||
+                   t === 'your plan' ||
+                   t === 'custom quota' ||
+                   t === 'enable ai credit overages';
+        });
+
+        if (nativeContentEl) {
+            let cur = nativeContentEl;
+            while (cur && cur.parentElement && cur.parentElement !== dialog) {
+                const p = cur.parentElement;
+                if (sidebar && p.contains(sidebar)) {
+                    rightPanel = cur;
+                    break;
+                }
+                if (p.children.length >= 2 && cur !== sidebar) {
+                    rightPanel = cur;
+                    break;
+                }
+                cur = p;
+            }
+            if (!rightPanel) {
+                rightPanel = nativeContentEl.closest('.flex-1, [role="tabpanel"], .overflow-y-auto') || nativeContentEl.parentElement;
+            }
+        }
+
+        // Strategy B: If existingWrap is already in rightPanel and valid
+        const existingWrap = dialog.querySelector('#sx-content-wrapper');
+        if (!rightPanel && existingWrap && existingWrap.parentElement && (!sidebar || !sidebar.contains(existingWrap))) {
+            rightPanel = existingWrap.parentElement;
+        }
+
+        // Strategy C: Sibling of sidebar
+        if (!rightPanel && sidebar && sidebar.parentElement) {
+            const siblings = Array.from(sidebar.parentElement.children).filter(el => el !== sidebar && el.nodeType === 1);
+            if (siblings.length >= 1) {
+                rightPanel = siblings.find(s => s.matches?.('.flex-1, main, .overflow-y-auto, [role="tabpanel"]')) || siblings[0];
+            }
+        }
+
+        // Strategy D: Look for .flex-1 or main in dialog
+        if (!rightPanel) {
+            const flexContainers = Array.from(dialog.querySelectorAll('.flex-1, [role="tabpanel"], main'));
+            rightPanel = flexContainers.find(p => (!sidebar || !p.contains(sidebar)) && p !== sidebar && p !== dialog);
+        }
+
+        // Safety check: ensure rightPanel is distinct from sidebar
+        if (rightPanel && (rightPanel === sidebar || (sidebar && rightPanel.contains(sidebar)) || rightPanel === dialog)) {
+            rightPanel = null;
+        }
+
+        return { sidebar, rightPanel };
+    }
+
     trySXModelsSettingsInject() {
         try {
             // 1. Safety cleanup: If an orphaned sx-content-wrapper exists outside of a valid settings dialog, remove it and restore page!
@@ -977,22 +1085,33 @@ export class UIInjector {
 
             this.injectGlobalStyles();
 
-            // 3. Locate the tablist (sidebar) and rightPanel (content container)
-            const tabList = dialog.querySelector('[role="tablist"], nav, aside');
-            let rightPanel = dialog.querySelector('[role="tabpanel"]');
+            // 3. Locate sidebar and rightPanel safely
+            const { sidebar, rightPanel } = this.findSettingsLayout(dialog);
+            if (!rightPanel) return;
 
-            if (!rightPanel && tabList && tabList.parentElement) {
-                const siblings = Array.from(tabList.parentElement.children).filter(el => el !== tabList);
-                if (siblings.length === 1) {
-                    rightPanel = siblings[0];
-                }
+            // If an existing wrap is mounted inside sidebar, REMOVE IT and restore sidebar!
+            const existingWrap = dialog.querySelector('#sx-content-wrapper');
+            if (existingWrap && sidebar && sidebar.contains(existingWrap)) {
+                existingWrap.remove();
+                Array.from(sidebar.children).forEach(c => c.style.removeProperty('display'));
             }
-            if (!rightPanel) {
-                const scrollContainers = Array.from(dialog.querySelectorAll('.overflow-y-auto, main'));
-                rightPanel = scrollContainers.find(c => (!tabList || !c.contains(tabList)) && c !== dialog);
+            if (existingWrap && rightPanel && !rightPanel.contains(existingWrap)) {
+                const ep = existingWrap.parentElement;
+                if (ep) Array.from(ep.children).forEach(c => c.style.removeProperty('display'));
+                existingWrap.remove();
             }
 
-            if (!rightPanel || rightPanel === dialog || (tabList && rightPanel.contains(tabList))) return;
+            // Always ensure sidebar is 100% visible and unaffected
+            if (sidebar) {
+                Array.from(sidebar.children).forEach(c => {
+                    if (c.id !== 'sx-content-wrapper' && c.style.display === 'none') {
+                        c.style.removeProperty('display');
+                    }
+                });
+                sidebar.querySelectorAll('button, [role="tab"], a').forEach(b => {
+                    if (b.style.display === 'none') b.style.removeProperty('display');
+                });
+            }
 
             // 4. Check which tab is currently active
             const activeTabBtn = dialog.querySelector('[role="tab"][aria-selected="true"], [role="tab"][data-state="active"], button[aria-selected="true"], button[data-state="active"], nav button.active');
@@ -1001,16 +1120,15 @@ export class UIInjector {
             const isExplicitOtherTab = ['general', 'genel', 'appearance', 'görünüm', 'application', 'uygulama', 'shortcut', 'kısayol', 'customization', 'özelleştirme', 'browser', 'tarayıcı', 'conversation', 'sohbet', 'feedback'].some(k => activeTabTxt.includes(k));
 
             const panelText = (rightPanel.textContent || '').toLowerCase();
-            const hasNativeModelsText = ['manage your model quota', 'model credits', 'your plan', 'custom quota'].some(m => panelText.includes(m));
+            const hasNativeModelsText = ['manage your model quota', 'model credits', 'your plan', 'custom quota', 'models & usage'].some(m => panelText.includes(m));
 
             const isModelsActive = !isExplicitOtherTab && (activeTabTxt.includes('model') || (hasNativeModelsText && !activeTabTxt) || (this._selectedSettingsTab === 'models' && (!activeTabTxt || activeTabTxt.includes('model'))));
 
-            const existingWrap = dialog.querySelector('#sx-content-wrapper');
-
             // If user is NOT on Models tab, cleanly remove custom wrap and restore native view!
             if (!isModelsActive) {
-                if (existingWrap) {
-                    existingWrap.remove();
+                const curWrap = dialog.querySelector('#sx-content-wrapper');
+                if (curWrap) {
+                    curWrap.remove();
                 }
                 if (rightPanel) {
                     Array.from(rightPanel.children).forEach(c => {
@@ -1019,7 +1137,6 @@ export class UIInjector {
                         }
                     });
                 }
-                // Also scan dialog tabpanels to unhide anything inadvertently hidden
                 dialog.querySelectorAll('[role="tabpanel"]').forEach(tp => {
                     Array.from(tp.children).forEach(c => {
                         if (c.id !== 'sx-content-wrapper' && c.style.display === 'none') {
@@ -1031,7 +1148,8 @@ export class UIInjector {
             }
 
             // User IS on Models tab: if wrap already exists inside rightPanel, keep it visible
-            if (existingWrap && rightPanel.contains(existingWrap)) {
+            const curWrap = dialog.querySelector('#sx-content-wrapper');
+            if (curWrap && rightPanel.contains(curWrap)) {
                 Array.from(rightPanel.children).forEach(c => {
                     if (c.id !== 'sx-content-wrapper') {
                         c.style.setProperty('display', 'none', 'important');
@@ -1043,7 +1161,7 @@ export class UIInjector {
             }
 
             // Clean up any stray wrap before fresh mount
-            if (existingWrap) existingWrap.remove();
+            if (curWrap) curWrap.remove();
 
             Array.from(rightPanel.children).forEach(c => {
                 c.style.setProperty('display', 'none', 'important');
@@ -1057,11 +1175,26 @@ export class UIInjector {
         const sxHeader = document.createElement('div');
         sxHeader.id = 'sx-custom-engine-header';
         sxHeader.innerHTML = `
-            <div style="padding:20px 0 14px 0;">
-                <div style="font-size:22px;font-weight:700;color:rgba(255,255,255,0.92);letter-spacing:-0.5px;">Models &amp; Usage</div>
-                <div style="font-size:13px;color:rgba(255,255,255,0.4);margin-top:4px;">Doğrudan custom provider bağlantısı aktif.</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 0 14px 0;">
+                <div>
+                    <div style="font-size:22px;font-weight:700;color:rgba(255,255,255,0.92);letter-spacing:-0.5px;">Models &amp; Usage</div>
+                    <div style="font-size:13px;color:rgba(255,255,255,0.4);margin-top:4px;">Doğrudan custom provider bağlantısı aktif.</div>
+                </div>
+                <button type="button" class="sx-close-dialog-btn" style="background:transparent;border:none;color:rgba(255,255,255,0.5);cursor:pointer;padding:6px;border-radius:6px;display:flex;align-items:center;justify-content:center;transition:color 0.15s,background 0.15s;" title="Close">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
             </div>
         `;
+        const cBtn = sxHeader.querySelector('.sx-close-dialog-btn');
+        if (cBtn) {
+            cBtn.addEventListener('click', () => {
+                const nativeClose = dialog.querySelector('button[aria-label*="Close" i], button.absolute');
+                if (nativeClose) nativeClose.click();
+                else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+            });
+            cBtn.addEventListener('mouseenter', () => { cBtn.style.color = '#ffffff'; cBtn.style.background = 'rgba(255,255,255,0.1)'; });
+            cBtn.addEventListener('mouseleave', () => { cBtn.style.color = 'rgba(255,255,255,0.5)'; cBtn.style.background = 'transparent'; });
+        }
         sxWrap.appendChild(sxHeader);
 
         const provSec = document.createElement('div');
