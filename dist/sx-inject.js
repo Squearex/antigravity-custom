@@ -1167,8 +1167,9 @@
       const placeholderEnum = "MODEL_PLACEHOLDER_M" + slotNum;
       const hasVision = this.isVisionModel(m);
       const hasTools = this.supportsTools(m);
+      const displayName = m.name && m.name.toLowerCase().startsWith("sx") ? m.name : `sx ${m.name || "Model"}`;
       return {
-        label: m.name,
+        label: displayName,
         modelOrAlias: { model: placeholderEnum },
         supportsImages: hasVision,
         supportsTools: hasTools,
@@ -1225,7 +1226,7 @@
       if (sxModels && sxModels.length > 0) {
         return [{
           name: "Recommended",
-          groups: [{ groupName: "AI Models", modelLabels: sxModels.map((m) => m.name) }]
+          groups: [{ groupName: "AI Models", modelLabels: sxModels.map((m) => m.name && m.name.toLowerCase().startsWith("sx") ? m.name : `sx ${m.name || "Model"}`) }]
         }];
       }
       return [{
@@ -4696,13 +4697,6 @@
                 transform: none !important;
             }
 
-            /* Hide native model selector items instantly */
-            [data-testid="model-selector-item"]:not(.sx-custom-model-item),
-            [data-testid="model-selector-panel"] [data-testid="model-selector-item"]:not(.sx-custom-model-item),
-            [data-testid="model-selector-header"] {
-                display: none !important;
-            }
-
             /* Custom model item layout with two-row support to prevent title truncation */
             .sx-custom-model-item {
                 min-height: 32px !important;
@@ -5832,20 +5826,14 @@
         if (sxModels.length > 0) {
           const curConv = this.models.getActiveConversationKey();
           const activeId = this.models.getActiveModelForConversation(curConv);
-          const activeM = sxModels.find((m) => m.id === activeId) || sxModels[0];
+          const activeM = sxModels.find((m) => m.id === activeId);
           if (activeM) {
-            const pMeta = this.models.getProviderMeta(activeM.providerId);
             const s = trigger.querySelector(".truncate") || trigger.querySelector("span") || trigger;
-            const desiredKey = activeM.id + "_" + pMeta.name;
-            if (s && s.dataset.sxKey !== desiredKey) {
-              s.dataset.sxKey = desiredKey;
-              s.style.setProperty("display", "inline-flex", "important");
-              s.style.setProperty("align-items", "center", "important");
-              s.innerHTML = `
-                            <span class="sx-prov-badge" style="display:inline-flex;align-items:center;gap:3.5px;padding:0.5px 5px;border-radius:4px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);font-size:9.5px;font-weight:700;color:${pMeta.color};margin-right:6px;"><span style="width:4px;height:4px;border-radius:50%;background:${pMeta.color};"></span>${this.sxEsc(pMeta.name)}</span>
-                            <span style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;color:rgba(255,255,255,0.95);">${this.sxEsc(activeM.name)}</span>
-                        `;
-              trigger.setAttribute("aria-label", `Select model, current: ${activeM.name}`);
+            const displayName = activeM.name && activeM.name.toLowerCase().startsWith("sx") ? activeM.name : `sx ${activeM.name || "Model"}`;
+            if (s && s.dataset.sxKey !== activeM.id) {
+              s.dataset.sxKey = activeM.id;
+              s.textContent = displayName;
+              trigger.setAttribute("aria-label", `Select model, current: ${displayName}`);
             }
           }
         }
@@ -5903,35 +5891,6 @@
         modelPanel.style.padding = "0";
         modelPanel.style.overflow = "hidden";
         modelPanel.style.transition = "transform 0.08s ease-out";
-      }
-      const targetShiftBox = isMenu ? menuBox : modelPanel;
-      const adjustPosition = () => {
-        try {
-          if (!targetShiftBox || !targetShiftBox.isConnected) return;
-          const boxTop = this.getPromptBoxTop();
-          targetShiftBox.style.removeProperty("margin-top");
-          targetShiftBox.style.removeProperty("transform");
-          const mRect = targetShiftBox.getBoundingClientRect();
-          if (mRect.bottom > boxTop - 10) {
-            const shiftY = Math.ceil(mRect.bottom - (boxTop - 10));
-            const maxShift = Math.max(0, Math.floor(mRect.top - 12));
-            const safeShift = Math.min(shiftY, maxShift);
-            if (safeShift > 0) {
-              targetShiftBox.style.setProperty("margin-top", `-${safeShift}px`, "important");
-            }
-          }
-        } catch (e) {
-        }
-      };
-      adjustPosition();
-      setTimeout(adjustPosition, 25);
-      setTimeout(adjustPosition, 60);
-      setTimeout(adjustPosition, 140);
-      if (!targetShiftBox._sxResizeObs) {
-        targetShiftBox._sxResizeObs = new ResizeObserver(() => {
-          requestAnimationFrame(adjustPosition);
-        });
-        targetShiftBox._sxResizeObs.observe(targetShiftBox);
       }
       const viewUsageItem = Array.from(modelPanel.querySelectorAll('[role="menuitem"], div, button')).find((el) => {
         return (el.textContent || "").trim().toLowerCase().includes("view usage");
@@ -6000,18 +5959,14 @@
         });
         input.addEventListener("input", () => {
           const q = input.value.trim().toLowerCase();
-          const items = modelPanel.querySelectorAll(".sx-custom-model-item");
+          const allItems = modelPanel.querySelectorAll('[data-testid="model-selector-item"], .sx-custom-model-item');
           let visibleCount = 0;
-          items.forEach((item) => {
+          allItems.forEach((item) => {
             const lbl = (item.getAttribute("data-model-label") || item.innerText || "").toLowerCase();
             const match = !q || lbl.includes(q);
+            item.style.display = match ? "" : "none";
             item.classList.toggle("is-hidden", !match);
             if (match) visibleCount++;
-          });
-          modelPanel.querySelectorAll(".sx-provider-header").forEach((hdr) => {
-            const pId = hdr.getAttribute("data-provider-id");
-            const hasVisible = Array.from(modelPanel.querySelectorAll(`.sx-custom-model-item[data-sx-provider="${pId}"]`)).some((it) => !it.classList.contains("is-hidden"));
-            hdr.style.display = hasVisible ? "flex" : "none";
           });
           let emptyMsg = modelPanel.querySelector("#sx-model-search-empty");
           if (visibleCount === 0) {
@@ -6026,7 +5981,6 @@
           } else if (emptyMsg) {
             emptyMsg.style.setProperty("display", "none", "important");
           }
-          adjustPosition();
         });
         setTimeout(() => input.focus(), 50);
       }
@@ -6037,7 +5991,6 @@
       if (listContainer) {
         const nativeItems = Array.from(listContainer.querySelectorAll('[data-testid="model-selector-item"]:not(.sx-custom-model-item)'));
         const sampleNative = nativeItems[0];
-        nativeItems.forEach((item) => item.style.display = "none");
         if (!document.getElementById("sx-custom-model-style")) {
           const st = document.createElement("style");
           st.id = "sx-custom-model-style";
@@ -6257,132 +6210,110 @@
           marker.className = "sx-custom-list-injected";
           marker.style.display = "none";
           listContainer.appendChild(marker);
-          const groups = {};
-          providers.forEach((p) => {
-            groups[p.id] = [];
-          });
-          groups["other"] = [];
           sxModels.forEach((m) => {
-            const pId = m.providerId || "other";
-            if (!groups[pId]) groups[pId] = [];
-            groups[pId].push(m);
-          });
-          Object.keys(groups).forEach((pId) => {
-            const groupModels = groups[pId];
-            if (!groupModels || groupModels.length === 0) return;
-            const pMeta = this.models.getProviderMeta(pId);
-            const header = document.createElement("div");
-            header.className = "sx-provider-header";
-            header.setAttribute("data-provider-id", pId);
-            header.innerHTML = `
-                        <span style="width:6px;height:6px;border-radius:50%;background:${pMeta.color};display:inline-block;"></span>
-                        <span style="font-size:10px;font-weight:700;color:${pMeta.color};text-transform:uppercase;letter-spacing:0.5px;">${this.sxEsc(pMeta.name)}</span>
+            const isSelected = m.id === activeId;
+            const isVision = this.models.isVisionModel(m);
+            const isReasoning = this.isModelSupportingReasoning(m);
+            const displayName = m.name && m.name.toLowerCase().startsWith("sx") ? m.name : `sx ${m.name || "Model"}`;
+            let rightBadges = "";
+            let ctxTag = this.models.formatContextSize(m.contextLength);
+            if (!ctxTag) {
+              const mLow = (m.modelId || m.name || "").toLowerCase();
+              if (mLow.includes("1m") || mLow.includes("ultra")) ctxTag = "1M";
+              else if (mLow.includes("256k") || mLow.includes("pro")) ctxTag = "256k";
+              else if (mLow.includes("128k")) ctxTag = "128k";
+            }
+            if (ctxTag) {
+              rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;">${ctxTag}</span>`;
+            }
+            if (isVision) {
+              rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Vision</span>`;
+            }
+            if (m.supportsTools === true) {
+              rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Tools</span>`;
+            }
+            const hasOtherBadges = !!rightBadges;
+            let reasoningLabel = "";
+            if (isReasoning) {
+              const curReasoning = this._modelReasoning && this._modelReasoning[m.id] || "default";
+              const options = this.getModelReasoningOptions(m);
+              const effectiveReasoning = options.some((o) => o.id === curReasoning) ? curReasoning : options[0]?.id || "default";
+              const optObj = options.find((o) => o.id === effectiveReasoning);
+              reasoningLabel = optObj ? optObj.label : "Default";
+              if (hasOtherBadges) {
+                rightBadges += `<span class="sx-reasoning-subtag is-badge" data-model-id="${m.id}" data-has-badges="true">${reasoningLabel}</span>`;
+              } else {
+                rightBadges += `<span class="sx-reasoning-subtag" data-model-id="${m.id}" data-has-badges="false">(${reasoningLabel})</span>`;
+              }
+            }
+            const hasBadges = !!rightBadges;
+            const item = document.createElement("div");
+            item.className = "sx-custom-model-item" + (isSelected ? " is-selected" : "") + (hasBadges ? " has-badges" : "");
+            item.dataset.modelId = m.id;
+            item.dataset.modelLabel = displayName;
+            item.dataset.sxProvider = m.providerId || "other";
+            const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+            item.innerHTML = `
+                        <div class="sx-model-info-col">
+                            <div class="sx-model-title" title="${this.sxEsc(displayName)}">${this.sxEsc(displayName)}</div>
+                            ${hasBadges ? `<div class="sx-model-badges-row">${rightBadges}</div>` : ""}
+                        </div>
+                        <div class="sx-model-right-actions">
+                            <div class="sx-model-check-slot">
+                                ${isSelected ? checkSvg : ""}
+                            </div>
+                            <div class="sx-model-arrow-slot">
+                                ${isReasoning ? `
+                                    <div class="sx-model-chevron-hint" title="Reasoning: ${this.sxEsc(reasoningLabel)}">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
+                                            <polyline points="9 18 15 12 9 6"></polyline>
+                                        </svg>
+                                    </div>
+                                ` : ""}
+                            </div>
+                        </div>
                     `;
-            listContainer.appendChild(header);
-            groupModels.forEach((m) => {
-              const isSelected = m.id === activeId;
-              const isVision = this.models.isVisionModel(m);
-              const isReasoning = this.isModelSupportingReasoning(m);
-              let rightBadges = "";
-              let ctxTag = this.models.formatContextSize(m.contextLength);
-              if (!ctxTag) {
-                const mLow = (m.modelId || m.name || "").toLowerCase();
-                if (mLow.includes("1m") || mLow.includes("ultra")) ctxTag = "1M";
-                else if (mLow.includes("256k") || mLow.includes("pro")) ctxTag = "256k";
-                else if (mLow.includes("128k")) ctxTag = "128k";
-              }
-              if (ctxTag) {
-                rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;">${ctxTag}</span>`;
-              }
-              if (isVision) {
-                rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Vision</span>`;
-              }
-              if (m.supportsTools === true) {
-                rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Tools</span>`;
-              }
-              const hasOtherBadges = !!rightBadges;
-              let reasoningLabel = "";
+            item.addEventListener("mouseenter", () => {
               if (isReasoning) {
-                const curReasoning = this._modelReasoning && this._modelReasoning[m.id] || "default";
-                const options = this.getModelReasoningOptions(m);
-                const effectiveReasoning = options.some((o) => o.id === curReasoning) ? curReasoning : options[0]?.id || "default";
-                const optObj = options.find((o) => o.id === effectiveReasoning);
-                reasoningLabel = optObj ? optObj.label : "Default";
-                if (hasOtherBadges) {
-                  rightBadges += `<span class="sx-reasoning-subtag is-badge" data-model-id="${m.id}" data-has-badges="true">${reasoningLabel}</span>`;
-                } else {
-                  rightBadges += `<span class="sx-reasoning-subtag" data-model-id="${m.id}" data-has-badges="false">(${reasoningLabel})</span>`;
-                }
-              }
-              const hasBadges = !!rightBadges;
-              const item = document.createElement("div");
-              item.className = "sx-custom-model-item" + (isSelected ? " is-selected" : "") + (hasBadges ? " has-badges" : "");
-              item.dataset.modelId = m.id;
-              item.dataset.modelLabel = m.name;
-              item.dataset.sxProvider = pId;
-              const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-              item.innerHTML = `
-                            <div class="sx-model-info-col">
-                                <div class="sx-model-title" title="${this.sxEsc(m.name)}">${this.sxEsc(m.name)}</div>
-                                ${hasBadges ? `<div class="sx-model-badges-row">${rightBadges}</div>` : ""}
-                            </div>
-                            <div class="sx-model-right-actions">
-                                <div class="sx-model-check-slot">
-                                    ${isSelected ? checkSvg : ""}
-                                </div>
-                                <div class="sx-model-arrow-slot">
-                                    ${isReasoning ? `
-                                        <div class="sx-model-chevron-hint" title="Reasoning: ${this.sxEsc(reasoningLabel)}">
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
-                                                <polyline points="9 18 15 12 9 6"></polyline>
-                                            </svg>
-                                        </div>
-                                    ` : ""}
-                                </div>
-                            </div>
-                        `;
-              item.addEventListener("mouseenter", () => {
-                if (isReasoning) {
-                  if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
-                  this.openModelReasoningSubmenu(item, m.id, m.name);
-                } else {
-                  this.closeModelReasoningSubmenu();
-                }
-              });
-              item.addEventListener("mouseleave", (e) => {
-                const toEl = e.relatedTarget;
-                if (toEl && (toEl.closest("#sx-nested-reasoning-menu") || toEl.closest(".sx-custom-model-item") === item)) {
-                  return;
-                }
                 if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
-                this._menuCloseTimeout = setTimeout(() => {
-                  this.closeModelReasoningSubmenu();
-                }, 200);
-              });
-              const cHint = item.querySelector(".sx-model-chevron-hint");
-              if (cHint) {
-                cHint.addEventListener("click", (e) => {
-                  e.stopPropagation();
-                  this.openModelReasoningSubmenu(item, m.id, m.name);
-                });
+                this.openModelReasoningSubmenu(item, m.id, m.name);
+              } else {
+                this.closeModelReasoningSubmenu();
               }
-              item.addEventListener("click", () => {
-                const cKey = this.models.getActiveConversationKey();
-                this.models.setActiveModelForConversation(m.id, cKey, true);
-                listContainer.querySelectorAll(".sx-custom-model-item").forEach((el) => {
-                  el.classList.remove("is-selected");
-                  const cs2 = el.querySelector(".sx-model-check-slot");
-                  if (cs2) cs2.innerHTML = "";
-                });
-                item.classList.add("is-selected");
-                const cs = item.querySelector(".sx-model-check-slot");
-                if (cs) cs.innerHTML = checkSvg;
-                this.quota?.updateContextButtonUI();
-                if (sampleNative) sampleNative.click();
-                setTimeout(() => this.hookDOM(), 30);
-              });
-              listContainer.appendChild(item);
             });
+            item.addEventListener("mouseleave", (e) => {
+              const toEl = e.relatedTarget;
+              if (toEl && (toEl.closest("#sx-nested-reasoning-menu") || toEl.closest(".sx-custom-model-item") === item)) {
+                return;
+              }
+              if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
+              this._menuCloseTimeout = setTimeout(() => {
+                this.closeModelReasoningSubmenu();
+              }, 200);
+            });
+            const cHint = item.querySelector(".sx-model-chevron-hint");
+            if (cHint) {
+              cHint.addEventListener("click", (e) => {
+                e.stopPropagation();
+                this.openModelReasoningSubmenu(item, m.id, m.name);
+              });
+            }
+            item.addEventListener("click", () => {
+              const cKey = this.models.getActiveConversationKey();
+              this.models.setActiveModelForConversation(m.id, cKey, true);
+              listContainer.querySelectorAll(".sx-custom-model-item").forEach((el) => {
+                el.classList.remove("is-selected");
+                const cs2 = el.querySelector(".sx-model-check-slot");
+                if (cs2) cs2.innerHTML = "";
+              });
+              item.classList.add("is-selected");
+              const cs = item.querySelector(".sx-model-check-slot");
+              if (cs) cs.innerHTML = checkSvg;
+              this.quota?.updateContextButtonUI();
+              if (sampleNative) sampleNative.click();
+              setTimeout(() => this.hookDOM(), 30);
+            });
+            listContainer.appendChild(item);
           });
         } else {
           const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
@@ -6418,9 +6349,6 @@
         modelPanel.appendChild(fBadge);
       }
       fBadge.innerHTML = '<span style="font-weight:700;"><span style="color:#38bdf8;text-shadow:0 0 10px rgba(56,189,248,0.35);">SX</span> <span style="color:#ffffff;">Development</span></span><span style="font-size:9.5px;color:rgba(255,255,255,0.35);font-weight:500;">Custom Engine</span>';
-      adjustPosition();
-      setTimeout(adjustPosition, 40);
-      setTimeout(adjustPosition, 120);
     }
     isModelSupportingReasoning(m) {
       if (!m) return false;

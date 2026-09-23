@@ -123,8 +123,9 @@ export class ModelManager {
         const placeholderEnum = 'MODEL_PLACEHOLDER_M' + slotNum;
         const hasVision = this.isVisionModel(m);
         const hasTools = this.supportsTools(m);
+        const displayName = m.name && m.name.toLowerCase().startsWith('sx') ? m.name : `sx ${m.name || 'Model'}`;
         return {
-            label: m.name,
+            label: displayName,
             modelOrAlias: { model: placeholderEnum },
             supportsImages: hasVision,
             supportsTools: hasTools,
@@ -183,7 +184,7 @@ export class ModelManager {
         if (sxModels && sxModels.length > 0) {
             return [{
                 name: "Recommended",
-                groups: [{ groupName: "AI Models", modelLabels: sxModels.map(m => m.name) }]
+                groups: [{ groupName: "AI Models", modelLabels: sxModels.map(m => m.name && m.name.toLowerCase().startsWith('sx') ? m.name : `sx ${m.name || 'Model'}`) }]
             }];
         }
         return [{
