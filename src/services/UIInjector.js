@@ -1047,6 +1047,114 @@ export class UIInjector {
                         margin-top: 0 !important;
                         border-top: none !important;
                     }
+                    .sx-model-reasoning-trigger {
+                        display: inline-flex !important;
+                        align-items: center !important;
+                        gap: 2px !important;
+                        padding: 1px 5px !important;
+                        border-radius: 4px !important;
+                        font-size: 9.5px !important;
+                        font-weight: 600 !important;
+                        color: rgba(255, 255, 255, 0.75) !important;
+                        background: rgba(255, 255, 255, 0.06) !important;
+                        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+                        cursor: pointer !important;
+                        transition: all 0.12s ease !important;
+                        user-select: none !important;
+                        line-height: normal !important;
+                        margin-right: 4px !important;
+                    }
+                    .sx-model-reasoning-trigger:hover {
+                        background: rgba(255, 255, 255, 0.15) !important;
+                        color: #ffffff !important;
+                        border-color: rgba(255, 255, 255, 0.28) !important;
+                    }
+                    .sx-reasoning-arrow {
+                        font-size: 10px !important;
+                        font-weight: 700 !important;
+                        opacity: 0.65 !important;
+                        margin-left: 2px !important;
+                    }
+                    .sx-nested-menu {
+                        position: fixed !important;
+                        z-index: 999999 !important;
+                        background: #18181b !important;
+                        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+                        border-radius: 8px !important;
+                        padding: 4px !important;
+                        min-width: 125px !important;
+                        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.75) !important;
+                        backdrop-filter: blur(16px) !important;
+                        font-family: inherit !important;
+                        display: flex !important;
+                        flex-direction: column !important;
+                        gap: 1px !important;
+                    }
+                    .sx-nested-item {
+                        height: 28px !important;
+                        padding: 0 8px 0 10px !important;
+                        border-radius: 5px !important;
+                        font-size: 12px !important;
+                        font-weight: 500 !important;
+                        color: rgba(255, 255, 255, 0.85) !important;
+                        cursor: pointer !important;
+                        display: flex !important;
+                        align-items: center !important;
+                        justify-content: space-between !important;
+                        transition: background 0.1s ease !important;
+                        user-select: none !important;
+                    }
+                    .sx-nested-item:hover {
+                        background: rgba(255, 255, 255, 0.1) !important;
+                        color: #ffffff !important;
+                    }
+                    .sx-effort-popover {
+                        position: fixed !important;
+                        z-index: 100000 !important;
+                        width: 232px !important;
+                        border-radius: 12px !important;
+                        background: #1e1e20 !important;
+                        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+                        padding: 13px 15px !important;
+                        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65) !important;
+                        backdrop-filter: blur(20px) !important;
+                        font-family: inherit !important;
+                        box-sizing: border-box !important;
+                    }
+                    .sx-effort-track {
+                        height: 20px !important;
+                        border-radius: 10px !important;
+                        background: #4a4a4f !important;
+                        position: relative !important;
+                        display: flex !important;
+                        align-items: center !important;
+                        justify-content: space-between !important;
+                        padding: 0 8px !important;
+                        cursor: pointer !important;
+                        user-select: none !important;
+                        box-sizing: border-box !important;
+                    }
+                    .sx-effort-dot {
+                        position: absolute !important;
+                        top: 8px !important;
+                        width: 4px !important;
+                        height: 4px !important;
+                        border-radius: 50% !important;
+                        background: rgba(255, 255, 255, 0.5) !important;
+                        pointer-events: none !important;
+                        transform: translateX(-50%) !important;
+                    }
+                    .sx-effort-thumb {
+                        position: absolute !important;
+                        top: 2px !important;
+                        width: 16px !important;
+                        height: 16px !important;
+                        border-radius: 5px !important;
+                        background: #ffffff !important;
+                        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45) !important;
+                        pointer-events: none !important;
+                        transition: left 0.12s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+                    }
                 `;
                 document.head.appendChild(st);
             }
@@ -1096,6 +1204,15 @@ export class UIInjector {
                         item.dataset.modelLabel = m.name;
                         item.dataset.sxProvider = pId;
 
+                        const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || 'medium';
+                        const reasoningLabel = curReasoning.charAt(0).toUpperCase() + curReasoning.slice(1);
+                        const reasoningTriggerHtml = `
+                            <div class="sx-model-reasoning-trigger" data-model-id="${m.id}" title="Model Reasoning Effort Seç">
+                                <span class="sx-reasoning-lbl">${reasoningLabel}</span>
+                                <span class="sx-reasoning-arrow">&gt;</span>
+                            </div>
+                        `;
+
                         let rightBadges = '';
                         let ctxTag = this.models.formatContextSize(m.contextLength);
                         if (!ctxTag) {
@@ -1108,7 +1225,7 @@ export class UIInjector {
                             rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">${ctxTag}</span>`;
                         }
                         if (isReasoning) {
-                            rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fbbf24;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">Reasoning</span>`;
+                            rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fbbf24;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">Thinking</span>`;
                         }
                         if (isVision) {
                             rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">Vision</span>`;
@@ -1121,8 +1238,19 @@ export class UIInjector {
 
                         item.innerHTML = `
                             <span class="sx-model-title">${this.sxEsc(m.name)}</span>
-                            <div style="display:flex;align-items:center;margin-left:auto;flex-shrink:0;">${rightBadges}${checkSvg}</div>
+                            <div style="display:flex;align-items:center;margin-left:auto;flex-shrink:0;gap:4px;">${reasoningTriggerHtml}${rightBadges}${checkSvg}</div>
                         `;
+
+                        const rTrigger = item.querySelector('.sx-model-reasoning-trigger');
+                        if (rTrigger) {
+                            rTrigger.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                this.openModelReasoningSubmenu(rTrigger, m.id, m.name);
+                            });
+                            rTrigger.addEventListener('mouseenter', () => {
+                                this.openModelReasoningSubmenu(rTrigger, m.id, m.name);
+                            });
+                        }
 
                         item.addEventListener('click', () => {
                             const cKey = this.models.getActiveConversationKey();
@@ -1148,12 +1276,21 @@ export class UIInjector {
                     });
                 });
             } else {
-                // Sync checkmarks
+                // Sync checkmarks & reasoning labels
                 listContainer.querySelectorAll('.sx-custom-model-item').forEach(el => {
                     const sel = el.dataset.modelId === activeId;
                     el.classList.toggle('is-selected', sel);
                     const c = el.querySelector('.sx-item-check');
                     if (c) c.style.visibility = sel ? 'visible' : 'hidden';
+
+                    const mId = el.dataset.modelId;
+                    if (mId && this._modelReasoning && this._modelReasoning[mId]) {
+                        const lbl = el.querySelector('.sx-reasoning-lbl');
+                        if (lbl) {
+                            const val = this._modelReasoning[mId];
+                            lbl.textContent = val.charAt(0).toUpperCase() + val.slice(1);
+                        }
+                    }
                 });
             }
         }
@@ -1168,19 +1305,120 @@ export class UIInjector {
         }
         fBadge.innerHTML = '<span style="font-weight:700;"><span style="color:#38bdf8;text-shadow:0 0 10px rgba(56,189,248,0.35);">SX</span> <span style="color:#ffffff;">Development</span></span><span style="font-size:9.5px;color:rgba(255,255,255,0.35);font-weight:500;">Custom Engine</span>';
     }
+
+    openModelReasoningSubmenu(triggerEl, modelId, modelName) {
+        let existing = document.getElementById('sx-nested-reasoning-menu');
+        if (existing) {
+            if (existing._triggerEl === triggerEl) return;
+            existing.remove();
+        }
+
+        const menu = document.createElement('div');
+        menu.id = 'sx-nested-reasoning-menu';
+        menu.className = 'sx-nested-menu';
+        menu._triggerEl = triggerEl;
+
+        const curReasoning = (this._modelReasoning && this._modelReasoning[modelId]) || 'medium';
+        const options = [
+            { id: 'low', label: 'Low' },
+            { id: 'medium', label: 'Medium' },
+            { id: 'high', label: 'High' },
+            { id: 'max', label: 'Max' }
+        ];
+
+        menu.innerHTML = options.map(opt => {
+            const isActive = curReasoning === opt.id || (curReasoning === 'normal' && opt.id === 'medium');
+            const checkIcon = isActive
+                ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:#ffffff;flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`
+                : '';
+            return `
+                <div class="sx-nested-item ${isActive ? 'is-active' : ''}" data-val="${opt.id}">
+                    <span>${opt.label}</span>
+                    ${checkIcon}
+                </div>
+            `;
+        }).join('');
+
+        document.body.appendChild(menu);
+
+        // Position directly to the right of triggerEl (Image 1 style)
+        const rect = triggerEl.getBoundingClientRect();
+        let top = rect.top - 6;
+        let left = rect.right + 6;
+        if (left + 140 > window.innerWidth) {
+            left = Math.max(10, rect.left - 145);
+        }
+        if (top + 150 > window.innerHeight) {
+            top = Math.max(10, window.innerHeight - 155);
+        }
+        menu.style.top = top + 'px';
+        menu.style.left = left + 'px';
+
+        menu.querySelectorAll('.sx-nested-item').forEach(item => {
+            item.onclick = (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const val = item.dataset.val;
+                if (!this._modelReasoning) this._modelReasoning = {};
+                this._modelReasoning[modelId] = val;
+
+                const lbl = triggerEl.querySelector('.sx-reasoning-lbl');
+                if (lbl) {
+                    const optObj = options.find(o => o.id === val);
+                    lbl.textContent = optObj ? optObj.label : val;
+                }
+
+                this.network.post('/sx/set-agent-effort', {
+                    modelId: modelId,
+                    reasoningEffort: val
+                }).catch(() => {});
+
+                menu.remove();
+            };
+        });
+
+        // Close on mouse leaving trigger + menu, or clicking outside
+        let removeTimer = null;
+        const onMouseLeave = () => {
+            removeTimer = setTimeout(() => {
+                if (document.getElementById('sx-nested-reasoning-menu') === menu) {
+                    menu.remove();
+                }
+            }, 300);
+        };
+        const onMouseEnter = () => {
+            if (removeTimer) clearTimeout(removeTimer);
+        };
+
+        menu.addEventListener('mouseleave', onMouseLeave);
+        menu.addEventListener('mouseenter', onMouseEnter);
+        triggerEl.addEventListener('mouseleave', onMouseLeave);
+        triggerEl.addEventListener('mouseenter', onMouseEnter);
+
+        setTimeout(() => {
+            const onDocClick = (e) => {
+                if (!menu.contains(e.target) && !triggerEl.contains(e.target)) {
+                    menu.remove();
+                    document.removeEventListener('click', onDocClick);
+                }
+            };
+            document.addEventListener('click', onDocClick);
+        }, 10);
+    }
+
     async injectEffortButton(trigger) {
         if (!trigger || !trigger.parentElement) return;
 
-        let effortBtn = document.getElementById('sx-effort-btn');
+        let effortBtn = document.getElementById('sx-effort-pill');
         if (!effortBtn) {
             effortBtn = document.createElement('button');
-            effortBtn.id = 'sx-effort-btn';
+            effortBtn.id = 'sx-effort-pill';
             effortBtn.type = 'button';
-            effortBtn.className = 'sx-effort-btn';
-            effortBtn.title = 'Agent & Reasoning Effort Seçenekleri (Tıkla)';
+            effortBtn.className = 'sx-effort-pill';
+            effortBtn.title = 'Agent Effort (Tıkla)';
             effortBtn.onclick = (e) => {
                 e.stopPropagation();
-                this.openEffortModal();
+                this.toggleEffortSliderPopover(effortBtn);
             };
             trigger.insertAdjacentElement('afterend', effortBtn);
         }
@@ -1190,191 +1428,187 @@ export class UIInjector {
             try {
                 const cKey = this.models.getActiveConversationKey();
                 const res = await this.network.get('/sx/get-agent-effort?convId=' + encodeURIComponent(cKey));
-                if (res && res.ok && res.profile) {
-                    this._currentEffort = res.profile;
+                if (res && res.ok) {
+                    if (res.profile) this._currentEffort = res.profile;
+                    if (res.modelReasoning) this._modelReasoning = res.modelReasoning;
                 }
             } catch(e) {}
         }
 
         const profile = this._currentEffort || { agentEffort: 'normal', reasoningEffort: 'normal' };
         const agentEffort = profile.agentEffort || 'normal';
-
-        let badgeHtml = '';
-        let btnStyle = 'display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;margin-left:6px;transition:all 0.15s;font-family:inherit;line-height:1.2;';
-
-        if (agentEffort === 'ultra') {
-            btnStyle += 'background:rgba(245,158,11,0.14);border:1px solid rgba(245,158,11,0.4);color:#fbbf24;box-shadow:0 0 8px rgba(245,158,11,0.25);';
-            badgeHtml = '<span>🔥</span><span>Ultra Code</span>';
-        } else if (agentEffort === 'high') {
-            btnStyle += 'background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.3);color:#38bdf8;';
-            badgeHtml = '<span>⚡</span><span>High</span>';
-        } else if (agentEffort === 'low') {
-            btnStyle += 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);';
-            badgeHtml = '<span>⚡</span><span>Low</span>';
-        } else {
-            btnStyle += 'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.85);';
-            badgeHtml = '<span>⚡</span><span>Normal</span>';
-        }
-
-        if (effortBtn.dataset.sxEffort !== agentEffort) {
-            effortBtn.dataset.sxEffort = agentEffort;
-            effortBtn.style.cssText = btnStyle;
-            effortBtn.innerHTML = badgeHtml;
-        }
+        this.updateEffortPillUI(effortBtn, agentEffort);
     }
 
-    openEffortModal() {
-        if (document.getElementById('sx-effort-modal-overlay')) return;
+    updateEffortPillUI(effortBtn, agentEffort) {
+        if (!effortBtn) return;
+        effortBtn.dataset.sxEffort = agentEffort;
 
-        const overlay = document.createElement('div');
-        overlay.className = 'sx-modal-overlay';
-        overlay.id = 'sx-effort-modal-overlay';
+        let text = 'Normal';
+        let style = 'height:22px;padding:0 9px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;margin-left:6px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.9);transition:all 0.15s ease;user-select:none;font-family:inherit;line-height:1;';
+
+        if (agentEffort === 'ultra') {
+            text = 'Ultra Code';
+            style += 'border-color:rgba(245,158,11,0.5);background:rgba(245,158,11,0.1);color:#fbbf24;box-shadow:0 0 10px rgba(245,158,11,0.2);';
+        } else if (agentEffort === 'max') {
+            text = 'Max';
+            style += 'border-color:rgba(255,255,255,0.3);background:rgba(255,255,255,0.12);color:#ffffff;';
+        } else if (agentEffort === 'high') {
+            text = 'High';
+            style += 'border-color:rgba(56,189,248,0.4);background:rgba(56,189,248,0.08);color:#38bdf8;';
+        } else if (agentEffort === 'low') {
+            text = 'Low';
+            style += 'border-color:rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);color:rgba(255,255,255,0.5);';
+        } else {
+            text = 'Normal';
+            style += 'color:rgba(255,255,255,0.85);';
+        }
+
+        effortBtn.style.cssText = style;
+        effortBtn.textContent = text;
+    }
+
+    toggleEffortSliderPopover(anchorBtn) {
+        const existing = document.getElementById('sx-effort-slider-popover');
+        if (existing) {
+            existing.remove();
+            return;
+        }
+
+        const popover = document.createElement('div');
+        popover.id = 'sx-effort-slider-popover';
+        popover.className = 'sx-effort-popover';
 
         const profile = this._currentEffort || { agentEffort: 'normal', reasoningEffort: 'normal' };
         let curAgent = profile.agentEffort || 'normal';
-        let curReasoning = profile.reasoningEffort || 'normal';
 
-        overlay.innerHTML = `
-            <div class="sx-modal" style="width: 520px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-                    <div>
-                        <div class="sx-modal-title" style="margin-bottom:2px;">Agent &amp; Reasoning Effort</div>
-                        <div style="font-size:12px;color:rgba(255,255,255,0.4);">Ajanın çalışma derinliğini ve modelin düşünme bütçesini seçin.</div>
-                    </div>
-                    <button type="button" class="sx-icon-btn del" id="sx-effort-close" style="font-size:16px;">✕</button>
-                </div>
+        const LEVELS = [
+            { id: 'low', label: 'Low', color: 'rgba(255,255,255,0.6)' },
+            { id: 'normal', label: 'Normal', color: 'rgba(255,255,255,0.9)' },
+            { id: 'high', label: 'High', color: '#38bdf8' },
+            { id: 'ultra', label: 'Ultra Code', color: '#fbbf24' },
+            { id: 'max', label: 'Max', color: '#ffffff' }
+        ];
 
-                <div class="sx-field">
-                    <label class="sx-label">Agent Execution Mode</label>
-                    <div style="display:flex;flex-direction:column;gap:6px;" id="sx-agent-options">
-                        <label class="sx-effort-opt ${curAgent === 'ultra' ? 'is-active' : ''}" data-val="ultra" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid ${curAgent === 'ultra' ? '#fbbf24' : 'rgba(255,255,255,0.08)'};background:${curAgent === 'ultra' ? 'rgba(245,158,11,0.08)' : 'rgba(255,255,255,0.02)'};cursor:pointer;">
-                            <input type="radio" name="sx-agent-effort" value="ultra" ${curAgent === 'ultra' ? 'checked' : ''} style="margin-top:2px;accent-color:#fbbf24;" />
-                            <div>
-                                <div style="font-size:12.5px;font-weight:700;color:#fbbf24;">🔥 Ultra Code (Titan Ajan Modu)</div>
-                                <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:2px;">Ön tarama (AST Repo-Map) + Atomik Diff + Kod sonrası otomatik syntax/derleme doğrulaması (Self-Healing).</div>
-                            </div>
-                        </label>
-                        <label class="sx-effort-opt ${curAgent === 'high' ? 'is-active' : ''}" data-val="high" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid ${curAgent === 'high' ? '#38bdf8' : 'rgba(255,255,255,0.08)'};background:${curAgent === 'high' ? 'rgba(56,189,248,0.08)' : 'rgba(255,255,255,0.02)'};cursor:pointer;">
-                            <input type="radio" name="sx-agent-effort" value="high" ${curAgent === 'high' ? 'checked' : ''} style="margin-top:2px;accent-color:#38bdf8;" />
-                            <div>
-                                <div style="font-size:12.5px;font-weight:700;color:#38bdf8;">⚡ High Effort (Planlı &amp; Kapsamlı)</div>
-                                <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:2px;">Mimari etki planı çıkarır, dosyaları detaylı analiz eder, düzenleme sonrası kontrol eder.</div>
-                            </div>
-                        </label>
-                        <label class="sx-effort-opt ${curAgent === 'normal' ? 'is-active' : ''}" data-val="normal" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid ${curAgent === 'normal' ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.08)'};background:${curAgent === 'normal' ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)'};cursor:pointer;">
-                            <input type="radio" name="sx-agent-effort" value="normal" ${curAgent === 'normal' ? 'checked' : ''} style="margin-top:2px;accent-color:#fff;" />
-                            <div>
-                                <div style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,0.9);">⚡ Normal (Standart)</div>
-                                <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:2px;">Varsayılan dengeli çalışma akışı.</div>
-                            </div>
-                        </label>
-                        <label class="sx-effort-opt ${curAgent === 'low' ? 'is-active' : ''}" data-val="low" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid ${curAgent === 'low' ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.08)'};background:${curAgent === 'low' ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)'};cursor:pointer;">
-                            <input type="radio" name="sx-agent-effort" value="low" ${curAgent === 'low' ? 'checked' : ''} style="margin-top:2px;accent-color:#fff;" />
-                            <div>
-                                <div style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,0.7);">⚡ Low (Hızlı &amp; Doğrudan)</div>
-                                <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:2px;">Gereksiz arka plan taraması yapmadan doğrudan hızlı yanıt üretir.</div>
-                            </div>
-                        </label>
-                    </div>
-                </div>
+        let curIdx = LEVELS.findIndex(l => l.id === curAgent);
+        if (curIdx === -1) curIdx = 1; // Default to Normal
 
-                <div class="sx-field" style="margin-top:14px;">
-                    <label class="sx-label">Model Reasoning Effort (Düşünme Bütçesi)</label>
-                    <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;" id="sx-reasoning-options">
-                        <button type="button" class="sx-btn ${curReasoning === 'low' ? 'sx-btn-primary' : ''}" data-val="low" style="justify-content:center;font-size:11.5px;">Low (2k)</button>
-                        <button type="button" class="sx-btn ${curReasoning === 'normal' ? 'sx-btn-primary' : ''}" data-val="normal" style="justify-content:center;font-size:11.5px;">Normal (8k)</button>
-                        <button type="button" class="sx-btn ${curReasoning === 'high' ? 'sx-btn-primary' : ''}" data-val="high" style="justify-content:center;font-size:11.5px;">High (16k)</button>
-                        <button type="button" class="sx-btn ${curReasoning === 'max' ? 'sx-btn-primary' : ''}" data-val="max" style="justify-content:center;font-size:11.5px;">Max (32k+)</button>
-                    </div>
-                </div>
+        const curLvl = LEVELS[curIdx];
 
-                <div style="margin-top:14px;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px dashed rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:space-between;">
-                    <div>
-                        <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.85);">AST Repo-Map Aracı</div>
-                        <div style="font-size:10.5px;color:rgba(255,255,255,0.4);" id="sx-repomap-status">Projedeki sınıfları ve fonksiyonları tara</div>
-                    </div>
-                    <button type="button" class="sx-btn" id="sx-run-repomap-btn" style="font-size:11px;">🔍 Projeyi Tara</button>
+        popover.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+                <div style="font-size:13px;color:rgba(255,255,255,0.7);display:flex;align-items:center;gap:5px;">
+                    <span>Effort</span>
+                    <strong id="sx-effort-popover-val" style="color:${curLvl.color};font-weight:700;">${curLvl.label}</strong>
                 </div>
-
-                <div class="sx-modal-actions" style="margin-top:16px;">
-                    <button type="button" class="sx-btn" id="sx-effort-cancel">İptal</button>
-                    <button type="button" class="sx-btn sx-btn-primary" id="sx-effort-save">Kaydet ve Uygula</button>
-                </div>
+                <div class="sx-help-icon" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:1px solid rgba(255,255,255,0.3);color:rgba(255,255,255,0.6);font-size:10px;cursor:help;" title="Ajanın problem çözme derinliği ve analitik gayret seviyesi. Ultra Code / Max en derin self-healing modunu açar.">?</div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:rgba(255,255,255,0.45);margin:10px 0 6px 0;user-select:none;">
+                <span>Faster</span>
+                <span>Smarter</span>
+            </div>
+            <div id="sx-effort-slider-track" class="sx-effort-track">
+                <div class="sx-effort-dot" style="left: 10px;"></div>
+                <div class="sx-effort-dot" style="left: calc(10px + (100% - 20px) * 0.25);"></div>
+                <div class="sx-effort-dot" style="left: calc(10px + (100% - 20px) * 0.5);"></div>
+                <div class="sx-effort-dot" style="left: calc(10px + (100% - 20px) * 0.75);"></div>
+                <div class="sx-effort-dot" style="left: calc(100% - 10px);"></div>
+                <div id="sx-effort-slider-thumb" class="sx-effort-thumb" style="left: calc(2px + (100% - 20px) * ${(curIdx / 4)});"></div>
+            </div>
+            <div id="sx-effort-footer-extra" style="margin-top:10px;padding:6px 10px;border-radius:6px;background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2);display:${(curAgent === 'ultra' || curAgent === 'max') ? 'flex' : 'none'};align-items:center;justify-content:space-between;font-size:10.5px;">
+                <span style="color:#fbbf24;font-weight:600;">Titan Self-Healing Aktif</span>
+                <button type="button" id="sx-popover-scan-btn" style="background:transparent;border:none;color:#38bdf8;cursor:pointer;font-size:10px;text-decoration:underline;">Haritayı Yenile</button>
             </div>
         `;
 
-        document.body.appendChild(overlay);
+        document.body.appendChild(popover);
 
-        overlay.querySelector('#sx-effort-close').onclick = () => overlay.remove();
-        overlay.querySelector('#sx-effort-cancel').onclick = () => overlay.remove();
+        // Position above anchorBtn (Image 2 style)
+        const rect = anchorBtn.getBoundingClientRect();
+        const popoverWidth = 232;
+        let left = rect.left - 10;
+        if (left + popoverWidth > window.innerWidth - 10) {
+            left = window.innerWidth - popoverWidth - 10;
+        }
+        if (left < 10) left = 10;
+        popover.style.left = left + 'px';
+        popover.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
 
-        overlay.querySelectorAll('#sx-agent-options .sx-effort-opt').forEach(opt => {
-            opt.onclick = () => {
-                curAgent = opt.dataset.val;
-                overlay.querySelectorAll('#sx-agent-options input').forEach(inp => inp.checked = (inp.value === curAgent));
-                overlay.querySelectorAll('#sx-agent-options .sx-effort-opt').forEach(o => {
-                    const active = o.dataset.val === curAgent;
-                    o.classList.toggle('is-active', active);
-                    if (curAgent === 'ultra') o.style.borderColor = active ? '#fbbf24' : 'rgba(255,255,255,0.08)';
-                    else if (curAgent === 'high') o.style.borderColor = active ? '#38bdf8' : 'rgba(255,255,255,0.08)';
-                    else o.style.borderColor = active ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.08)';
-                });
+        const track = popover.querySelector('#sx-effort-slider-track');
+        const thumb = popover.querySelector('#sx-effort-slider-thumb');
+        const valEl = popover.querySelector('#sx-effort-popover-val');
+        const extraFooter = popover.querySelector('#sx-effort-footer-extra');
+
+        const updateToLevel = (idx) => {
+            idx = Math.max(0, Math.min(4, Math.round(idx)));
+            const lvl = LEVELS[idx];
+            curAgent = lvl.id;
+            thumb.style.left = `calc(2px + (100% - 20px) * ${(idx / 4)})`;
+            if (valEl) {
+                valEl.textContent = lvl.label;
+                valEl.style.color = lvl.color;
+            }
+            if (extraFooter) {
+                extraFooter.style.display = (curAgent === 'ultra' || curAgent === 'max') ? 'flex' : 'none';
+            }
+            this.updateEffortPillUI(anchorBtn, curAgent);
+            if (!this._currentEffort) this._currentEffort = {};
+            this._currentEffort.agentEffort = curAgent;
+
+            const cKey = this.models.getActiveConversationKey();
+            this.network.post('/sx/set-agent-effort', {
+                convId: cKey,
+                agentEffort: curAgent
+            }).catch(() => {});
+        };
+
+        const handleTrackEvent = (e) => {
+            const tr = track.getBoundingClientRect();
+            const relX = Math.max(0, Math.min(tr.width, e.clientX - tr.left));
+            const pct = relX / tr.width;
+            const targetIdx = Math.round(pct * 4);
+            updateToLevel(targetIdx);
+        };
+
+        track.addEventListener('mousedown', (e) => {
+            handleTrackEvent(e);
+            const onMouseMove = (ev) => handleTrackEvent(ev);
+            const onMouseUp = () => {
+                window.removeEventListener('mousemove', onMouseMove);
+                window.removeEventListener('mouseup', onMouseUp);
             };
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mouseup', onMouseUp);
         });
 
-        overlay.querySelectorAll('#sx-reasoning-options button').forEach(btn => {
-            btn.onclick = () => {
-                curReasoning = btn.dataset.val;
-                overlay.querySelectorAll('#sx-reasoning-options button').forEach(b => {
-                    b.classList.toggle('sx-btn-primary', b.dataset.val === curReasoning);
-                });
-            };
-        });
-
-        const scanBtn = overlay.querySelector('#sx-run-repomap-btn');
-        const scanStatus = overlay.querySelector('#sx-repomap-status');
-        scanBtn.onclick = async () => {
-            scanBtn.disabled = true;
-            scanBtn.textContent = 'Taranıyor...';
-            try {
-                const res = await this.network.post('/sx/generate-repo-map', {});
-                if (res && res.ok) {
-                    scanStatus.textContent = `${res.fileCount} dosya tarandı ve sembol haritası hazırlandı.`;
-                    scanStatus.style.color = '#a3e635';
-                    scanBtn.textContent = '✓ Tamamlandı';
-                } else {
-                    scanStatus.textContent = 'Tarama başarısız oldu.';
-                    scanBtn.textContent = 'Tekrar Dene';
+        const scanBtn = popover.querySelector('#sx-popover-scan-btn');
+        if (scanBtn) {
+            scanBtn.onclick = async () => {
+                scanBtn.disabled = true;
+                scanBtn.textContent = 'Taranıyor...';
+                try {
+                    const res = await this.network.post('/sx/generate-repo-map', {});
+                    if (res && res.ok) {
+                        scanBtn.textContent = '✓ ' + res.fileCount + ' dosya';
+                    } else {
+                        scanBtn.textContent = 'Tekrar dene';
+                        scanBtn.disabled = false;
+                    }
+                } catch(e) {
+                    scanBtn.textContent = 'Hata';
                     scanBtn.disabled = false;
                 }
-            } catch(e) {
-                scanStatus.textContent = 'Hata: ' + e.message;
-                scanBtn.textContent = 'Tekrar Dene';
-                scanBtn.disabled = false;
-            }
-        };
+            };
+        }
 
-        overlay.querySelector('#sx-effort-save').onclick = async () => {
-            const saveBtn = overlay.querySelector('#sx-effort-save');
-            saveBtn.disabled = true;
-            saveBtn.textContent = 'Kaydediliyor...';
-            const cKey = this.models.getActiveConversationKey();
-            try {
-                await this.network.post('/sx/set-agent-effort', {
-                    convId: cKey,
-                    agentEffort: curAgent,
-                    reasoningEffort: curReasoning
-                });
-                this._currentEffort = { agentEffort: curAgent, reasoningEffort: curReasoning };
-                this._lastEffortFetch = Date.now();
-                const trigger = document.querySelector('[data-testid="model-selector-trigger"]');
-                if (trigger) this.injectEffortButton(trigger);
-                overlay.remove();
-            } catch(e) {
-                alert('Kaydedilemedi: ' + e.message);
-                saveBtn.disabled = false;
-                saveBtn.textContent = 'Kaydet ve Uygula';
-            }
-        };
+        setTimeout(() => {
+            const onDocClick = (e) => {
+                if (!popover.contains(e.target) && !anchorBtn.contains(e.target)) {
+                    popover.remove();
+                    document.removeEventListener('click', onDocClick);
+                }
+            };
+            document.addEventListener('click', onDocClick);
+        }, 20);
     }
 }

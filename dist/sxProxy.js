@@ -282,7 +282,8 @@ function saveCompactState() {
 
 // ── Agent Effort & Reasoning Effort Management (Titan Architecture) ───────
 const agentEffortState = {
-    global: { agentEffort: 'normal', reasoningEffort: 'normal' }
+    global: { agentEffort: 'normal', reasoningEffort: 'normal' },
+    modelReasoning: {} // modelId -> 'low' | 'medium' | 'high' | 'max'
 }; // convId -> { agentEffort, reasoningEffort }
 let agentEffortLoaded = false;
 
@@ -298,6 +299,7 @@ function loadAgentEffortState() {
                 if (data[k]) agentEffortState[k] = data[k];
             }
         }
+        if (!agentEffortState.modelReasoning) agentEffortState.modelReasoning = {};
     } catch(e){}
 }
 function saveAgentEffortState() {
@@ -1910,12 +1912,13 @@ function startInternalProxy() {
                 try {
                     const u = new URL('http://localhost' + url);
                     const convId = (u.searchParams.get('convId') || '').replace(/^conv_/, '');
+                    loadAgentEffortState();
                     const profile = getEffortProfile(convId);
                     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-                    res.end(JSON.stringify({ ok: true, profile }));
+                    res.end(JSON.stringify({ ok: true, profile, modelReasoning: agentEffortState.modelReasoning || {} }));
                 } catch(e) {
                     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-                    res.end(JSON.stringify({ ok: false, profile: { agentEffort: 'normal', reasoningEffort: 'normal' } }));
+                    res.end(JSON.stringify({ ok: false, profile: { agentEffort: 'normal', reasoningEffort: 'normal' }, modelReasoning: {} }));
                 }
                 return;
             }
@@ -1926,18 +1929,26 @@ function startInternalProxy() {
                 req.on('end', () => {
                     try {
                         const data = JSON.parse(rawBody);
-                        const convId = (data.convId || '').replace(/^conv_/, '');
-                        const agentEffort = data.agentEffort || 'normal';
-                        const reasoningEffort = data.reasoningEffort || 'normal';
                         loadAgentEffortState();
-                        if (convId) {
-                            agentEffortState[convId] = { agentEffort, reasoningEffort };
+                        if (data.modelId && data.reasoningEffort) {
+                            if (!agentEffortState.modelReasoning) agentEffortState.modelReasoning = {};
+                            agentEffortState.modelReasoning[data.modelId] = data.reasoningEffort;
+                            console.log(`[SX PROXY] Model reasoning set for ${data.modelId}: ${data.reasoningEffort}`);
                         }
-                        agentEffortState.global = { agentEffort, reasoningEffort };
+                        if (data.agentEffort) {
+                            const convId = (data.convId || '').replace(/^conv_/, '');
+                            const curProf = getEffortProfile(convId);
+                            const reasoningEffort = data.reasoningEffort || curProf.reasoningEffort || 'normal';
+                            if (convId) {
+                                agentEffortState[convId] = { agentEffort: data.agentEffort, reasoningEffort };
+                            }
+                            agentEffortState.global = { agentEffort: data.agentEffort, reasoningEffort };
+                            console.log(`[SX PROXY] Agent effort set for ${convId || 'global'}: agent=${data.agentEffort}`);
+                        }
                         saveAgentEffortState();
-                        console.log(`[SX PROXY] Agent effort set for ${convId || 'global'}: agent=${agentEffort}, reasoning=${reasoningEffort}`);
+                        const convId = (data.convId || '').replace(/^conv_/, '');
                         res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-                        res.end(JSON.stringify({ ok: true, profile: { agentEffort, reasoningEffort } }));
+                        res.end(JSON.stringify({ ok: true, profile: getEffortProfile(convId), modelReasoning: agentEffortState.modelReasoning || {} }));
                     } catch(e) {
                         res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                         res.end(JSON.stringify({ ok: false, error: e.message }));
@@ -2240,8 +2251,8 @@ function startInternalProxy() {
                             systemText += '\n\n[Profesyonel Mod] Uzun bağlamda önceki kararları özetleyip devam edin. Kırpma sonrası referansı kaybetmeyin; önceki kullanıcı isteğini hatırlayın.';
                         }
                         const effortProfile = getEffortProfile(reqConvKey);
-                        if (effortProfile.agentEffort === 'ultra') {
-                            systemText += '\n\n[ULTRA CODE PROTOKOLÜ (TİTAN MODU): (1) Ön Tarama: Kod yazmadan önce dosya yapısını ve bağımlı modülleri incele. (2) Atomik Düzenleme: Sadece gereken satırları hedefle; dosyayı baştan sona silip yazma. (3) Kod Sonrası Zorunlu Doğrulama: Değişiklik yaptıktan sonra dosyayı tekrar kontrol et, syntax ve derleme hatalarını tara. (4) Self-Healing: Herhangi bir hata veya tutarsızlık tespit edersen kullanıcıya sormadan kendi kendine anında düzelt!]';
+                        if (effortProfile.agentEffort === 'ultra' || effortProfile.agentEffort === 'max') {
+                            systemText += '\n\n[ULTRA CODE / MAX TITAN PROTOKOLÜ: (1) Ön Tarama: Kod yazmadan önce dosya yapısını ve bağımlı modülleri incele. (2) Atomik Düzenleme: Sadece gereken satırları hedefle; dosyayı baştan sona silip yazma. (3) Kod Sonrası Zorunlu Doğrulama: Değişiklik yaptıktan sonra dosyayı tekrar kontrol et, syntax ve derleme hatalarını tara. (4) Self-Healing: Herhangi bir hata veya tutarsızlık tespit edersen kullanıcıya sormadan kendi kendine anında düzelt!]';
                         } else if (effortProfile.agentEffort === 'high') {
                             systemText += '\n\n[HIGH EFFORT PROTOKOLÜ: Kodlama öncesi mimari plan çıkar, etki alanını tara, değişiklik sonrası doğrula.]';
                         } else if (effortProfile.agentEffort === 'low') {
@@ -2376,11 +2387,16 @@ function startInternalProxy() {
                             };
                             if (systemText) payload.system = systemText;
                             if (anthropicTools) payload.tools = anthropicTools;
-                            if (effortProfile.reasoningEffort && effortProfile.reasoningEffort !== 'none') {
+                            const mKey1 = customModel?.id || '';
+                            const mKey2 = customModel?.modelId || '';
+                            const effReasoning = (agentEffortState.modelReasoning && (agentEffortState.modelReasoning[mKey1] || agentEffortState.modelReasoning[mKey2]))
+                                                || effortProfile.reasoningEffort
+                                                || 'normal';
+                            if (effReasoning && effReasoning !== 'none') {
                                 let budget = 8192;
-                                if (effortProfile.reasoningEffort === 'low') budget = 2048;
-                                else if (effortProfile.reasoningEffort === 'high') budget = 16384;
-                                else if (effortProfile.reasoningEffort === 'max') budget = 32768;
+                                if (effReasoning === 'low') budget = 2048;
+                                else if (effReasoning === 'high') budget = 16384;
+                                else if (effReasoning === 'max') budget = 32768;
                                 payload.thinking = { type: 'enabled', budget_tokens: budget };
                                 payload.max_tokens = Math.max(payload.max_tokens, budget + 4000);
                             }
@@ -2640,14 +2656,19 @@ function startInternalProxy() {
                                 // Groq service_tier omitted: user's org only has on_demand; default is safe
                             };
                             if (oaTools) payload.tools = oaTools;
-                            if (effortProfile.reasoningEffort && effortProfile.reasoningEffort !== 'none') {
-                                if (effortProfile.reasoningEffort === 'low') {
+                            const mKey1 = customModel?.id || '';
+                            const mKey2 = customModel?.modelId || '';
+                            const effReasoning = (agentEffortState.modelReasoning && (agentEffortState.modelReasoning[mKey1] || agentEffortState.modelReasoning[mKey2]))
+                                                || effortProfile.reasoningEffort
+                                                || 'normal';
+                            if (effReasoning && effReasoning !== 'none') {
+                                if (effReasoning === 'low') {
                                     payload.reasoning_effort = 'low';
                                     payload.reasoning = { effort: 'low', max_tokens: 2048 };
-                                } else if (effortProfile.reasoningEffort === 'high') {
+                                } else if (effReasoning === 'high') {
                                     payload.reasoning_effort = 'high';
                                     payload.reasoning = { effort: 'high', max_tokens: 16384 };
-                                } else if (effortProfile.reasoningEffort === 'max') {
+                                } else if (effReasoning === 'max') {
                                     payload.reasoning_effort = 'high';
                                     payload.reasoning = { effort: 'high', max_tokens: 32768 };
                                 } else {
