@@ -3233,7 +3233,10 @@
                 margin-left: auto !important;
                 display: flex !important;
                 align-items: center !important;
+                justify-content: flex-end !important;
                 gap: 6px !important;
+                width: 32px !important;
+                min-width: 32px !important;
             }
             .sx-provider-header {
                 padding: 8px 8px 3px 8px !important;
@@ -4377,14 +4380,12 @@
                                 ${hasBadges ? `<div class="sx-model-badges-row">${rightBadges}</div>` : ""}
                             </div>
                             <div class="sx-model-right-actions">
-                                ${isReasoning ? `
-                                    <div class="sx-model-chevron-hint" title="Reasoning: ${reasoningLabel}">
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
-                                            <polyline points="9 18 15 12 9 6"></polyline>
-                                        </svg>
-                                    </div>
-                                ` : ""}
                                 ${checkSvg}
+                                <div class="sx-model-chevron-hint" style="${isReasoning ? "" : "visibility:hidden;pointer-events:none;"}" title="${isReasoning ? `Reasoning: ${reasoningLabel}` : ""}">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
+                                        <polyline points="9 18 15 12 9 6"></polyline>
+                                    </svg>
+                                </div>
                             </div>
                         `;
               item.addEventListener("mouseenter", () => {
@@ -4465,9 +4466,50 @@
     }
     isModelSupportingReasoning(m) {
       if (!m) return false;
+      if (m.supportsReasoning === false) return false;
       if (m.supportsReasoning === true) return true;
+      if (Array.isArray(m.supportedReasoningEfforts) && m.supportedReasoningEfforts.length > 0) return true;
+      if (Array.isArray(m.reasoning_efforts) && m.reasoning_efforts.length > 0) return true;
+      if (Array.isArray(m.reasoningEfforts) && m.reasoningEfforts.length > 0) return true;
+      const params = Array.isArray(m.supported_parameters) ? m.supported_parameters.join(" ") : String(m.supported_parameters || "");
+      if (/(?:reasoning|thinking|thought)/i.test(params)) return true;
       const str = `${m.id || ""} ${m.modelId || ""} ${m.name || ""}`.toLowerCase();
-      return /(?:reasoning|thinking|thought|deepseek.*r1|qwq|o1|o3|o4|claude-3[.-]7|gemini-2\.[05]|gemini-3|sonar-reasoning)/i.test(str);
+      if (/(?:embedding|embed|whisper|tts|moderation|dall-e|stable-diffusion|flux|midjourney)/i.test(str)) {
+        return false;
+      }
+      return true;
+    }
+    getModelReasoningOptions(m) {
+      if (!m) return [
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+        { id: "max", label: "Max" }
+      ];
+      const apiEfforts = m.supportedReasoningEfforts || m.reasoning_efforts || m.reasoningEfforts || m.parameters?.reasoning_effort?.options || m.parameters?.reasoning?.options || m.supported_parameters_options?.reasoning_effort;
+      if (Array.isArray(apiEfforts) && apiEfforts.length > 0) {
+        return apiEfforts.map((opt) => {
+          const s = String(opt).trim();
+          return {
+            id: s.toLowerCase(),
+            label: s.charAt(0).toUpperCase() + s.slice(1)
+          };
+        });
+      }
+      const str = `${m.id || ""} ${m.modelId || ""} ${m.name || ""}`.toLowerCase();
+      if (/(?:o1|o3|o4|gpt-5)/i.test(str)) {
+        return [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" }
+        ];
+      }
+      return [
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High" },
+        { id: "max", label: "Max" }
+      ];
     }
     closeModelReasoningSubmenu() {
       const existing = document.getElementById("sx-nested-reasoning-menu");
@@ -4485,13 +4527,9 @@
       menu.id = "sx-nested-reasoning-menu";
       menu.className = "sx-nested-menu";
       menu._triggerEl = triggerEl;
-      const curReasoning = this._modelReasoning && this._modelReasoning[modelId] || "medium";
-      const options = [
-        { id: "low", label: "Low" },
-        { id: "medium", label: "Medium" },
-        { id: "high", label: "High" },
-        { id: "max", label: "Max" }
-      ];
+      const m = this.state.getModels().find((mod) => mod.id === modelId) || { id: modelId, name: modelName };
+      const options = this.getModelReasoningOptions(m);
+      const curReasoning = this._modelReasoning && this._modelReasoning[modelId] || (options[1] ? options[1].id : options[0]?.id || "medium");
       menu.innerHTML = options.map((opt) => {
         const isActive = curReasoning === opt.id || curReasoning === "normal" && opt.id === "medium";
         const checkIcon = isActive ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:#ffffff;flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>` : "";
