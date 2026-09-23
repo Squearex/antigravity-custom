@@ -845,6 +845,16 @@ export class UIInjector {
     trySXModelsSettingsInject() {
         const dialog = document.querySelector('[role="dialog"]');
         if (!dialog) return;
+
+        // Guard: Do not touch non-settings dialogs (e.g. Delete Conversation, Alert, Confirm)
+        const dialogText = (dialog.innerText || '').toLowerCase();
+        if (dialog.querySelector('[data-testid*="delete" i], button[data-testid*="delete" i]') || 
+            dialogText.includes('delete conversation') || 
+            dialogText.includes('delete this') ||
+            dialogText.includes('silmek istediğinize')) {
+            return;
+        }
+
         this.injectGlobalStyles();
 
         const existingWrap = dialog.querySelector('#sx-content-wrapper');
@@ -871,9 +881,16 @@ export class UIInjector {
             dialog.classList.remove('sx-models-tab-active');
         }
 
+        const MARKERS = ['Gemini Models', 'Model Credits', 'Your Plan'];
+        const hasModelsMarker = MARKERS.some(m => dialogText.includes(m.toLowerCase()));
+
+        // STRICT GUARD: If neither the Models tab is active NOR native model markers are present, DO NOT INJECT!
+        if (!isModelsTabActive && !hasModelsMarker) {
+            return;
+        }
+
         let rightPanel = dialog.querySelector('[role="tabpanel"]') || dialog.querySelector('.overflow-y-auto') || dialog.querySelector('main');
         if (!rightPanel) {
-            const MARKERS = ['Gemini Models', 'Model Credits', 'Your Plan'];
             for (const marker of MARKERS) {
                 const heading = Array.from(dialog.querySelectorAll('h1, h2, h3, h4, div, span')).find(el => el.textContent && el.textContent.trim() === marker);
                 if (heading) {
