@@ -355,42 +355,36 @@ export class QuotaMonitor {
         }
     }
 
-    renderAllContextsSection(pop, currentConvId) {
-        try {
-            let sec = pop.querySelector('#sx-ctx-subagents');
-            const convs = (this._allCtxCache?.data || []).filter(c => c && c.id && c.id !== currentConvId).slice(0, 8);
-            if (!convs.length) { if (sec) sec.remove(); return; }
-            const fmt = (n) => {
-                if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-                if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
-                return String(Math.round(n));
-            };
-            const rows = convs.map(c => {
-                const total = Number(c.ctx) > 0 ? Number(c.ctx) : 262144;
-                const pct = Math.min(100, ((Number(c.estTok) || 0) / total) * 100);
-                const color = pct > 85 ? '#f43f5e' : (pct > 60 ? '#fbbf24' : '#38bdf8');
-                const label = `${String(c.id).slice(0, 8)}${c.streaming ? ' • üretiyor' : ''}`;
-                const model = String(c.modelName || c.modelId || '?').slice(0, 20);
-                return `
-                    <div style="display:flex;align-items:center;justify-content:space-between;font-size:11.5px;line-height:1.5;" title="${this._escAttr(c.modelName || c.modelId || '')}">
-                        <div style="display:flex;align-items:center;gap:7px;min-width:0;">
-                            <div style="width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0;"></div>
-                            <span style="color:#cbd5e1;font-family:ui-monospace,monospace;">${label}</span>
-                            <span style="color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${model}</span>
-                        </div>
-                        <div style="font-family:ui-monospace,monospace;font-size:11px;color:#94a3b8;flex-shrink:0;margin-left:8px;">${fmt(c.estTok || 0)} (${Math.round(pct)}%)</div>
-                    </div>`;
-            }).join('');
-            const html = `
-                <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:0.7px;margin:14px 0 8px 0;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06);">Diğer Sohbetler</div>
-                <div style="display:flex;flex-direction:column;gap:7px;">${rows}</div>`;
-            if (sec) { sec.innerHTML = html; }
-            else {
-                sec = document.createElement('div');
-                sec.id = 'sx-ctx-subagents';
-                sec.innerHTML = html;
-                pop.appendChild(sec);
+    getPromptBoxTop() {
+        const textarea = document.querySelector('[contenteditable="true"], textarea, [data-testid="chat-input"]');
+        if (textarea) {
+            const formOrCard = textarea.closest('form')
+                            || textarea.closest('[class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[calc"]')
+                            || textarea.closest('.bg-card, [class*="border"]')
+                            || textarea.parentElement?.parentElement;
+            if (formOrCard) {
+                const r = formOrCard.getBoundingClientRect();
+                if (r.top > 80 && r.top < window.innerHeight) {
+                    return r.top;
+                }
             }
+        }
+        const promptContainer = document.querySelector('form')
+                             || document.querySelector('[data-testid="chat-input-container"]');
+        if (promptContainer) {
+            const r = promptContainer.getBoundingClientRect();
+            if (r.top > 80 && r.top < window.innerHeight) {
+                return r.top;
+            }
+        }
+        return window.innerHeight - 150;
+    }
+
+    renderAllContextsSection(pop) {
+        // "Diğer Sohbetler" section removed as requested by user
+        try {
+            const sec = pop?.querySelector('#sx-ctx-subagents');
+            if (sec) sec.remove();
         } catch(e) {}
     }
 
@@ -491,29 +485,25 @@ export class QuotaMonitor {
         pop.style.cssText = `
             position: fixed;
             width: 320px;
-            background: #14151b;
-            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: hsl(var(--popover, var(--card, 222 47% 11%)));
+            border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12)));
             border-radius: 12px;
-            box-shadow: 0 24px 56px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05);
+            box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25);
             padding: 16px;
             z-index: 100000;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            color: #f1f5f9;
+            color: hsl(var(--popover-foreground, var(--foreground, #f1f5f9)));
             box-sizing: border-box;
             user-select: none;
-            backdrop-filter: blur(16px);
+            backdrop-filter: blur(20px);
         `;
 
         const rect = anchorEl.getBoundingClientRect();
         const popLeft = Math.max(10, Math.min(window.innerWidth - 340, rect.left - 20));
         pop.style.left = popLeft + 'px';
 
-        const promptBox = anchorEl.closest('form') ||
-                          anchorEl.closest('[data-testid="chat-input-container"]') ||
-                          document.querySelector('[contenteditable="true"], textarea')?.closest('form, div.relative.flex, div.border') ||
-                          anchorEl.closest('.relative');
-        const boxTop = promptBox ? promptBox.getBoundingClientRect().top : rect.top;
-        pop.style.bottom = Math.max(8, window.innerHeight - boxTop + 10) + 'px';
+        const boxTop = this.getPromptBoxTop();
+        pop.style.bottom = Math.max(12, window.innerHeight - boxTop + 10) + 'px';
 
         pop.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" id="sx-ctx-popover-header">
@@ -559,17 +549,6 @@ export class QuotaMonitor {
                 this.renderPopoverDetails(pop, data, updatedLive);
                 this.updateContextRing(updatedLive);
             }
-        });
-        // Other conversations section (async fill)
-        this.fetchAllContexts().then(() => {
-            try {
-                if (!pop.isConnected) return;
-                const curKey = this.models.getActiveConversationKey();
-                const curClean = (curKey || '').replace(/^conv_/, '');
-                const cacheKey = (curClean || 'new') + '_' + (targetModel?.id || '');
-                const d = this._contextDetailsCache[cacheKey]?.data;
-                if (d) this.renderAllContextsSection(pop, String(d.convId || curClean || ''));
-            } catch(e) {}
         });
     }
 
@@ -684,9 +663,5 @@ export class QuotaMonitor {
             });
             itemsList.innerHTML = html;
         }
-        // Other conversations (subagents): cached data renders instantly, refresh fills in
-        try {
-            this.renderAllContextsSection(pop, String(data.convId || liveMetrics?.convId || ''));
-        } catch(e) {}
     }
 }

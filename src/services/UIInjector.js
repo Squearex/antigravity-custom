@@ -230,11 +230,11 @@ export class UIInjector {
 
             /* Model selector menu wrapper: unified sleek single card */
             [role="menu"]:has([data-testid="model-selector-panel"]) {
-                background: #14151b !important;
-                border: 1px solid rgba(255, 255, 255, 0.12) !important;
+                background: hsl(var(--popover, var(--card, 222 47% 11%))) !important;
+                border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12))) !important;
                 border-radius: 10px !important;
-                box-shadow: 0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
-                backdrop-filter: blur(24px) !important;
+                box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25) !important;
+                backdrop-filter: blur(20px) !important;
                 padding: 0 !important;
                 overflow: hidden !important;
                 width: 320px !important;
@@ -412,15 +412,15 @@ export class UIInjector {
             .sx-nested-menu {
                 position: fixed !important;
                 z-index: 999999 !important;
-                background: #14151b !important;
-                border: 1px solid rgba(255, 255, 255, 0.14) !important;
+                background: hsl(var(--popover, var(--card, 222 47% 11%))) !important;
+                border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12))) !important;
                 border-radius: 10px !important;
                 padding: 4px !important;
                 min-width: 135px !important;
                 max-height: calc(100vh - 24px) !important;
                 overflow-y: auto !important;
-                box-shadow: 0 16px 36px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
-                backdrop-filter: blur(24px) !important;
+                box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25) !important;
+                backdrop-filter: blur(20px) !important;
                 font-family: inherit !important;
                 display: flex !important;
                 flex-direction: column !important;
@@ -456,11 +456,11 @@ export class UIInjector {
                 z-index: 100000 !important;
                 width: 236px !important;
                 border-radius: 12px !important;
-                background: #14151b !important;
-                border: 1px solid rgba(255, 255, 255, 0.14) !important;
+                background: hsl(var(--popover, var(--card, 222 47% 11%))) !important;
+                border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12))) !important;
                 padding: 14px 16px !important;
-                box-shadow: 0 24px 56px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
-                backdrop-filter: blur(24px) !important;
+                box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25) !important;
+                backdrop-filter: blur(20px) !important;
                 font-family: inherit !important;
                 box-sizing: border-box !important;
             }
@@ -509,16 +509,16 @@ export class UIInjector {
                 position: fixed !important;
                 z-index: 100005 !important;
                 width: 290px !important;
-                background: #14151b !important;
-                border: 1px solid rgba(255, 255, 255, 0.16) !important;
+                background: hsl(var(--popover, var(--card, 222 47% 11%))) !important;
+                border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12))) !important;
                 border-radius: 10px !important;
                 padding: 12px 14px !important;
-                box-shadow: 0 18px 44px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
-                backdrop-filter: blur(24px) !important;
+                box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25) !important;
+                backdrop-filter: blur(20px) !important;
                 pointer-events: none !important;
                 box-sizing: border-box !important;
                 font-family: inherit !important;
-                color: #ffffff !important;
+                color: hsl(var(--popover-foreground, var(--foreground, #f1f5f9))) !important;
             }
         `;
         const target = document.head || document.documentElement;
@@ -1564,11 +1564,11 @@ export class UIInjector {
         const isMenu = menuBox && menuBox !== modelPanel;
 
         if (isMenu) {
-            menuBox.style.setProperty('background', '#14151b', 'important');
-            menuBox.style.setProperty('border', '1px solid rgba(255, 255, 255, 0.12)', 'important');
+            menuBox.style.setProperty('background', 'hsl(var(--popover, var(--card, 222 47% 11%)))', 'important');
+            menuBox.style.setProperty('border', '1px solid hsl(var(--border, rgba(255, 255, 255, 0.12)))', 'important');
             menuBox.style.setProperty('border-radius', '10px', 'important');
-            menuBox.style.setProperty('box-shadow', '0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08)', 'important');
-            menuBox.style.setProperty('backdrop-filter', 'blur(24px)', 'important');
+            menuBox.style.setProperty('box-shadow', '0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25)', 'important');
+            menuBox.style.setProperty('backdrop-filter', 'blur(20px)', 'important');
             menuBox.style.setProperty('padding', '0', 'important');
             menuBox.style.setProperty('width', '320px', 'important');
             menuBox.style.setProperty('min-width', '320px', 'important');
@@ -1588,11 +1588,11 @@ export class UIInjector {
             modelPanel.style.setProperty('min-width', '0', 'important');
             modelPanel.style.setProperty('max-width', '100%', 'important');
         } else {
-            modelPanel.style.background = '#14151b';
-            modelPanel.style.border = '1px solid rgba(255, 255, 255, 0.12)';
+            modelPanel.style.background = 'hsl(var(--popover, var(--card, 222 47% 11%)))';
+            modelPanel.style.border = '1px solid hsl(var(--border, rgba(255, 255, 255, 0.12)))';
             modelPanel.style.borderRadius = '10px';
-            modelPanel.style.boxShadow = '0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08)';
-            modelPanel.style.backdropFilter = 'blur(24px)';
+            modelPanel.style.boxShadow = '0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25)';
+            modelPanel.style.backdropFilter = 'blur(20px)';
             modelPanel.style.width = '320px';
             modelPanel.style.minWidth = '320px';
             modelPanel.style.maxWidth = '340px';
@@ -1603,25 +1603,15 @@ export class UIInjector {
 
         // Position model menu cleanly above the chat input box so it never covers what the user is typing
         const targetShiftBox = isMenu ? menuBox : modelPanel;
-        const anchorBtn = document.querySelector('[data-testid="model-selector-trigger"]')
-                       || document.querySelector('[data-testid="model-selector-button"]')
-                       || document.querySelector('button[aria-haspopup="dialog"]')
-                       || document.querySelector('button[aria-haspopup="menu"]');
-        const promptBox = anchorBtn?.closest('form')
-                       || anchorBtn?.closest('[data-testid="chat-input-container"]')
-                       || document.querySelector('form:has([data-testid="model-selector-trigger"])')
-                       || document.querySelector('form')
-                       || document.querySelector('[contenteditable="true"], textarea')?.closest('form, div.relative.flex, div.border');
-
         const adjustPosition = () => {
             try {
-                if (!promptBox || !targetShiftBox.isConnected) return;
-                const boxRect = promptBox.getBoundingClientRect();
+                if (!targetShiftBox.isConnected) return;
+                const boxTop = this.getPromptBoxTop();
                 const mRect = targetShiftBox.getBoundingClientRect();
-                if (mRect.top < boxRect.top && mRect.bottom > boxRect.top - 4) {
-                    const shiftY = mRect.bottom - (boxRect.top - 8);
+                if (mRect.bottom > boxTop - 8) {
+                    const shiftY = mRect.bottom - (boxTop - 8);
                     const safeShift = Math.min(shiftY, Math.max(0, mRect.top - 12));
-                    if (safeShift > 0 && safeShift < 180) {
+                    if (safeShift > 0 && safeShift < 250) {
                         targetShiftBox.style.transform = `translateY(-${safeShift}px)`;
                     }
                 }
@@ -1631,6 +1621,42 @@ export class UIInjector {
         setTimeout(adjustPosition, 25);
         setTimeout(adjustPosition, 60);
         setTimeout(adjustPosition, 140);
+
+        // Prevent View Usage from auto-opening without explicit hover
+        const viewUsageItem = Array.from(modelPanel.querySelectorAll('[role="menuitem"], div, button')).find(el => {
+            return (el.textContent || '').trim().toLowerCase().includes('view usage');
+        });
+        if (viewUsageItem) {
+            viewUsageItem.setAttribute('tabindex', '-1');
+            viewUsageItem.blur();
+            const checkNestedSubmenu = () => {
+                const nestedMenu = document.querySelector('[role="menu"][data-nested]');
+                if (nestedMenu) {
+                    const isHovered = viewUsageItem.matches(':hover') || nestedMenu.matches(':hover');
+                    const popper = nestedMenu.closest('[role="presentation"]') || nestedMenu;
+                    if (!isHovered) {
+                        popper.style.setProperty('display', 'none', 'important');
+                    } else {
+                        popper.style.removeProperty('display');
+                    }
+                }
+            };
+            checkNestedSubmenu();
+            setTimeout(checkNestedSubmenu, 20);
+            setTimeout(checkNestedSubmenu, 60);
+            setTimeout(checkNestedSubmenu, 150);
+
+            viewUsageItem.addEventListener('mouseenter', () => {
+                const nestedMenu = document.querySelector('[role="menu"][data-nested]');
+                if (nestedMenu) {
+                    const popper = nestedMenu.closest('[role="presentation"]') || nestedMenu;
+                    popper.style.removeProperty('display');
+                }
+            });
+            viewUsageItem.addEventListener('mouseleave', () => {
+                setTimeout(checkNestedSubmenu, 60);
+            });
+        }
 
         const scrollContainer = modelPanel.querySelector('.overflow-y-auto');
         if (scrollContainer) {
@@ -1643,7 +1669,7 @@ export class UIInjector {
         if (!searchWrap) {
             searchWrap = document.createElement('div');
             searchWrap.id = 'sx-model-search-wrap';
-            searchWrap.style.cssText = 'padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); background: #14151b !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box;';
+            searchWrap.style.cssText = 'padding: 8px 10px; border-bottom: 1px solid hsl(var(--border, rgba(255,255,255,0.08))); background: hsl(var(--popover, var(--card, 222 47% 11%))) !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box;';
             searchWrap.innerHTML = `
                 <div style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 10px;gap:7px;height:32px;box-sizing:border-box;width:100%;transition:border-color 0.15s;">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.3);flex-shrink:0;">
@@ -1829,15 +1855,15 @@ export class UIInjector {
                     .sx-nested-menu {
                         position: fixed !important;
                         z-index: 999999 !important;
-                        background: #14151b !important;
-                        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+                        background: hsl(var(--popover, var(--card, 222 47% 11%))) !important;
+                        border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12))) !important;
                         border-radius: 8px !important;
                         padding: 4px !important;
                         min-width: 135px !important;
                         max-height: calc(100vh - 24px) !important;
                         overflow-y: auto !important;
-                        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
-                        backdrop-filter: blur(24px) !important;
+                        box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25) !important;
+                        backdrop-filter: blur(20px) !important;
                         font-family: inherit !important;
                         display: flex !important;
                         flex-direction: column !important;
@@ -1872,11 +1898,11 @@ export class UIInjector {
                         z-index: 100000 !important;
                         width: 236px !important;
                         border-radius: 12px !important;
-                        background: #14151b !important;
-                        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+                        background: hsl(var(--popover, var(--card, 222 47% 11%))) !important;
+                        border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12))) !important;
                         padding: 14px 16px !important;
-                        box-shadow: 0 24px 56px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
-                        backdrop-filter: blur(24px) !important;
+                        box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25) !important;
+                        backdrop-filter: blur(20px) !important;
                         font-family: inherit !important;
                         box-sizing: border-box !important;
                     }
@@ -2111,7 +2137,7 @@ export class UIInjector {
         if (!fBadge) {
             fBadge = document.createElement('div');
             fBadge.id = 'sx-panel-footer-badge';
-            fBadge.style.cssText = 'padding:6px 12px;border-top:1px solid rgba(255,255,255,0.08);background:#14151b;border-bottom-left-radius:10px;border-bottom-right-radius:10px;display:flex;align-items:center;justify-content:space-between;font-size:10.5px;user-select:none;box-sizing:border-box;';
+            fBadge.style.cssText = 'padding:6px 12px;border-top:1px solid hsl(var(--border, rgba(255,255,255,0.08)));background:hsl(var(--popover, var(--card, 222 47% 11%)));border-bottom-left-radius:10px;border-bottom-right-radius:10px;display:flex;align-items:center;justify-content:space-between;font-size:10.5px;user-select:none;box-sizing:border-box;';
             modelPanel.appendChild(fBadge);
         }
         fBadge.innerHTML = '<span style="font-weight:700;"><span style="color:#38bdf8;text-shadow:0 0 10px rgba(56,189,248,0.35);">SX</span> <span style="color:#ffffff;">Development</span></span><span style="font-size:9.5px;color:rgba(255,255,255,0.35);font-weight:500;">Custom Engine</span>';
@@ -2385,6 +2411,31 @@ export class UIInjector {
         effortBtn.textContent = text;
     }
 
+    getPromptBoxTop() {
+        const textarea = document.querySelector('[contenteditable="true"], textarea, [data-testid="chat-input"]');
+        if (textarea) {
+            const formOrCard = textarea.closest('form')
+                            || textarea.closest('[class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[calc"]')
+                            || textarea.closest('.bg-card, [class*="border"]')
+                            || textarea.parentElement?.parentElement;
+            if (formOrCard) {
+                const r = formOrCard.getBoundingClientRect();
+                if (r.top > 80 && r.top < window.innerHeight) {
+                    return r.top;
+                }
+            }
+        }
+        const promptContainer = document.querySelector('form')
+                             || document.querySelector('[data-testid="chat-input-container"]');
+        if (promptContainer) {
+            const r = promptContainer.getBoundingClientRect();
+            if (r.top > 80 && r.top < window.innerHeight) {
+                return r.top;
+            }
+        }
+        return window.innerHeight - 150;
+    }
+
     toggleEffortSliderPopover(anchorBtn) {
         this.injectGlobalStyles();
 
@@ -2467,12 +2518,8 @@ export class UIInjector {
         if (left < 10) left = 10;
         popover.style.left = left + 'px';
 
-        const promptBox = anchorBtn.closest('form') ||
-                          anchorBtn.closest('[data-testid="chat-input-container"]') ||
-                          document.querySelector('[contenteditable="true"], textarea')?.closest('form, div.relative.flex, div.border') ||
-                          anchorBtn.closest('.relative');
-        const boxTop = promptBox ? promptBox.getBoundingClientRect().top : rect.top;
-        popover.style.bottom = Math.max(8, window.innerHeight - boxTop + 10) + 'px';
+        const boxTop = this.getPromptBoxTop();
+        popover.style.bottom = Math.max(12, window.innerHeight - boxTop + 10) + 'px';
 
         const track = popover.querySelector('#sx-effort-slider-track');
         const thumb = popover.querySelector('#sx-effort-slider-thumb');
@@ -2634,14 +2681,14 @@ export class UIInjector {
             max-width: 90vw;
             max-height: 85vh;
             overflow-y: auto;
-            background: #14151b;
-            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: hsl(var(--popover, var(--card, 222 47% 11%)));
+            border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12)));
             border-radius: 14px;
             padding: 22px 24px;
-            box-shadow: 0 28px 64px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(28px);
+            box-shadow: 0 16px 40px -6px rgba(0, 0, 0, 0.5), 0 6px 16px -4px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(20px);
             z-index: 100002;
-            color: #ffffff;
+            color: hsl(var(--popover-foreground, var(--foreground, #f1f5f9)));
             font-family: inherit;
             box-sizing: border-box;
         `;

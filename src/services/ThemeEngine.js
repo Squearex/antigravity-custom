@@ -527,8 +527,11 @@ export class ThemeEngine {
             /* Symmetrical View Usage and Quota Submenu Alignment */
             [role="menu"][data-nested] {
                 width: 320px !important;
-                border: 1px solid rgba(255, 255, 255, 0.1) !important;
-                box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5) !important;
+                background: hsl(var(--popover, var(--card, 222 47% 11%))) !important;
+                border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12))) !important;
+                border-radius: 10px !important;
+                box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45) !important;
+                backdrop-filter: blur(20px) !important;
             }
             [role="menu"][data-nested] [role="group"] {
                 gap: 0 !important;

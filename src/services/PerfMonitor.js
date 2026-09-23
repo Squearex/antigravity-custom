@@ -391,6 +391,31 @@ export class PerfMonitor {
         } catch(e) {}
     }
 
+    getPromptBoxTop() {
+        const textarea = document.querySelector('[contenteditable="true"], textarea, [data-testid="chat-input"]');
+        if (textarea) {
+            const formOrCard = textarea.closest('form')
+                            || textarea.closest('[class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[calc"]')
+                            || textarea.closest('.bg-card, [class*="border"]')
+                            || textarea.parentElement?.parentElement;
+            if (formOrCard) {
+                const r = formOrCard.getBoundingClientRect();
+                if (r.top > 80 && r.top < window.innerHeight) {
+                    return r.top;
+                }
+            }
+        }
+        const promptContainer = document.querySelector('form')
+                             || document.querySelector('[data-testid="chat-input-container"]');
+        if (promptContainer) {
+            const r = promptContainer.getBoundingClientRect();
+            if (r.top > 80 && r.top < window.innerHeight) {
+                return r.top;
+            }
+        }
+        return window.innerHeight - 150;
+    }
+
     togglePerfPopover(anchorEl) {
         // Mutual exclusion: Close other open popovers
         const otherCtx = document.getElementById('sx-context-popover');
@@ -422,29 +447,25 @@ export class PerfMonitor {
         pop.style.cssText = `
             position: fixed;
             width: 320px;
-            background: #14151b;
-            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: hsl(var(--popover, var(--card, 222 47% 11%)));
+            border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12)));
             border-radius: 12px;
-            box-shadow: 0 24px 56px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05);
+            box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25);
             padding: 15px 17px;
             z-index: 100000;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            color: #f1f5f9;
+            color: hsl(var(--popover-foreground, var(--foreground, #f1f5f9)));
             box-sizing: border-box;
             user-select: none;
-            backdrop-filter: blur(16px);
+            backdrop-filter: blur(20px);
         `;
 
         const rect = anchorEl.getBoundingClientRect();
         const popLeft = Math.max(10, Math.min(window.innerWidth - 340, rect.left - 20));
         pop.style.left = popLeft + 'px';
 
-        const promptBox = anchorEl.closest('form') ||
-                          anchorEl.closest('[data-testid="chat-input-container"]') ||
-                          document.querySelector('[contenteditable="true"], textarea')?.closest('form, div.relative.flex, div.border') ||
-                          anchorEl.closest('.relative');
-        const boxTop = promptBox ? promptBox.getBoundingClientRect().top : rect.top;
-        pop.style.bottom = Math.max(8, window.innerHeight - boxTop + 10) + 'px';
+        const boxTop = this.getPromptBoxTop();
+        pop.style.bottom = Math.max(12, window.innerHeight - boxTop + 10) + 'px';
 
         pop.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" id="sx-perf-popover-header">
