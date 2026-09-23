@@ -83,21 +83,29 @@ export class UIInjector {
             }
 
             // Settings dialog tabs & buttons instant injection
-            const settingsTarget = e.target.closest('[role="dialog"] [role="tab"], [role="dialog"] button, [data-testid*="settings"], button[aria-label*="Settings" i]');
-            if (settingsTarget) {
-                const targetTxt = (settingsTarget.textContent || '').trim().toLowerCase();
-                if (targetTxt.includes('model')) {
-                    this._selectedSettingsTab = 'models';
-                } else if (['general', 'genel', 'application', 'uygulama', 'appearance', 'görünüm', 'customization', 'özelleştirme', 'browser', 'tarayıcı', 'conversation', 'sohbet', 'shortcut', 'kısayol', 'feedback', 'geri bildirim'].some(k => targetTxt.includes(k))) {
-                    this._selectedSettingsTab = targetTxt;
-                } else if (!settingsTarget.closest('[role="dialog"]')) {
-                    // Clicked an opener trigger outside dialog: reset tab so it doesn't force models
-                    this._selectedSettingsTab = null;
+            const inDialog = e.target.closest('[role="dialog"]');
+            if (inDialog) {
+                const clickedItem = e.target.closest('button, [role="tab"], [role="button"], a, div');
+                if (clickedItem) {
+                    const targetTxt = (clickedItem.textContent || '').trim().toLowerCase();
+                    const knownTabs = ['general', 'genel', 'application', 'uygulama', 'appearance', 'görünüm', 'customization', 'özelleştirme', 'browser', 'tarayıcı', 'conversation', 'sohbet', 'shortcut', 'kısayol', 'feedback', 'models'];
+                    const matched = knownTabs.find(k => targetTxt === k || (targetTxt.startsWith(k) && targetTxt.length < 25));
+                    if (matched) {
+                        this._selectedSettingsTab = matched.includes('model') ? 'models' : matched;
+                    }
                 }
                 this.trySXModelsSettingsInject();
                 requestAnimationFrame(() => this.trySXModelsSettingsInject());
                 setTimeout(() => this.trySXModelsSettingsInject(), 25);
                 setTimeout(() => this.trySXModelsSettingsInject(), 80);
+            } else {
+                const settingsTarget = e.target.closest('[data-testid*="settings"], button[aria-label*="Settings" i]');
+                if (settingsTarget) {
+                    this._selectedSettingsTab = null;
+                    this.trySXModelsSettingsInject();
+                    requestAnimationFrame(() => this.trySXModelsSettingsInject());
+                    setTimeout(() => this.trySXModelsSettingsInject(), 40);
+                }
             }
         }, true);
 
@@ -950,34 +958,39 @@ export class UIInjector {
         if (!dialog) return { sidebar: null, rightPanel: null };
 
         // 1. Locate the sidebar container
-        const navButtons = Array.from(dialog.querySelectorAll('button, [role="tab"], a, div[role="button"]')).filter(el => {
+        const tabTexts = ['general', 'genel', 'appearance', 'görünüm', 'shortcuts', 'kısayol', 'application', 'uygulama', 'models', 'customizations', 'conversations'];
+        const allElements = Array.from(dialog.querySelectorAll('*'));
+        const tabElements = allElements.filter(el => {
             if (el.closest('#sx-content-wrapper')) return false;
-            const txt = (el.textContent || '').trim().toLowerCase();
-            return ['general', 'genel', 'appearance', 'görünüm', 'shortcuts', 'kısayol', 'application', 'uygulama', 'models', 'customization', 'özelleştirme'].some(k => txt === k || txt.startsWith(k));
+            if (el.children.length > 1) return false;
+            const t = (el.textContent || '').trim().toLowerCase();
+            return tabTexts.includes(t);
         });
 
         let sidebar = null;
-        if (navButtons.length > 0) {
-            let cur = navButtons[0];
+        if (tabElements.length >= 2) {
+            let cur = tabElements[0];
             while (cur && cur.parentElement && cur.parentElement !== dialog) {
-                const p = cur.parentElement;
-                if (navButtons.filter(b => p.contains(b)).length >= 2) {
+                const count = tabElements.filter(t => cur.contains(t)).length;
+                if (count >= 2) {
                     sidebar = cur;
-                    if (p.children.length >= 2 && Array.from(p.children).some(c => c !== cur && (c.classList.contains('flex-1') || c.offsetWidth > cur.offsetWidth))) {
-                        sidebar = cur;
+                    const parentSiblings = Array.from(cur.parentElement.children).filter(c => c !== cur && c.nodeType === 1);
+                    if (parentSiblings.length >= 1) {
                         break;
                     }
                 }
-                cur = p;
+                cur = cur.parentElement;
             }
-            if (!sidebar) sidebar = navButtons[0].closest('nav, aside, [role="tablist"]') || navButtons[0].parentElement;
         }
 
         if (!sidebar) {
-            const userEl = Array.from(dialog.querySelectorAll('div, span, button')).find(el => {
+            sidebar = dialog.querySelector('aside, nav, [role="tablist"]');
+        }
+        if (!sidebar) {
+            const userEl = allElements.find(el => {
                 if (el.closest('#sx-content-wrapper')) return false;
                 const t = (el.textContent || '').toLowerCase();
-                return t.includes('@') || t.includes('sx developer') || t.includes('developer@');
+                return t.includes('@') || t.includes('sx developer');
             });
             if (userEl) {
                 let cur = userEl;
@@ -991,67 +1004,62 @@ export class UIInjector {
             }
         }
 
-        // 2. Locate rightPanel: the column containing the main settings content
+        // 2. The rightPanel is the content column: Sibling of sidebar in the flex row!
         let rightPanel = null;
-
-        // Strategy A: Find native models content markers
-        const nativeContentEl = Array.from(dialog.querySelectorAll('h1, h2, h3, h4, div, span, p')).find(el => {
-            if (el.closest('#sx-content-wrapper')) return false;
-            if (sidebar && sidebar.contains(el)) return false;
-            const t = (el.textContent || '').trim().toLowerCase();
-            return t === 'manage your model quota and credits.' ||
-                   t === 'manage your model quota' ||
-                   t === 'model credits' ||
-                   t === 'your plan' ||
-                   t === 'custom quota' ||
-                   t === 'enable ai credit overages';
-        });
-
-        if (nativeContentEl) {
-            let cur = nativeContentEl;
-            while (cur && cur.parentElement && cur.parentElement !== dialog) {
-                const p = cur.parentElement;
-                if (sidebar && p.contains(sidebar)) {
-                    rightPanel = cur;
-                    break;
-                }
-                if (p.children.length >= 2 && cur !== sidebar) {
-                    rightPanel = cur;
-                    break;
-                }
-                cur = p;
-            }
-            if (!rightPanel) {
-                rightPanel = nativeContentEl.closest('.flex-1, [role="tabpanel"], .overflow-y-auto') || nativeContentEl.parentElement;
-            }
-        }
-
-        // Strategy B: If existingWrap is already in rightPanel and valid
-        const existingWrap = dialog.querySelector('#sx-content-wrapper');
-        if (!rightPanel && existingWrap && existingWrap.parentElement && (!sidebar || !sidebar.contains(existingWrap))) {
-            rightPanel = existingWrap.parentElement;
-        }
-
-        // Strategy C: Sibling of sidebar
-        if (!rightPanel && sidebar && sidebar.parentElement) {
+        if (sidebar && sidebar.parentElement) {
             const siblings = Array.from(sidebar.parentElement.children).filter(el => el !== sidebar && el.nodeType === 1);
-            if (siblings.length >= 1) {
-                rightPanel = siblings.find(s => s.matches?.('.flex-1, main, .overflow-y-auto, [role="tabpanel"]')) || siblings[0];
+            if (siblings.length === 1) {
+                rightPanel = siblings[0];
+            } else if (siblings.length > 1) {
+                rightPanel = siblings.find(s => s.matches?.('.flex-1, main, .overflow-y-auto, [role="tabpanel"]') || !s.contains(sidebar)) || siblings[0];
             }
         }
 
-        // Strategy D: Look for .flex-1 or main in dialog
         if (!rightPanel) {
-            const flexContainers = Array.from(dialog.querySelectorAll('.flex-1, [role="tabpanel"], main'));
+            const flexContainers = Array.from(dialog.querySelectorAll('.flex-1, main, [role="tabpanel"]'));
             rightPanel = flexContainers.find(p => (!sidebar || !p.contains(sidebar)) && p !== sidebar && p !== dialog);
         }
 
-        // Safety check: ensure rightPanel is distinct from sidebar
         if (rightPanel && (rightPanel === sidebar || (sidebar && rightPanel.contains(sidebar)) || rightPanel === dialog)) {
             rightPanel = null;
         }
 
         return { sidebar, rightPanel };
+    }
+
+    getActiveSettingsTab(dialog, sidebar) {
+        if (!dialog) return null;
+
+        // Priority 1: Standard ARIA or data-state attributes
+        const ariaActive = dialog.querySelector('[aria-selected="true"], [data-state="active"], [aria-current="page"], [aria-current="true"]');
+        if (ariaActive && (!sidebar || sidebar.contains(ariaActive))) {
+            const txt = (ariaActive.textContent || '').trim().toLowerCase();
+            if (txt && txt.length < 35) return txt;
+        }
+
+        // Priority 2: In sidebar, element with highlighted background
+        if (sidebar) {
+            const allItems = Array.from(sidebar.querySelectorAll('*')).filter(el => {
+                if (el.closest('#sx-content-wrapper')) return false;
+                if (el.children.length > 2) return false;
+                const txt = (el.textContent || '').trim().toLowerCase();
+                return ['general', 'genel', 'application', 'uygulama', 'appearance', 'görünüm', 'models', 'customizations', 'browser', 'conversations', 'shortcuts', 'feedback'].some(k => txt === k || txt.startsWith(k));
+            });
+
+            for (const el of allItems) {
+                try {
+                    const bg = window.getComputedStyle(el).backgroundColor;
+                    if (bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)' && !bg.startsWith('rgba(0, 0, 0')) {
+                        const txt = (el.textContent || '').trim().toLowerCase();
+                        if (txt) return txt;
+                    }
+                } catch(e) {}
+            }
+        }
+
+        if (this._selectedSettingsTab) return this._selectedSettingsTab;
+
+        return null;
     }
 
     trySXModelsSettingsInject() {
@@ -1114,15 +1122,8 @@ export class UIInjector {
             }
 
             // 4. Check which tab is currently active
-            const activeTabBtn = dialog.querySelector('[role="tab"][aria-selected="true"], [role="tab"][data-state="active"], button[aria-selected="true"], button[data-state="active"], nav button.active');
-            let activeTabTxt = (activeTabBtn?.textContent || '').trim().toLowerCase();
-
-            const isExplicitOtherTab = ['general', 'genel', 'appearance', 'görünüm', 'application', 'uygulama', 'shortcut', 'kısayol', 'customization', 'özelleştirme', 'browser', 'tarayıcı', 'conversation', 'sohbet', 'feedback'].some(k => activeTabTxt.includes(k));
-
-            const panelText = (rightPanel.textContent || '').toLowerCase();
-            const hasNativeModelsText = ['manage your model quota', 'model credits', 'your plan', 'custom quota', 'models & usage'].some(m => panelText.includes(m));
-
-            const isModelsActive = !isExplicitOtherTab && (activeTabTxt.includes('model') || (hasNativeModelsText && !activeTabTxt) || (this._selectedSettingsTab === 'models' && (!activeTabTxt || activeTabTxt.includes('model'))));
+            const activeTabTxt = this.getActiveSettingsTab(dialog, sidebar);
+            const isModelsActive = activeTabTxt ? (activeTabTxt === 'models' || activeTabTxt.startsWith('model')) : (this._selectedSettingsTab === 'models');
 
             // If user is NOT on Models tab, cleanly remove custom wrap and restore native view!
             if (!isModelsActive) {
@@ -1137,21 +1138,14 @@ export class UIInjector {
                         }
                     });
                 }
-                dialog.querySelectorAll('[role="tabpanel"]').forEach(tp => {
-                    Array.from(tp.children).forEach(c => {
-                        if (c.id !== 'sx-content-wrapper' && c.style.display === 'none') {
-                            c.style.removeProperty('display');
-                        }
-                    });
-                });
                 return;
             }
 
-            // User IS on Models tab: if wrap already exists inside rightPanel, keep it visible
+            // User IS on Models tab: if wrap already exists inside rightPanel, keep it visible and hide ALL other children!
             const curWrap = dialog.querySelector('#sx-content-wrapper');
             if (curWrap && rightPanel.contains(curWrap)) {
                 Array.from(rightPanel.children).forEach(c => {
-                    if (c.id !== 'sx-content-wrapper') {
+                    if (c !== curWrap) {
                         c.style.setProperty('display', 'none', 'important');
                     } else {
                         c.style.removeProperty('display');
