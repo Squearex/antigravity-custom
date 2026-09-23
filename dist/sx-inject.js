@@ -3747,10 +3747,22 @@
       if (actionContainer) {
         let ctxBtn = document.getElementById("sx-context-btn");
         let perfBtn = document.getElementById("sx-perf-btn");
+        let effortBtn = document.getElementById("sx-effort-pill");
         const micWrapper = actionContainer.querySelector('div.flex.items-center:has(button[aria-label*="Record voice" i]), div.flex.items-center:has([data-tooltip-id*="record-tooltip"])') || actionContainer.querySelector('button[aria-label*="Record voice" i]');
         const sendBtn = actionContainer.querySelector('[data-testid="send-button"], button[aria-label*="send" i], [data-tooltip-id*="send-tooltip"]');
         const cancelBtn = actionContainer.querySelector('button[aria-label*="Cancel" i], [data-tooltip-id*="cancel-tooltip"]');
         const targetAnchor = micWrapper || sendBtn || cancelBtn;
+        if (!effortBtn) {
+          effortBtn = document.createElement("button");
+          effortBtn.id = "sx-effort-pill";
+          effortBtn.type = "button";
+          effortBtn.className = "sx-effort-pill";
+          effortBtn.title = "Agent Effort (T\u0131kla)";
+          effortBtn.onclick = (e) => {
+            e.stopPropagation();
+            this.toggleEffortSliderPopover(effortBtn);
+          };
+        }
         if (!ctxBtn) {
           ctxBtn = document.createElement("button");
           ctxBtn.id = "sx-context-btn";
@@ -3787,17 +3799,21 @@
           };
         }
         if (targetAnchor && targetAnchor.parentElement === actionContainer) {
-          if (targetAnchor.previousElementSibling !== ctxBtn) {
-            actionContainer.insertBefore(ctxBtn, targetAnchor);
+          if (targetAnchor.previousElementSibling !== effortBtn) {
+            actionContainer.insertBefore(effortBtn, targetAnchor);
           }
-        } else if (!actionContainer.contains(ctxBtn)) {
-          actionContainer.appendChild(ctxBtn);
+        } else if (!actionContainer.contains(effortBtn)) {
+          actionContainer.appendChild(effortBtn);
+        }
+        if (effortBtn.previousElementSibling !== ctxBtn) {
+          actionContainer.insertBefore(ctxBtn, effortBtn);
         }
         if (ctxBtn.previousElementSibling !== perfBtn) {
           actionContainer.insertBefore(perfBtn, ctxBtn);
         }
         this.quota.updateContextButtonUI();
         this.perf.updatePerfButtonUI();
+        this.injectEffortButton();
       }
       this.trySXModelSelectorPanelInject();
       const trigger = document.querySelector('[data-testid="model-selector-trigger"]');
@@ -3823,7 +3839,6 @@
             }
           }
         }
-        this.injectEffortButton(trigger);
       }
       const quotaMenu = document.querySelector('[role="menu"][data-nested]');
       if (quotaMenu) {
@@ -4098,20 +4113,23 @@
             groupModels.forEach((m) => {
               const isSelected = m.id === activeId;
               const isVision = this.models.isVisionModel(m);
-              const isReasoning = (m.modelId || m.name || "").toLowerCase().includes("reasoning") || (m.modelId || "").includes("omni") || (m.modelId || "").includes("r1");
+              const isReasoning = this.isModelSupportingReasoning(m);
               const item = document.createElement("div");
               item.className = "sx-custom-model-item" + (isSelected ? " is-selected" : "");
               item.dataset.modelId = m.id;
               item.dataset.modelLabel = m.name;
               item.dataset.sxProvider = pId;
-              const curReasoning = this._modelReasoning && this._modelReasoning[m.id] || "medium";
-              const reasoningLabel = curReasoning.charAt(0).toUpperCase() + curReasoning.slice(1);
-              const reasoningTriggerHtml = `
-                            <div class="sx-model-reasoning-trigger" data-model-id="${m.id}" title="Model Reasoning Effort Se\xE7">
-                                <span class="sx-reasoning-lbl">${reasoningLabel}</span>
-                                <span class="sx-reasoning-arrow">&gt;</span>
-                            </div>
-                        `;
+              let reasoningTriggerHtml = "";
+              if (isReasoning) {
+                const curReasoning = this._modelReasoning && this._modelReasoning[m.id] || "medium";
+                const reasoningLabel = curReasoning.charAt(0).toUpperCase() + curReasoning.slice(1);
+                reasoningTriggerHtml = `
+                                <div class="sx-model-reasoning-trigger" data-model-id="${m.id}" title="Model Reasoning Effort Se\xE7">
+                                    <span class="sx-reasoning-lbl">${reasoningLabel}</span>
+                                    <span class="sx-reasoning-arrow">&gt;</span>
+                                </div>
+                            `;
+              }
               let rightBadges = "";
               let ctxTag = this.models.formatContextSize(m.contextLength);
               if (!ctxTag) {
@@ -4122,9 +4140,6 @@
               }
               if (ctxTag) {
                 rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">${ctxTag}</span>`;
-              }
-              if (isReasoning) {
-                rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fbbf24;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">Thinking</span>`;
               }
               if (isVision) {
                 rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;margin-right:4px;">Vision</span>`;
@@ -4191,6 +4206,12 @@
       }
       fBadge.innerHTML = '<span style="font-weight:700;"><span style="color:#38bdf8;text-shadow:0 0 10px rgba(56,189,248,0.35);">SX</span> <span style="color:#ffffff;">Development</span></span><span style="font-size:9.5px;color:rgba(255,255,255,0.35);font-weight:500;">Custom Engine</span>';
     }
+    isModelSupportingReasoning(m) {
+      if (!m) return false;
+      if (m.supportsReasoning === true) return true;
+      const str = `${m.id || ""} ${m.modelId || ""} ${m.name || ""}`.toLowerCase();
+      return /(?:reasoning|thinking|thought|deepseek.*r1|qwq|o1|o3|o4|claude-3[.-]7|gemini-2\.[05]|gemini-3|sonar-reasoning)/i.test(str);
+    }
     openModelReasoningSubmenu(triggerEl, modelId, modelName) {
       let existing = document.getElementById("sx-nested-reasoning-menu");
       if (existing) {
@@ -4219,14 +4240,21 @@
             `;
       }).join("");
       document.body.appendChild(menu);
-      const rect = triggerEl.getBoundingClientRect();
-      let top = rect.top - 6;
-      let left = rect.right + 6;
-      if (left + 140 > window.innerWidth) {
-        left = Math.max(10, rect.left - 145);
+      const panel = triggerEl.closest('[data-testid="model-selector-panel"]') || triggerEl.closest(".sx-custom-model-panel") || document.querySelector('[data-testid="model-selector-panel"]') || triggerEl.closest('div[role="dialog"]') || triggerEl.closest(".overflow-y-auto")?.parentElement;
+      const pRect = panel ? panel.getBoundingClientRect() : null;
+      const tRect = triggerEl.getBoundingClientRect();
+      let left = pRect ? pRect.right + 4 : tRect.right + 6;
+      let top = tRect.top - 4;
+      const menuWidth = 135;
+      if (left + menuWidth > window.innerWidth - 8) {
+        if (pRect) {
+          left = Math.max(8, pRect.left - menuWidth - 4);
+        } else {
+          left = Math.max(8, tRect.left - menuWidth - 4);
+        }
       }
-      if (top + 150 > window.innerHeight) {
-        top = Math.max(10, window.innerHeight - 155);
+      if (top + 160 > window.innerHeight) {
+        top = Math.max(8, window.innerHeight - 165);
       }
       menu.style.top = top + "px";
       menu.style.left = left + "px";
@@ -4275,21 +4303,12 @@
         document.addEventListener("click", onDocClick);
       }, 10);
     }
-    async injectEffortButton(trigger) {
-      if (!trigger || !trigger.parentElement) return;
+    async injectEffortButton() {
       let effortBtn = document.getElementById("sx-effort-pill");
-      if (!effortBtn) {
-        effortBtn = document.createElement("button");
-        effortBtn.id = "sx-effort-pill";
-        effortBtn.type = "button";
-        effortBtn.className = "sx-effort-pill";
-        effortBtn.title = "Agent Effort (T\u0131kla)";
-        effortBtn.onclick = (e) => {
-          e.stopPropagation();
-          this.toggleEffortSliderPopover(effortBtn);
-        };
-        trigger.insertAdjacentElement("afterend", effortBtn);
-      }
+      if (!effortBtn) return;
+      document.querySelectorAll("#sx-effort-pill, #sx-effort-btn").forEach((b) => {
+        if (b !== effortBtn && b.parentElement) b.remove();
+      });
       if (!this._lastEffortFetch || Date.now() - this._lastEffortFetch > 5e3) {
         this._lastEffortFetch = Date.now();
         try {
@@ -4310,10 +4329,10 @@
       if (!effortBtn) return;
       effortBtn.dataset.sxEffort = agentEffort;
       let text = "Normal";
-      let style = "height:22px;padding:0 9px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;margin-left:6px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.9);transition:all 0.15s ease;user-select:none;font-family:inherit;line-height:1;";
+      let style = "height:22px;padding:0 9px;border-radius:6px;font-size:11.5px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;margin-right:2px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.9);transition:all 0.15s ease;user-select:none;font-family:inherit;line-height:1;flex-shrink:0;";
       if (agentEffort === "ultra") {
         text = "Ultra Code";
-        style += "border-color:rgba(245,158,11,0.5);background:rgba(245,158,11,0.1);color:#fbbf24;box-shadow:0 0 10px rgba(245,158,11,0.2);";
+        style += "border-color:rgba(245,158,11,0.5);background:rgba(245,158,11,0.12);color:#fbbf24;box-shadow:0 0 10px rgba(245,158,11,0.25);";
       } else if (agentEffort === "max") {
         text = "Max";
         style += "border-color:rgba(255,255,255,0.3);background:rgba(255,255,255,0.12);color:#ffffff;";
@@ -4345,8 +4364,8 @@
         { id: "low", label: "Low", color: "rgba(255,255,255,0.6)" },
         { id: "normal", label: "Normal", color: "rgba(255,255,255,0.9)" },
         { id: "high", label: "High", color: "#38bdf8" },
-        { id: "ultra", label: "Ultra Code", color: "#fbbf24" },
-        { id: "max", label: "Max", color: "#ffffff" }
+        { id: "max", label: "Max", color: "#ffffff" },
+        { id: "ultra", label: "Ultra Code", color: "#fbbf24" }
       ];
       let curIdx = LEVELS.findIndex((l) => l.id === curAgent);
       if (curIdx === -1) curIdx = 1;
@@ -4357,7 +4376,7 @@
                     <span>Effort</span>
                     <strong id="sx-effort-popover-val" style="color:${curLvl.color};font-weight:700;">${curLvl.label}</strong>
                 </div>
-                <div class="sx-help-icon" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:1px solid rgba(255,255,255,0.3);color:rgba(255,255,255,0.6);font-size:10px;cursor:help;" title="Ajan\u0131n problem \xE7\xF6zme derinli\u011Fi ve analitik gayret seviyesi. Ultra Code / Max en derin self-healing modunu a\xE7ar.">?</div>
+                <div class="sx-help-icon" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:1px solid rgba(255,255,255,0.3);color:rgba(255,255,255,0.6);font-size:10px;cursor:help;" title="Ajan\u0131n problem \xE7\xF6zme derinli\u011Fi ve analitik gayret seviyesi. Ultra Code en derin Titan self-healing modunu a\xE7ar.">?</div>
             </div>
             <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:rgba(255,255,255,0.45);margin:10px 0 6px 0;user-select:none;">
                 <span>Faster</span>
@@ -4379,7 +4398,7 @@
       document.body.appendChild(popover);
       const rect = anchorBtn.getBoundingClientRect();
       const popoverWidth = 232;
-      let left = rect.left - 10;
+      let left = rect.left - (popoverWidth - rect.width) / 2;
       if (left + popoverWidth > window.innerWidth - 10) {
         left = window.innerWidth - popoverWidth - 10;
       }
