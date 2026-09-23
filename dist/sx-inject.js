@@ -3063,6 +3063,12 @@
         }
         const settingsTarget = e.target.closest('[role="dialog"] [role="tab"], [role="dialog"] button, [data-testid*="settings"], button[aria-label*="Settings" i]');
         if (settingsTarget) {
+          const targetTxt = (settingsTarget.textContent || "").trim().toLowerCase();
+          if (targetTxt.includes("model")) {
+            this._selectedSettingsTab = "models";
+          } else if (["general", "application", "appearance", "customization", "browser", "conversation", "shortcut", "feedback"].some((k) => targetTxt.includes(k))) {
+            this._selectedSettingsTab = targetTxt;
+          }
           this.trySXModelsSettingsInject();
           requestAnimationFrame(() => this.trySXModelsSettingsInject());
           setTimeout(() => this.trySXModelsSettingsInject(), 25);
@@ -3811,21 +3817,40 @@
     }
     trySXModelsSettingsInject() {
       const dialog = document.querySelector('[role="dialog"]');
-      if (!dialog) return;
+      if (!dialog) {
+        this._selectedSettingsTab = null;
+        return;
+      }
       const dialogText = (dialog.innerText || "").toLowerCase();
       if (dialog.querySelector('[data-testid*="delete" i], button[data-testid*="delete" i]') || dialogText.includes("delete conversation") || dialogText.includes("delete this") || dialogText.includes("silmek istedi\u011Finize")) {
         return;
       }
       this.injectGlobalStyles();
-      const scanTs = Date.now();
-      if (this._lastSettingsScan && scanTs - this._lastSettingsScan < 0 && !document.querySelector("#sx-content-wrapper")) return;
-      this._lastSettingsScan = scanTs;
-      const activeTab = dialog.querySelector('[role="tab"][aria-selected="true"], [role="tab"].active, button[data-state="active"]');
-      const isModelsTabActive = activeTab && /models/i.test(activeTab.textContent || "");
-      const MARKERS = ["Gemini Models", "Model Credits", "Your Plan"];
-      const hasModelsMarker = MARKERS.some((m) => dialogText.includes(m.toLowerCase()));
+      const getActiveSidebarTab = () => {
+        if (this._selectedSettingsTab) return this._selectedSettingsTab;
+        const buttons = Array.from(dialog.querySelectorAll('nav button, [role="tablist"] button, aside button, button, a, [role="tab"]'));
+        for (const b of buttons) {
+          const txt = (b.textContent || "").trim().toLowerCase();
+          if (!txt || txt.length > 25) continue;
+          if (["general", "application", "appearance", "models", "customizations", "browser", "conversations", "shortcuts"].some((k) => txt.includes(k))) {
+            if (b.getAttribute("aria-selected") === "true" || b.getAttribute("data-state") === "active" || b.classList.contains("active")) {
+              return txt;
+            }
+            try {
+              const bg = window.getComputedStyle(b).backgroundColor;
+              if (bg && bg !== "transparent" && bg !== "rgba(0, 0, 0, 0)" && !bg.startsWith("rgba(0, 0, 0")) {
+                return txt;
+              }
+            } catch (e) {
+            }
+          }
+        }
+        return null;
+      };
+      const activeSidebarTab = getActiveSidebarTab();
+      const isExplicitOtherTab = activeSidebarTab && !activeSidebarTab.includes("model");
       const existingWrap = dialog.querySelector("#sx-content-wrapper");
-      if (!isModelsTabActive && !hasModelsMarker) {
+      if (isExplicitOtherTab) {
         if (existingWrap) {
           const rp = existingWrap.parentElement;
           if (rp) {
@@ -3846,10 +3871,17 @@
         const rp = existingWrap.parentElement;
         if (rp) {
           Array.from(rp.children).forEach((c) => {
-            if (c.id === "sx-content-wrapper") return;
-            c.style.setProperty("display", "none", "important");
+            if (c.id !== "sx-content-wrapper" && c.style.display !== "none") {
+              c.style.setProperty("display", "none", "important");
+            }
           });
         }
+        return;
+      }
+      const fullContent = (dialog.textContent || "").toLowerCase();
+      const MARKERS = ["manage your model quota", "model credits", "your plan", "enable ai credit", "custom quota", "models & usage"];
+      const hasNativeModelsView = MARKERS.some((m) => fullContent.includes(m)) || activeSidebarTab && activeSidebarTab.includes("model");
+      if (!hasNativeModelsView) {
         return;
       }
       const tabList = dialog.querySelector('[role="tablist"], nav');
@@ -3861,8 +3893,8 @@
         }
       }
       if (!rightPanel) {
-        for (const marker of MARKERS) {
-          const heading = Array.from(dialog.querySelectorAll("h1, h2, h3, h4, div, span")).find((el) => el.textContent && el.textContent.trim() === marker);
+        for (const marker of ["Manage your model quota", "Model Credits", "Your Plan", "Models & Usage"]) {
+          const heading = Array.from(dialog.querySelectorAll("h1, h2, h3, h4, div, span")).find((el) => el.textContent && el.textContent.toLowerCase().includes(marker.toLowerCase()));
           if (heading) {
             rightPanel = heading.closest('[role="tabpanel"]') || heading.closest(".overflow-y-auto") || heading.parentElement?.parentElement;
             if (rightPanel) break;
