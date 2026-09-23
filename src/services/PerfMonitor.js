@@ -42,12 +42,15 @@ export class PerfMonitor {
         try {
             if (this._observer) this._observer.disconnect();
             this._observer = new MutationObserver(() => {
+                if (document.hidden) return;
                 // Debounced: streaming fires mutations per chunk; rescan at most ~2.5/s
                 if (this._obsTimer) return;
                 this._obsTimer = setTimeout(() => {
                     this._obsTimer = null;
+                    if (document.hidden) return;
                     const convKey = this.models?.getActiveConversationKey();
                     const cleanConvId = (convKey || '').replace(/^conv_/, '');
+                    if (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft') return;
                     this.fetchPerfStats(cleanConvId).then(() => {
                         this.injectMetricsToMessageFooters();
                     });
@@ -60,8 +63,10 @@ export class PerfMonitor {
         } catch(e) {}
 
         setInterval(() => {
+            if (document.hidden) return;
             const convKey = this.models?.getActiveConversationKey();
             const cleanConvId = (convKey || '').replace(/^conv_/, '');
+            if (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft') return;
             this.fetchPerfStats(cleanConvId).then(() => {
                 this.injectMetricsToMessageFooters();
                 this.updatePerfButtonUI();

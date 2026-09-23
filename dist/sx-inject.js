@@ -3427,11 +3427,14 @@
       try {
         if (this._observer) this._observer.disconnect();
         this._observer = new MutationObserver(() => {
+          if (document.hidden) return;
           if (this._obsTimer) return;
           this._obsTimer = setTimeout(() => {
             this._obsTimer = null;
+            if (document.hidden) return;
             const convKey = this.models?.getActiveConversationKey();
             const cleanConvId = (convKey || "").replace(/^conv_/, "");
+            if (!cleanConvId || cleanConvId === "new" || cleanConvId === "draft") return;
             this.fetchPerfStats(cleanConvId).then(() => {
               this.injectMetricsToMessageFooters();
             });
@@ -3444,8 +3447,10 @@
       } catch (e) {
       }
       setInterval(() => {
+        if (document.hidden) return;
         const convKey = this.models?.getActiveConversationKey();
         const cleanConvId = (convKey || "").replace(/^conv_/, "");
+        if (!cleanConvId || cleanConvId === "new" || cleanConvId === "draft") return;
         this.fetchPerfStats(cleanConvId).then(() => {
           this.injectMetricsToMessageFooters();
           this.updatePerfButtonUI();
@@ -4599,6 +4604,29 @@
             this.trySXModelsSettingsInject();
             requestAnimationFrame(() => this.trySXModelsSettingsInject());
             setTimeout(() => this.trySXModelsSettingsInject(), 40);
+          }
+        }
+      }, true);
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          const perfPop = document.getElementById("sx-perf-popover");
+          if (perfPop) {
+            perfPop.remove();
+            document.getElementById("sx-perf-btn")?.classList.remove("sx-active");
+          }
+          const ctxPop = document.getElementById("sx-context-popover");
+          if (ctxPop) {
+            ctxPop.remove();
+            document.getElementById("sx-context-btn")?.classList.remove("sx-active");
+          }
+          const effortPop = document.getElementById("sx-effort-slider-popover");
+          if (effortPop) {
+            effortPop.remove();
+            document.getElementById("sx-effort-pill")?.classList.remove("sx-active");
+          }
+          const nestedMenu = document.getElementById("sx-nested-reasoning-menu");
+          if (nestedMenu) {
+            nestedMenu.remove();
           }
         }
       }, true);

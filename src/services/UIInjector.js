@@ -109,6 +109,31 @@ export class UIInjector {
             }
         }, true);
 
+        // Global Escape key listener to cleanly dismiss open custom popovers
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                const perfPop = document.getElementById('sx-perf-popover');
+                if (perfPop) {
+                    perfPop.remove();
+                    document.getElementById('sx-perf-btn')?.classList.remove('sx-active');
+                }
+                const ctxPop = document.getElementById('sx-context-popover');
+                if (ctxPop) {
+                    ctxPop.remove();
+                    document.getElementById('sx-context-btn')?.classList.remove('sx-active');
+                }
+                const effortPop = document.getElementById('sx-effort-slider-popover');
+                if (effortPop) {
+                    effortPop.remove();
+                    document.getElementById('sx-effort-pill')?.classList.remove('sx-active');
+                }
+                const nestedMenu = document.getElementById('sx-nested-reasoning-menu');
+                if (nestedMenu) {
+                    nestedMenu.remove();
+                }
+            }
+        }, true);
+
         // Fast settings and model selector observer (0ms microtask instead of waiting for poll interval)
         try {
             const sObs = new MutationObserver((muts) => {
