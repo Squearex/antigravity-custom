@@ -500,6 +500,17 @@ export class QuotaMonitor {
             backdrop-filter: blur(20px);
         `;
 
+        const isFresh = (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft');
+        const maxCtx = targetModel?.contextLength || 128000;
+        const maxDisp = this._fmt(maxCtx);
+        const initStatText = isFresh ? `0 / ${maxDisp} (%0)` : 'Hesaplanıyor...';
+        const initListHtml = isFresh ? `
+            <div style="font-size:12px;color:#94a3b8;text-align:center;padding:14px 0;line-height:1.5;">
+                Bu sohbette henüz mesaj yok.<br>
+                <span style="font-size:11px;color:#64748b;">Mesaj yazdıkça context token kullanımı burada görünecektir.</span>
+            </div>
+        ` : `<div style="font-size:12px;color:#64748b;text-align:center;padding:10px 0;">Yükleniyor...</div>`;
+
         pop.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" id="sx-ctx-popover-header">
                 <div style="display:flex;align-items:center;gap:6px;">
@@ -509,7 +520,7 @@ export class QuotaMonitor {
                     <span style="font-size:13px;color:#f8fafc;font-weight:600;letter-spacing:0.2px;">Context Window</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;">
-                    <span id="sx-ctx-stat-text" style="font-size:12px;color:#94a3b8;font-family:ui-monospace,monospace;">Hesaplanıyor...</span>
+                    <span id="sx-ctx-stat-text" style="font-size:12px;color:#94a3b8;font-family:ui-monospace,monospace;">${initStatText}</span>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#64748b;margin-left:2px;"><polyline points="6 9 12 15 18 9"></polyline></svg>
                 </div>
             </div>
@@ -519,7 +530,7 @@ export class QuotaMonitor {
             </div>
 
             <div id="sx-ctx-items-list" style="display:flex;flex-direction:column;gap:9px;">
-                <div style="font-size:12px;color:#64748b;text-align:center;padding:10px 0;">Yükleniyor...</div>
+                ${initListHtml}
             </div>
         `;
 
@@ -541,15 +552,17 @@ export class QuotaMonitor {
             this.renderEmptyPopoverState(pop, cleanConvId, targetModel, liveMetrics);
         }
 
-        this.fetchContextDetails(cleanConvId, targetModel).then(data => {
-            if (pop.isConnected && data && data.items && data.items.length > 0) {
-                const updatedLive = this.calculateLiveContextMetrics(cleanConvId, targetModel);
-                this.renderPopoverDetails(pop, data, updatedLive);
-                this.updateContextRing(updatedLive);
-            } else if (pop.isConnected && (!cached || !cached.items || cached.items.length === 0)) {
-                this.renderEmptyPopoverState(pop, cleanConvId, targetModel, liveMetrics);
-            }
-        });
+        if (!isFresh) {
+            this.refreshContextDetails(cleanConvId, targetModel).then(data => {
+                if (pop.isConnected && data && data.items && data.items.length > 0) {
+                    const updatedLive = this.calculateLiveContextMetrics(cleanConvId, targetModel);
+                    this.renderPopoverDetails(pop, data, updatedLive);
+                    this.updateContextRing(updatedLive);
+                } else if (pop.isConnected && (!cached || !cached.items || cached.items.length === 0)) {
+                    this.renderEmptyPopoverState(pop, cleanConvId, targetModel, liveMetrics);
+                }
+            });
+        }
     }
 
     renderEmptyPopoverState(pop, cleanConvId, targetModel, liveMetrics) {

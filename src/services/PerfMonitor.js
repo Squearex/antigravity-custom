@@ -131,7 +131,8 @@ export class PerfMonitor {
 
         // 2. Match from convPerfHistory (reverse chronological index)
         const cleanConvId = (convId || this.models?.getActiveConversationKey() || '').replace(/^conv_/, '');
-        const hist = this._perfHistory[cleanConvId] || this._perfHistory['new'] || this._perfHistory['last'] || [];
+        if (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft') return null;
+        const hist = this._perfHistory[cleanConvId] || [];
         if (Array.isArray(hist) && hist.length > 0) {
             const histIdx = hist.length - 1 - indexFromEnd;
             if (histIdx >= 0 && hist[histIdx]) {
@@ -216,16 +217,15 @@ export class PerfMonitor {
     recordLiveMessagePerf(convKey, perfData) {
         if (!perfData) return;
         const cleanConvId = (convKey || '').replace(/^conv_/, '');
+        if (!cleanConvId || cleanConvId === 'new' || cleanConvId === 'draft') return;
         const measured = { ...perfData, measured: true };
-        this._perfStatsCache[cleanConvId || 'new'] = measured;
-        this._perfStatsCache['last'] = measured;
+        this._perfStatsCache[cleanConvId] = measured;
         this._latestLivePerf = measured;
         // Rolling history for per-conversation averages
         try {
-            const hk = cleanConvId || 'new';
-            if (!this._perfHistory[hk]) this._perfHistory[hk] = [];
-            this._perfHistory[hk].push(measured);
-            if (this._perfHistory[hk].length > 20) this._perfHistory[hk].splice(0, this._perfHistory[hk].length - 20);
+            if (!this._perfHistory[cleanConvId]) this._perfHistory[cleanConvId] = [];
+            this._perfHistory[cleanConvId].push(measured);
+            if (this._perfHistory[cleanConvId].length > 20) this._perfHistory[cleanConvId].splice(0, this._perfHistory[cleanConvId].length - 20);
         } catch(e) {}
 
         try {
@@ -256,7 +256,7 @@ export class PerfMonitor {
 
     getLatestStats(convId) {
         const clean = (convId || '').replace(/^conv_/, '');
-        if (clean && clean !== 'new' && this._perfStatsCache[clean]) {
+        if (clean && clean !== 'new' && clean !== 'draft' && this._perfStatsCache[clean]) {
             return this._perfStatsCache[clean];
         }
         return null;
@@ -566,11 +566,17 @@ export class PerfMonitor {
         this._currentRenderFn = renderPerfDetails;
 
         const cached = this.getLatestStats(cleanConvId);
-        if (cached) renderPerfDetails(cached);
+        if (cached) {
+            renderPerfDetails(cached);
+        } else {
+            renderPerfDetails(null);
+        }
 
-        this.fetchPerfStats(cleanConvId).then(stats => {
-            if (pop.isConnected && stats) renderPerfDetails(stats);
-        });
+        if (cleanConvId && cleanConvId !== 'new' && cleanConvId !== 'draft') {
+            this.fetchPerfStats(cleanConvId).then(stats => {
+                if (pop.isConnected && stats) renderPerfDetails(stats);
+            });
+        }
     }
 
     updatePerfButtonUI() {

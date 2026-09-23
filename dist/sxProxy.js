@@ -1770,8 +1770,8 @@ function startInternalProxy() {
                     const cleanConvId = (convId || '').replace(/^conv_/, '');
                     const convKey = 'conv_' + cleanConvId;
 
-                    let stats = convPerfStats[convKey] || convPerfStats['conv_new'] || convPerfStats['last'] || null;
-                    const history = (convPerfHistory[convKey] || convPerfHistory['conv_new'] || []).slice(-30);
+                    let stats = (cleanConvId && cleanConvId !== 'new') ? (convPerfStats[convKey] || null) : null;
+                    const history = (cleanConvId && cleanConvId !== 'new' && convPerfHistory[convKey]) ? convPerfHistory[convKey].slice(-30) : [];
                     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                     res.end(JSON.stringify({
                         ok: true,

@@ -270,9 +270,14 @@ export class UIInjector {
             }
 
             /* Hide native model selector items instantly to prevent duplicates */
+            [data-testid="model-selector-panel"] > *:not(#sx-custom-model-panel-root) {
+                display: none !important;
+            }
             [data-testid="model-selector-item"]:not(.sx-custom-model-item),
             [data-testid="model-selector-panel"] [data-testid="model-selector-item"]:not(.sx-custom-model-item),
-            [data-testid="model-selector-header"] {
+            [data-testid="model-selector-header"],
+            [data-testid="model-selector-panel"] [role="menuitem"]:not(.sx-custom-model-item):not(.sx-nested-item),
+            [data-testid="model-selector-panel"] [role="separator"] {
                 display: none !important;
             }
 
@@ -1697,532 +1702,279 @@ export class UIInjector {
             modelPanel.style.transition = 'transform 0.08s ease-out';
         }
 
-        // Prevent View Usage from auto-opening without explicit hover
-        const viewUsageItem = Array.from(modelPanel.querySelectorAll('[role="menuitem"], div, button')).find(el => {
-            return (el.textContent || '').trim().toLowerCase().includes('view usage');
+        // Hide all native children inside modelPanel permanently
+        Array.from(modelPanel.children).forEach(c => {
+            if (c.id !== 'sx-custom-model-panel-root') {
+                c.style.setProperty('display', 'none', 'important');
+                c.setAttribute('data-sx-hidden', 'true');
+            }
         });
-        if (viewUsageItem) {
-            viewUsageItem.setAttribute('tabindex', '-1');
-            viewUsageItem.blur();
-            const checkNestedSubmenu = () => {
-                const nestedMenu = document.querySelector('[role="menu"][data-nested]');
-                if (nestedMenu) {
-                    const isHovered = viewUsageItem.matches(':hover') || nestedMenu.matches(':hover');
-                    const popper = nestedMenu.closest('[role="presentation"]') || nestedMenu;
-                    if (!isHovered) {
-                        popper.style.setProperty('display', 'none', 'important');
-                    } else {
-                        popper.style.removeProperty('display');
+
+        const curConvKey = this.models.getActiveConversationKey();
+        const activeId = this.models.getActiveModelForConversation(curConvKey);
+        const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
+        let root = modelPanel.querySelector('#sx-custom-model-panel-root');
+        if (root) {
+            // Already mounted: ensure native children are hidden and sync checkmarks & reasoning labels
+            root.querySelectorAll('.sx-custom-model-item').forEach(el => {
+                const sel = el.dataset.modelId === activeId;
+                el.classList.toggle('is-selected', sel);
+                const cs = el.querySelector('.sx-model-check-slot');
+                if (cs) cs.innerHTML = sel ? checkSvg : '';
+
+                const mId = el.dataset.modelId;
+                if (mId && this._modelReasoning && this._modelReasoning[mId]) {
+                    const val = this._modelReasoning[mId];
+                    const mObj = this.state.getModels().find(mod => mod.id === mId);
+                    const optObj = this.getModelReasoningOptions(mObj).find(o => o.id === val);
+                    const label = optObj ? optObj.label : (val.charAt(0).toUpperCase() + val.slice(1));
+                    const subtag = el.querySelector('.sx-reasoning-subtag');
+                    if (subtag) {
+                        const isBadge = subtag.classList.contains('is-badge') || subtag.getAttribute('data-has-badges') === 'true';
+                        subtag.textContent = isBadge ? label : `(${label})`;
+                    }
+                    const cHint = el.querySelector('.sx-model-chevron-hint');
+                    if (cHint) {
+                        cHint.title = `Reasoning: ${label}`;
                     }
                 }
-            };
-            checkNestedSubmenu();
-            setTimeout(checkNestedSubmenu, 20);
-            setTimeout(checkNestedSubmenu, 60);
-            setTimeout(checkNestedSubmenu, 150);
+            });
+            return;
+        }
 
-            viewUsageItem.addEventListener('mouseenter', () => {
-                const nestedMenu = document.querySelector('[role="menu"][data-nested]');
-                if (nestedMenu) {
-                    const popper = nestedMenu.closest('[role="presentation"]') || nestedMenu;
-                    popper.style.removeProperty('display');
+        // Build clean dedicated custom root
+        root = document.createElement('div');
+        root.id = 'sx-custom-model-panel-root';
+        root.style.cssText = 'width: 100%; display: flex; flex-direction: column; box-sizing: border-box; outline: none;';
+
+        // 1. Search Bar
+        const searchWrap = document.createElement('div');
+        searchWrap.id = 'sx-model-search-wrap';
+        searchWrap.style.cssText = 'padding: 8px 10px; border-bottom: 1px solid hsl(var(--border, rgba(255,255,255,0.08))); background: hsl(var(--popover, var(--card, 222 47% 11%))) !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box;';
+        searchWrap.innerHTML = `
+            <div style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 10px;gap:7px;height:32px;box-sizing:border-box;width:100%;transition:border-color 0.15s;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.3);flex-shrink:0;">
+                    <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <input id="sx-model-search-input" type="text" placeholder="Search models..." style="background:transparent;border:none;outline:none;color:rgba(255,255,255,0.9);font-size:12.5px;width:100%;height:100%;font-family:inherit;line-height:normal;padding:0;margin:0;" autocomplete="off" spellcheck="false" />
+            </div>
+        `;
+        root.appendChild(searchWrap);
+
+        const inputWrap = searchWrap.querySelector('div');
+        const input = searchWrap.querySelector('#sx-model-search-input');
+        input.addEventListener('focus', () => { inputWrap.style.borderColor = 'rgba(255,255,255,0.25)'; inputWrap.style.background = 'rgba(255,255,255,0.07)'; });
+        input.addEventListener('blur', () => { inputWrap.style.borderColor = 'rgba(255,255,255,0.1)'; inputWrap.style.background = 'rgba(255,255,255,0.05)'; });
+
+        ['keydown', 'keyup', 'keypress'].forEach(evt => {
+            input.addEventListener(evt, e => e.stopPropagation());
+        });
+
+        // 2. Scroll Container
+        const scrollContainer = document.createElement('div');
+        scrollContainer.id = 'sx-model-scroll-container';
+        scrollContainer.className = 'overflow-y-auto';
+        scrollContainer.style.cssText = 'max-height: 340px; overflow-y: auto; padding: 4px 6px; box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: 1px;';
+        root.appendChild(scrollContainer);
+
+        // Search filter listener
+        input.addEventListener('input', () => {
+            const q = input.value.trim().toLowerCase();
+            const items = scrollContainer.querySelectorAll('.sx-custom-model-item');
+            let visibleCount = 0;
+            items.forEach(item => {
+                const lbl = (item.getAttribute('data-model-label') || item.innerText || '').toLowerCase();
+                const match = !q || lbl.includes(q);
+                item.style.display = match ? '' : 'none';
+                item.classList.toggle('is-hidden', !match);
+                if (match) visibleCount++;
+            });
+
+            scrollContainer.querySelectorAll('.sx-provider-header').forEach(hdr => {
+                const pId = hdr.getAttribute('data-provider-id');
+                const hasVisible = Array.from(scrollContainer.querySelectorAll(`.sx-custom-model-item[data-sx-provider="${pId}"]`)).some(it => !it.classList.contains('is-hidden') && it.style.display !== 'none');
+                hdr.style.display = hasVisible ? 'flex' : 'none';
+            });
+
+            let emptyMsg = scrollContainer.querySelector('#sx-model-search-empty');
+            if (visibleCount === 0) {
+                if (!emptyMsg) {
+                    emptyMsg = document.createElement('div');
+                    emptyMsg.id = 'sx-model-search-empty';
+                    emptyMsg.style.cssText = 'padding: 16px 10px; font-size: 11.5px; color: rgba(255,255,255,0.3); text-align: center;';
+                    emptyMsg.innerText = 'No matching models found';
+                    scrollContainer.appendChild(emptyMsg);
                 }
-            });
-            viewUsageItem.addEventListener('mouseleave', () => {
-                setTimeout(checkNestedSubmenu, 60);
-            });
-        }
+                emptyMsg.style.setProperty('display', 'block', 'important');
+            } else if (emptyMsg) {
+                emptyMsg.style.setProperty('display', 'none', 'important');
+            }
+        });
 
-        const scrollContainer = modelPanel.querySelector('.overflow-y-auto');
-        if (scrollContainer) {
-            scrollContainer.style.maxHeight = '340px';
-            scrollContainer.style.padding = '4px 6px';
-        }
-
-        // Sticky search input at the very top of panel
-        let searchWrap = modelPanel.querySelector('#sx-model-search-wrap');
-        if (!searchWrap) {
-            searchWrap = document.createElement('div');
-            searchWrap.id = 'sx-model-search-wrap';
-            searchWrap.style.cssText = 'padding: 8px 10px; border-bottom: 1px solid hsl(var(--border, rgba(255,255,255,0.08))); background: hsl(var(--popover, var(--card, 222 47% 11%))) !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box;';
-            searchWrap.innerHTML = `
-                <div style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 10px;gap:7px;height:32px;box-sizing:border-box;width:100%;transition:border-color 0.15s;">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.3);flex-shrink:0;">
-                        <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                    </svg>
-                    <input id="sx-model-search-input" type="text" placeholder="Search models..." style="background:transparent;border:none;outline:none;color:rgba(255,255,255,0.9);font-size:12.5px;width:100%;height:100%;font-family:inherit;line-height:normal;padding:0;margin:0;" autocomplete="off" spellcheck="false" />
-                </div>
-            `;
-            modelPanel.prepend(searchWrap);
-
-            const inputWrap = searchWrap.querySelector('div');
-            const input = searchWrap.querySelector('#sx-model-search-input');
-            input.addEventListener('focus', () => { inputWrap.style.borderColor = 'rgba(255,255,255,0.25)'; inputWrap.style.background = 'rgba(255,255,255,0.07)'; });
-            input.addEventListener('blur', () => { inputWrap.style.borderColor = 'rgba(255,255,255,0.1)'; inputWrap.style.background = 'rgba(255,255,255,0.05)'; });
-
-            ['keydown', 'keyup', 'keypress'].forEach(evt => {
-                input.addEventListener(evt, e => e.stopPropagation());
-            });
-
-            input.addEventListener('input', () => {
-                const q = input.value.trim().toLowerCase();
-                const items = modelPanel.querySelectorAll('.sx-custom-model-item');
-                let visibleCount = 0;
-                items.forEach(item => {
-                    const lbl = (item.getAttribute('data-model-label') || item.innerText || '').toLowerCase();
-                    const match = !q || lbl.includes(q);
-                    item.style.display = match ? '' : 'none';
-                    item.classList.toggle('is-hidden', !match);
-                    if (match) visibleCount++;
-                });
-
-                modelPanel.querySelectorAll('.sx-provider-header').forEach(hdr => {
-                    const pId = hdr.getAttribute('data-provider-id');
-                    const hasVisible = Array.from(modelPanel.querySelectorAll(`.sx-custom-model-item[data-sx-provider="${pId}"]`)).some(it => !it.classList.contains('is-hidden') && it.style.display !== 'none');
-                    hdr.style.display = hasVisible ? 'flex' : 'none';
-                });
-
-                let emptyMsg = modelPanel.querySelector('#sx-model-search-empty');
-                if (visibleCount === 0) {
-                    if (!emptyMsg) {
-                        emptyMsg = document.createElement('div');
-                        emptyMsg.id = 'sx-model-search-empty';
-                        emptyMsg.style.cssText = 'padding: 16px 10px; font-size: 11.5px; color: rgba(255,255,255,0.3); text-align: center;';
-                        emptyMsg.innerText = 'No matching models found';
-                        modelPanel.querySelector('.overflow-y-auto')?.appendChild(emptyMsg);
-                    }
-                    emptyMsg.style.setProperty('display', 'block', 'important');
-                } else if (emptyMsg) {
-                    emptyMsg.style.setProperty('display', 'none', 'important');
-                }
-            });
-
-            setTimeout(() => input.focus(), 50);
-        }
-
-        // Hide default "Model" header
-        const defaultHeader = modelPanel.querySelector('[data-testid="model-selector-header"]');
-        if (defaultHeader) defaultHeader.style.display = 'none';
-
+        // 3. Populate Provider Groups and Models
         const providers = this.state.getProviders();
+        const groups = {};
+        providers.forEach(p => { groups[p.id] = []; });
+        groups['other'] = [];
 
-        const listContainer = modelPanel.querySelector('.flex.flex-col.gap-px') || modelPanel.querySelector('.overflow-y-auto');
-        if (listContainer) {
-            const nativeItems = Array.from(listContainer.querySelectorAll('[data-testid="model-selector-item"]:not(.sx-custom-model-item)'));
-            const sampleNative = nativeItems[0];
-            nativeItems.forEach(item => {
-                item.style.display = 'none';
-            });
+        sxModels.forEach(m => {
+            const pId = m.providerId || 'other';
+            if (!groups[pId]) groups[pId] = [];
+            groups[pId].push(m);
+        });
 
-            if (!document.getElementById('sx-custom-model-style')) {
-                const st = document.createElement('style');
-                st.id = 'sx-custom-model-style';
-                st.textContent = `
-                    .sx-custom-model-item {
-                        min-height: 28px !important;
-                        padding: 3px 8px !important;
-                        margin: 1px 0 !important;
-                        border-radius: 6px !important;
-                        cursor: pointer !important;
-                        user-select: none !important;
-                        display: flex !important;
-                        align-items: center !important;
-                        justify-content: space-between !important;
-                        gap: 8px !important;
-                        box-sizing: border-box !important;
-                        transition: background-color 0.1s ease, color 0.1s ease !important;
+        Object.keys(groups).forEach(pId => {
+            const groupModels = groups[pId];
+            if (!groupModels || groupModels.length === 0) return;
+
+            const pMeta = this.models.getProviderMeta(pId);
+
+            const header = document.createElement('div');
+            header.className = 'sx-provider-header';
+            header.setAttribute('data-provider-id', pId);
+            header.innerHTML = `
+                <span style="width:6px;height:6px;border-radius:50%;background:${pMeta.color};display:inline-block;"></span>
+                <span style="font-size:10px;font-weight:700;color:${pMeta.color};text-transform:uppercase;letter-spacing:0.5px;">${this.sxEsc(pMeta.name)}</span>
+            `;
+            scrollContainer.appendChild(header);
+
+            groupModels.forEach(m => {
+                const isSelected = m.id === activeId;
+                const isVision = this.models.isVisionModel(m);
+                const isReasoning = this.isModelSupportingReasoning(m);
+                const displayName = m.name || 'Model';
+
+                let rightBadges = '';
+                let ctxTag = this.models.formatContextSize(m.contextLength);
+                if (!ctxTag) {
+                    const mLow = (m.modelId || m.name || '').toLowerCase();
+                    if (mLow.includes('1m') || mLow.includes('ultra')) ctxTag = '1M';
+                    else if (mLow.includes('256k') || mLow.includes('pro')) ctxTag = '256k';
+                    else if (mLow.includes('128k')) ctxTag = '128k';
+                }
+                if (ctxTag) {
+                    rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;">${ctxTag}</span>`;
+                }
+                if (isVision) {
+                    rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Vision</span>`;
+                }
+                if (m.supportsTools === true) {
+                    rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Tools</span>`;
+                }
+
+                const hasOtherBadges = !!rightBadges;
+                let reasoningLabel = '';
+                if (isReasoning) {
+                    const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || 'default';
+                    const options = this.getModelReasoningOptions(m);
+                    const effectiveReasoning = options.some(o => o.id === curReasoning) ? curReasoning : (options[0]?.id || 'default');
+                    const optObj = options.find(o => o.id === effectiveReasoning);
+                    reasoningLabel = optObj ? optObj.label : 'Default';
+                    if (hasOtherBadges) {
+                        rightBadges += `<span class="sx-reasoning-subtag is-badge" data-model-id="${m.id}" data-has-badges="true">${reasoningLabel}</span>`;
+                    } else {
+                        rightBadges += `<span class="sx-reasoning-subtag" data-model-id="${m.id}" data-has-badges="false">(${reasoningLabel})</span>`;
                     }
-                    .sx-custom-model-item.has-badges {
-                        min-height: 42px !important;
-                        padding: 5px 8px !important;
-                    }
-                    .sx-custom-model-item.is-hidden {
-                        display: none !important;
-                    }
-                    .sx-custom-model-item:hover {
-                        background-color: rgba(255, 255, 255, 0.08) !important;
-                    }
-                    .sx-custom-model-item.is-selected {
-                        background-color: rgba(255, 255, 255, 0.05) !important;
-                        font-weight: 500 !important;
-                    }
-                    .sx-model-info-col {
-                        flex: 1 1 auto !important;
-                        min-width: 0 !important;
-                        display: flex !important;
-                        flex-direction: column !important;
-                        justify-content: center !important;
-                        gap: 2px !important;
-                    }
-                    .sx-custom-model-item .sx-model-title {
-                        font-size: 12px !important;
-                        line-height: 1.3 !important;
-                        color: rgba(255, 255, 255, 0.92) !important;
-                        overflow: hidden !important;
-                        text-overflow: ellipsis !important;
-                        white-space: nowrap !important;
-                        width: 100% !important;
-                    }
-                    .sx-model-badges-row {
-                        display: flex !important;
-                        align-items: center !important;
-                        gap: 4px !important;
-                        flex-wrap: wrap !important;
-                        margin-top: 1px !important;
-                    }
-                    .sx-model-right-actions {
-                        flex-shrink: 0 !important;
-                        margin-left: auto !important;
-                        display: flex !important;
-                        align-items: center !important;
-                        justify-content: flex-end !important;
-                        gap: 4px !important;
-                        width: 36px !important;
-                        min-width: 36px !important;
-                    }
-                    .sx-model-check-slot {
-                        width: 14px !important;
-                        height: 14px !important;
-                        display: flex !important;
-                        align-items: center !important;
-                        justify-content: center !important;
-                        flex-shrink: 0 !important;
-                    }
-                    .sx-model-arrow-slot {
-                        width: 14px !important;
-                        height: 14px !important;
-                        display: flex !important;
-                        align-items: center !important;
-                        justify-content: center !important;
-                        flex-shrink: 0 !important;
-                    }
-                    .sx-model-chevron-hint {
-                        display: inline-flex !important;
-                        align-items: center !important;
-                        justify-content: center !important;
-                        cursor: pointer !important;
-                        color: rgba(255, 255, 255, 0.3) !important;
-                        transition: color 0.12s ease !important;
-                        flex-shrink: 0 !important;
-                        line-height: 1 !important;
-                    }
-                    .sx-custom-model-item:hover .sx-model-chevron-hint {
-                        color: rgba(255, 255, 255, 0.85) !important;
-                    }
-                    .sx-reasoning-arrow {
-                        opacity: 0.45 !important;
-                        transition: opacity 0.12s ease, transform 0.12s ease !important;
-                        flex-shrink: 0 !important;
-                    }
-                    .sx-custom-model-item:hover .sx-reasoning-arrow {
-                        opacity: 0.9 !important;
-                        transform: translateX(1px) !important;
-                    }
-                    .sx-provider-header {
-                        padding: 8px 8px 3px 8px !important;
-                        display: flex !important;
-                        align-items: center !important;
-                        gap: 6px !important;
-                        margin-top: 4px !important;
-                        border-top: 1px solid rgba(255, 255, 255, 0.04) !important;
-                    }
-                    .sx-provider-header:first-child {
-                        margin-top: 0 !important;
-                        border-top: none !important;
-                    }
-                    .sx-nested-menu {
-                        position: fixed !important;
-                        z-index: 999999 !important;
-                        background: hsl(var(--popover, var(--card, 222 47% 11%))) !important;
-                        border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12))) !important;
-                        border-radius: 8px !important;
-                        padding: 4px !important;
-                        min-width: 135px !important;
-                        max-height: calc(100vh - 24px) !important;
-                        overflow-y: auto !important;
-                        box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25) !important;
-                        backdrop-filter: blur(20px) !important;
-                        font-family: inherit !important;
-                        display: flex !important;
-                        flex-direction: column !important;
-                        gap: 2px !important;
-                        box-sizing: border-box !important;
-                    }
-                    .sx-nested-item {
-                        height: 28px !important;
-                        padding: 0 10px !important;
-                        border-radius: 6px !important;
-                        font-size: 12px !important;
-                        font-weight: 500 !important;
-                        color: rgba(255, 255, 255, 0.8) !important;
-                        cursor: pointer !important;
-                        display: flex !important;
-                        align-items: center !important;
-                        justify-content: space-between !important;
-                        transition: background 0.12s ease, color 0.12s ease !important;
-                        user-select: none !important;
-                    }
-                    .sx-nested-item:hover {
-                        background: rgba(255, 255, 255, 0.08) !important;
-                        color: #ffffff !important;
-                    }
-                    .sx-nested-item.is-active {
-                        font-weight: 600 !important;
-                        color: #ffffff !important;
-                        background: rgba(255, 255, 255, 0.08) !important;
-                    }
-                    .sx-effort-popover {
-                        position: fixed !important;
-                        z-index: 100000 !important;
-                        width: 236px !important;
-                        border-radius: 12px !important;
-                        background: hsl(var(--popover, var(--card, 222 47% 11%))) !important;
-                        border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12))) !important;
-                        padding: 14px 16px !important;
-                        box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25) !important;
-                        backdrop-filter: blur(20px) !important;
-                        font-family: inherit !important;
-                        box-sizing: border-box !important;
-                    }
-                    .sx-effort-track {
-                        height: 22px !important;
-                        border-radius: 11px !important;
-                        background: rgba(255, 255, 255, 0.06) !important;
-                        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-                        position: relative !important;
-                        display: flex !important;
-                        align-items: center !important;
-                        justify-content: space-between !important;
-                        padding: 0 8px !important;
-                        cursor: pointer !important;
-                        user-select: none !important;
-                        box-sizing: border-box !important;
-                        transition: background 0.15s ease !important;
-                    }
-                    .sx-effort-track:hover {
-                        background: rgba(255, 255, 255, 0.09) !important;
-                    }
-                    .sx-effort-dot {
-                        position: absolute !important;
-                        top: 9px !important;
-                        width: 4px !important;
-                        height: 4px !important;
-                        border-radius: 50% !important;
-                        background: rgba(255, 255, 255, 0.3) !important;
-                        pointer-events: none !important;
-                        transform: translateX(-50%) !important;
-                    }
-                    .sx-effort-thumb {
-                        position: absolute !important;
-                        top: 2px !important;
-                        width: 16px !important;
-                        height: 16px !important;
-                        border-radius: 6px !important;
-                        background: #ffffff !important;
-                        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.25) !important;
-                        pointer-events: none !important;
-                        transition: left 0.12s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
-                    }
+                }
+
+                const hasBadges = !!rightBadges;
+                const item = document.createElement('div');
+                item.className = 'sx-custom-model-item' + (isSelected ? ' is-selected' : '') + (hasBadges ? ' has-badges' : '');
+                item.dataset.modelId = m.id;
+                item.dataset.modelLabel = displayName;
+                item.dataset.sxProvider = pId;
+
+                item.innerHTML = `
+                    <div class="sx-model-info-col">
+                        <div class="sx-model-title" title="${this.sxEsc(displayName)}">${this.sxEsc(displayName)}</div>
+                        ${hasBadges ? `<div class="sx-model-badges-row">${rightBadges}</div>` : ''}
+                    </div>
+                    <div class="sx-model-right-actions">
+                        <div class="sx-model-check-slot">
+                            ${isSelected ? checkSvg : ''}
+                        </div>
+                        <div class="sx-model-arrow-slot">
+                            ${isReasoning ? `
+                                <div class="sx-model-chevron-hint" title="Reasoning: ${this.sxEsc(reasoningLabel)}">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
+                                        <polyline points="9 18 15 12 9 6"></polyline>
+                                    </svg>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
                 `;
-                document.head.appendChild(st);
-            }
 
-            const curConvKey = this.models.getActiveConversationKey();
-            const activeId = this.models.getActiveModelForConversation(curConvKey);
-
-            if (!listContainer.querySelector('.sx-custom-list-injected')) {
-                const marker = document.createElement('div');
-                marker.className = 'sx-custom-list-injected';
-                marker.style.display = 'none';
-                listContainer.appendChild(marker);
-
-                const groups = {};
-                providers.forEach(p => { groups[p.id] = []; });
-                groups['other'] = [];
-
-                sxModels.forEach(m => {
-                    const pId = m.providerId || 'other';
-                    if (!groups[pId]) groups[pId] = [];
-                    groups[pId].push(m);
-                });
-
-                Object.keys(groups).forEach(pId => {
-                    const groupModels = groups[pId];
-                    if (!groupModels || groupModels.length === 0) return;
-
-                    const pMeta = this.models.getProviderMeta(pId);
-
-                    const header = document.createElement('div');
-                    header.className = 'sx-provider-header';
-                    header.setAttribute('data-provider-id', pId);
-                    header.innerHTML = `
-                        <span style="width:6px;height:6px;border-radius:50%;background:${pMeta.color};display:inline-block;"></span>
-                        <span style="font-size:10px;font-weight:700;color:${pMeta.color};text-transform:uppercase;letter-spacing:0.5px;">${this.sxEsc(pMeta.name)}</span>
-                    `;
-                    listContainer.appendChild(header);
-
-                    groupModels.forEach(m => {
-                        const isSelected = m.id === activeId;
-                        const isVision = this.models.isVisionModel(m);
-                        const isReasoning = this.isModelSupportingReasoning(m);
-                        const displayName = m.name || 'Model';
-
-                        let rightBadges = '';
-                        let ctxTag = this.models.formatContextSize(m.contextLength);
-                        if (!ctxTag) {
-                            const mLow = (m.modelId || m.name || '').toLowerCase();
-                            if (mLow.includes('1m') || mLow.includes('ultra')) ctxTag = '1M';
-                            else if (mLow.includes('256k') || mLow.includes('pro')) ctxTag = '256k';
-                            else if (mLow.includes('128k')) ctxTag = '128k';
-                        }
-                        if (ctxTag) {
-                            rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;">${ctxTag}</span>`;
-                        }
-                        if (isVision) {
-                            rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Vision</span>`;
-                        }
-                        if (m.supportsTools === true) {
-                            rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Tools</span>`;
-                        }
-
-                        const hasOtherBadges = !!rightBadges;
-                        let reasoningLabel = '';
-                        if (isReasoning) {
-                            const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || 'default';
-                            const options = this.getModelReasoningOptions(m);
-                            const effectiveReasoning = options.some(o => o.id === curReasoning) ? curReasoning : (options[0]?.id || 'default');
-                            const optObj = options.find(o => o.id === effectiveReasoning);
-                            reasoningLabel = optObj ? optObj.label : 'Default';
-                            if (hasOtherBadges) {
-                                rightBadges += `<span class="sx-reasoning-subtag is-badge" data-model-id="${m.id}" data-has-badges="true">${reasoningLabel}</span>`;
-                            } else {
-                                rightBadges += `<span class="sx-reasoning-subtag" data-model-id="${m.id}" data-has-badges="false">(${reasoningLabel})</span>`;
-                            }
-                        }
-
-                        const hasBadges = !!rightBadges;
-                        const item = document.createElement('div');
-                        item.className = 'sx-custom-model-item' + (isSelected ? ' is-selected' : '') + (hasBadges ? ' has-badges' : '');
-                        item.dataset.modelId = m.id;
-                        item.dataset.modelLabel = displayName;
-                        item.dataset.sxProvider = pId;
-
-                        const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-
-                        item.innerHTML = `
-                            <div class="sx-model-info-col">
-                                <div class="sx-model-title" title="${this.sxEsc(displayName)}">${this.sxEsc(displayName)}</div>
-                                ${hasBadges ? `<div class="sx-model-badges-row">${rightBadges}</div>` : ''}
-                            </div>
-                            <div class="sx-model-right-actions">
-                                <div class="sx-model-check-slot">
-                                    ${isSelected ? checkSvg : ''}
-                                </div>
-                                <div class="sx-model-arrow-slot">
-                                    ${isReasoning ? `
-                                        <div class="sx-model-chevron-hint" title="Reasoning: ${this.sxEsc(reasoningLabel)}">
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
-                                                <polyline points="9 18 15 12 9 6"></polyline>
-                                            </svg>
-                                        </div>
-                                    ` : ''}
-                                </div>
-                            </div>
-                        `;
-
-                        // Row hover and direct trigger click for reasoning submenu
-                        item.addEventListener('mouseenter', () => {
-                            if (isReasoning) {
-                                if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
-                                this.openModelReasoningSubmenu(item, m.id, m.name);
-                            } else {
-                                this.closeModelReasoningSubmenu();
-                            }
-                        });
-
-                        item.addEventListener('mouseleave', (e) => {
-                            const toEl = e.relatedTarget;
-                            if (toEl && (toEl.closest('#sx-nested-reasoning-menu') || toEl.closest('.sx-custom-model-item') === item)) {
-                                return;
-                            }
-                            if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
-                            this._menuCloseTimeout = setTimeout(() => {
-                                this.closeModelReasoningSubmenu();
-                            }, 200);
-                        });
-
-                        const cHint = item.querySelector('.sx-model-chevron-hint');
-                        if (cHint) {
-                            cHint.addEventListener('click', (e) => {
-                                e.stopPropagation();
-                                this.openModelReasoningSubmenu(item, m.id, m.name);
-                            });
-                        }
-
-                        item.addEventListener('click', () => {
-                            const cKey = this.models.getActiveConversationKey();
-                            this.models.setActiveModelForConversation(m.id, cKey, true);
-
-                            listContainer.querySelectorAll('.sx-custom-model-item').forEach(el => {
-                                el.classList.remove('is-selected');
-                                const cs = el.querySelector('.sx-model-check-slot');
-                                if (cs) cs.innerHTML = '';
-                            });
-                            item.classList.add('is-selected');
-                            const cs = item.querySelector('.sx-model-check-slot');
-                            if (cs) cs.innerHTML = checkSvg;
-
-                            this.quota?.updateContextButtonUI();
-
-                            // Close popper
-                            if (sampleNative) sampleNative.click();
-                            setTimeout(() => this.hookDOM(), 30);
-                        });
-
-                        listContainer.appendChild(item);
-                    });
-                });
-            } else {
-                nativeItems.forEach(item => {
-                    if (item.style.display !== 'none') item.style.display = 'none';
-                });
-                // Sync checkmarks & reasoning labels
-                const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-                listContainer.querySelectorAll('.sx-custom-model-item').forEach(el => {
-                    const sel = el.dataset.modelId === activeId;
-                    el.classList.toggle('is-selected', sel);
-                    const cs = el.querySelector('.sx-model-check-slot');
-                    if (cs) cs.innerHTML = sel ? checkSvg : '';
-
-                    const mId = el.dataset.modelId;
-                    if (mId && this._modelReasoning && this._modelReasoning[mId]) {
-                        const val = this._modelReasoning[mId];
-                        const mObj = this.state.getModels().find(mod => mod.id === mId);
-                        const optObj = this.getModelReasoningOptions(mObj).find(o => o.id === val);
-                        const label = optObj ? optObj.label : (val.charAt(0).toUpperCase() + val.slice(1));
-                        const subtag = el.querySelector('.sx-reasoning-subtag');
-                        if (subtag) {
-                            const isBadge = subtag.classList.contains('is-badge') || subtag.getAttribute('data-has-badges') === 'true';
-                            subtag.textContent = isBadge ? label : `(${label})`;
-                        }
-                        const cHint = el.querySelector('.sx-model-chevron-hint');
-                        if (cHint) {
-                            cHint.title = `Reasoning: ${label}`;
-                        }
+                // Row hover and direct trigger click for reasoning submenu
+                item.addEventListener('mouseenter', () => {
+                    if (isReasoning) {
+                        if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
+                        this.openModelReasoningSubmenu(item, m.id, m.name);
+                    } else {
+                        this.closeModelReasoningSubmenu();
                     }
                 });
-            }
-        }
 
-        // Footer badge
-        let fBadge = document.getElementById('sx-panel-footer-badge');
-        if (!fBadge) {
-            fBadge = document.createElement('div');
-            fBadge.id = 'sx-panel-footer-badge';
-            fBadge.style.cssText = 'padding:6px 12px;border-top:1px solid hsl(var(--border, rgba(255,255,255,0.08)));background:hsl(var(--popover, var(--card, 222 47% 11%)));border-bottom-left-radius:10px;border-bottom-right-radius:10px;display:flex;align-items:center;justify-content:space-between;font-size:10.5px;user-select:none;box-sizing:border-box;';
-            modelPanel.appendChild(fBadge);
-        }
+                item.addEventListener('mouseleave', (e) => {
+                    const toEl = e.relatedTarget;
+                    if (toEl && (toEl.closest('#sx-nested-reasoning-menu') || toEl.closest('.sx-custom-model-item') === item)) {
+                        return;
+                    }
+                    if (this._menuCloseTimeout) clearTimeout(this._menuCloseTimeout);
+                    this._menuCloseTimeout = setTimeout(() => {
+                        this.closeModelReasoningSubmenu();
+                    }, 200);
+                });
+
+                const cHint = item.querySelector('.sx-model-chevron-hint');
+                if (cHint) {
+                    cHint.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.openModelReasoningSubmenu(item, m.id, m.name);
+                    });
+                }
+
+                item.addEventListener('click', () => {
+                    const cKey = this.models.getActiveConversationKey();
+                    this.models.setActiveModelForConversation(m.id, cKey, true);
+
+                    scrollContainer.querySelectorAll('.sx-custom-model-item').forEach(el => {
+                        el.classList.remove('is-selected');
+                        const cs = el.querySelector('.sx-model-check-slot');
+                        if (cs) cs.innerHTML = '';
+                    });
+                    item.classList.add('is-selected');
+                    const cs = item.querySelector('.sx-model-check-slot');
+                    if (cs) cs.innerHTML = checkSvg;
+
+                    this.quota?.updateContextButtonUI();
+
+                    // Close the Base UI / Radix menu cleanly
+                    const sampleNative = modelPanel.querySelector('[data-testid="model-selector-item"], [role="menuitem"], button');
+                    if (sampleNative && typeof sampleNative.click === 'function') {
+                        sampleNative.click();
+                    } else {
+                        const trig = document.querySelector('[data-testid="model-selector-trigger"]');
+                        if (trig) trig.click();
+                        else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+                    }
+                    setTimeout(() => this.hookDOM(), 30);
+                });
+
+                scrollContainer.appendChild(item);
+            });
+        });
+
+        // 4. Footer badge
+        const fBadge = document.createElement('div');
+        fBadge.id = 'sx-panel-footer-badge';
+        fBadge.style.cssText = 'padding:6px 12px;border-top:1px solid hsl(var(--border, rgba(255,255,255,0.08)));background:hsl(var(--popover, var(--card, 222 47% 11%)));border-bottom-left-radius:10px;border-bottom-right-radius:10px;display:flex;align-items:center;justify-content:space-between;font-size:10.5px;user-select:none;box-sizing:border-box;';
         fBadge.innerHTML = '<span style="font-weight:700;"><span style="color:#38bdf8;text-shadow:0 0 10px rgba(56,189,248,0.35);">SX</span> <span style="color:#ffffff;">Development</span></span><span style="font-size:9.5px;color:rgba(255,255,255,0.35);font-weight:500;">Custom Engine</span>';
+        root.appendChild(fBadge);
+
+        modelPanel.appendChild(root);
+        setTimeout(() => input.focus(), 50);
     }
 
     isModelSupportingReasoning(m) {
