@@ -304,78 +304,86 @@ export class UIInjector {
                 border-top: none !important;
             }
 
-            /* Clean muted reasoning trigger at the far right with subtle chevron */
-            .sx-model-reasoning-trigger {
-                display: inline-flex !important;
-                align-items: center !important;
-                gap: 4px !important;
-                padding: 2px 4px !important;
-                font-size: 11px !important;
-                font-weight: 500 !important;
+            /* Model Reasoning subtag in parentheses underneath model title */
+            .sx-reasoning-subtag {
+                font-size: 9.5px !important;
+                font-weight: 600 !important;
                 color: rgba(255, 255, 255, 0.45) !important;
-                background: transparent !important;
-                border: none !important;
-                cursor: pointer !important;
+                background: rgba(255, 255, 255, 0.05) !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                padding: 0.5px 5px !important;
+                border-radius: 3px !important;
+                line-height: normal !important;
                 user-select: none !important;
-                line-height: 1 !important;
-                transition: color 0.12s ease !important;
+                transition: all 0.12s ease !important;
             }
-            .sx-model-reasoning-trigger:hover,
-            .sx-custom-model-item:hover .sx-model-reasoning-trigger {
-                color: rgba(255, 255, 255, 0.9) !important;
-            }
-            .sx-reasoning-lbl {
-                font-size: 11px !important;
-                color: inherit !important;
-                font-weight: 500 !important;
-            }
-            .sx-reasoning-arrow {
-                opacity: 0.4 !important;
-                transition: opacity 0.12s ease !important;
-                flex-shrink: 0 !important;
-            }
-            .sx-model-reasoning-trigger:hover .sx-reasoning-arrow,
-            .sx-custom-model-item:hover .sx-reasoning-arrow {
-                opacity: 0.9 !important;
+            .sx-custom-model-item:hover .sx-reasoning-subtag {
+                color: rgba(255, 255, 255, 0.8) !important;
+                border-color: rgba(255, 255, 255, 0.2) !important;
             }
 
-            /* Reasoning submenu popover */
+            /* Clean subtle chevron arrow at the far right of model row */
+            .sx-model-chevron-hint {
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                cursor: pointer !important;
+                color: rgba(255, 255, 255, 0.3) !important;
+                transition: color 0.12s ease !important;
+                flex-shrink: 0 !important;
+                line-height: 1 !important;
+            }
+            .sx-custom-model-item:hover .sx-model-chevron-hint {
+                color: rgba(255, 255, 255, 0.85) !important;
+            }
+            .sx-reasoning-arrow {
+                opacity: 0.45 !important;
+                transition: opacity 0.12s ease, transform 0.12s ease !important;
+                flex-shrink: 0 !important;
+            }
+            .sx-custom-model-item:hover .sx-reasoning-arrow {
+                opacity: 0.9 !important;
+                transform: translateX(1px) !important;
+            }
+
+            /* Reasoning submenu popover matching Antigravity dark dropdown theme */
             .sx-nested-menu {
                 position: fixed !important;
                 z-index: 999999 !important;
-                background: #18181b !important;
-                border: 1px solid rgba(255, 255, 255, 0.14) !important;
-                border-radius: 8px !important;
+                background: #1e2029 !important;
+                border: 1px solid rgba(255, 255, 255, 0.12) !important;
+                border-radius: 10px !important;
                 padding: 4px !important;
-                min-width: 130px !important;
-                box-shadow: 0 14px 32px rgba(0, 0, 0, 0.75) !important;
-                backdrop-filter: blur(16px) !important;
+                min-width: 125px !important;
+                box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65) !important;
+                backdrop-filter: blur(20px) !important;
                 font-family: inherit !important;
                 display: flex !important;
                 flex-direction: column !important;
-                gap: 1px !important;
+                gap: 2px !important;
             }
             .sx-nested-item {
                 height: 28px !important;
-                padding: 0 8px 0 10px !important;
-                border-radius: 5px !important;
+                padding: 0 10px !important;
+                border-radius: 6px !important;
                 font-size: 12px !important;
                 font-weight: 500 !important;
-                color: rgba(255, 255, 255, 0.8) !important;
+                color: rgba(255, 255, 255, 0.75) !important;
                 cursor: pointer !important;
                 display: flex !important;
                 align-items: center !important;
                 justify-content: space-between !important;
-                transition: background 0.1s ease, color 0.1s ease !important;
+                transition: background 0.12s ease, color 0.12s ease !important;
                 user-select: none !important;
             }
             .sx-nested-item:hover {
-                background: rgba(255, 255, 255, 0.1) !important;
+                background: rgba(255, 255, 255, 0.08) !important;
                 color: #ffffff !important;
             }
             .sx-nested-item.is-active {
                 font-weight: 600 !important;
                 color: #ffffff !important;
+                background: rgba(255, 255, 255, 0.04) !important;
             }
         `;
         const target = document.head || document.documentElement;
@@ -1435,26 +1443,19 @@ export class UIInjector {
                             rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Tools</span>`;
                         }
 
+                        let reasoningLabel = '';
+                        if (isReasoning) {
+                            const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || 'medium';
+                            reasoningLabel = curReasoning.charAt(0).toUpperCase() + curReasoning.slice(1);
+                            rightBadges += `<span class="sx-reasoning-subtag" data-model-id="${m.id}">(${reasoningLabel})</span>`;
+                        }
+
                         const hasBadges = !!rightBadges;
                         const item = document.createElement('div');
                         item.className = 'sx-custom-model-item' + (isSelected ? ' is-selected' : '') + (hasBadges ? ' has-badges' : '');
                         item.dataset.modelId = m.id;
                         item.dataset.modelLabel = m.name;
                         item.dataset.sxProvider = pId;
-
-                        let reasoningTriggerHtml = '';
-                        if (isReasoning) {
-                            const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || 'medium';
-                            const reasoningLabel = curReasoning.charAt(0).toUpperCase() + curReasoning.slice(1);
-                            reasoningTriggerHtml = `
-                                <div class="sx-model-reasoning-trigger" data-model-id="${m.id}" title="Reasoning: ${reasoningLabel}">
-                                    <span class="sx-reasoning-lbl">${reasoningLabel}</span>
-                                    <svg class="sx-reasoning-arrow" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
-                                        <polyline points="9 18 15 12 9 6"></polyline>
-                                    </svg>
-                                </div>
-                            `;
-                        }
 
                         const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;${isSelected ? '' : 'visibility:hidden;'}"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
@@ -1464,7 +1465,13 @@ export class UIInjector {
                                 ${hasBadges ? `<div class="sx-model-badges-row">${rightBadges}</div>` : ''}
                             </div>
                             <div class="sx-model-right-actions">
-                                ${reasoningTriggerHtml}
+                                ${isReasoning ? `
+                                    <div class="sx-model-chevron-hint" title="Reasoning: ${reasoningLabel}">
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
+                                            <polyline points="9 18 15 12 9 6"></polyline>
+                                        </svg>
+                                    </div>
+                                ` : ''}
                                 ${checkSvg}
                             </div>
                         `;
@@ -1490,9 +1497,9 @@ export class UIInjector {
                             }, 200);
                         });
 
-                        const rTrigger = item.querySelector('.sx-model-reasoning-trigger');
-                        if (rTrigger) {
-                            rTrigger.addEventListener('click', (e) => {
+                        const cHint = item.querySelector('.sx-model-chevron-hint');
+                        if (cHint) {
+                            cHint.addEventListener('click', (e) => {
                                 e.stopPropagation();
                                 this.openModelReasoningSubmenu(item, m.id, m.name);
                             });
@@ -1531,10 +1538,15 @@ export class UIInjector {
 
                     const mId = el.dataset.modelId;
                     if (mId && this._modelReasoning && this._modelReasoning[mId]) {
-                        const lbl = el.querySelector('.sx-reasoning-lbl');
-                        if (lbl) {
+                        const subtag = el.querySelector('.sx-reasoning-subtag');
+                        if (subtag) {
                             const val = this._modelReasoning[mId];
-                            lbl.textContent = val.charAt(0).toUpperCase() + val.slice(1);
+                            subtag.textContent = `(${val.charAt(0).toUpperCase() + val.slice(1)})`;
+                        }
+                        const cHint = el.querySelector('.sx-model-chevron-hint');
+                        if (cHint) {
+                            const val = this._modelReasoning[mId];
+                            cHint.title = `Reasoning: ${val.charAt(0).toUpperCase() + val.slice(1)}`;
                         }
                     }
                 });
@@ -1636,10 +1648,16 @@ export class UIInjector {
                 if (!this._modelReasoning) this._modelReasoning = {};
                 this._modelReasoning[modelId] = val;
 
-                const lbl = triggerEl.querySelector('.sx-reasoning-lbl');
-                if (lbl) {
-                    const optObj = options.find(o => o.id === val);
-                    lbl.textContent = optObj ? optObj.label : val;
+                const optObj = options.find(o => o.id === val);
+                const newLabel = optObj ? optObj.label : (val.charAt(0).toUpperCase() + val.slice(1));
+
+                const subtag = triggerEl.querySelector('.sx-reasoning-subtag');
+                if (subtag) {
+                    subtag.textContent = `(${newLabel})`;
+                }
+                const cHint = triggerEl.querySelector('.sx-model-chevron-hint');
+                if (cHint) {
+                    cHint.title = `Reasoning: ${newLabel}`;
                 }
 
                 this.network.post('/set-agent-effort', {
