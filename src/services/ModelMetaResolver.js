@@ -244,13 +244,17 @@ export class ModelMetaResolver {
         } catch (e) { /* quota full — memory cache still works */ }
     }
 
-    /** Compact row [id, ctx, vis(-1/0/1), tools(-1/0/1), name] -> meta object. */
+    /** Compact row [id, ctx, vis(-1/0/1), tools(-1/0/1), name, reasoning(-1/0/1), supportedParams, supportedEfforts, defaultEffort] -> meta object. */
     _expandRow(r) {
         const o = {};
         if (r[1] > 0) o.contextLength = r[1];
         if (r[2] === 1) o.supportsImages = true; else if (r[2] === 0) o.supportsImages = false;
         if (r[3] === 1) o.supportsTools = true; else if (r[3] === 0) o.supportsTools = false;
         if (r[4]) o.name = r[4];
+        if (r[5] === 1) o.supportsReasoning = true; else if (r[5] === 0) o.supportsReasoning = false;
+        if (Array.isArray(r[6]) && r[6].length > 0) o.supportedParameters = r[6];
+        if (Array.isArray(r[7]) && r[7].length > 0) o.supportedReasoningEfforts = r[7];
+        if (r[8]) o.defaultReasoningEffort = r[8];
         return o;
     }
 
@@ -409,7 +413,11 @@ export class ModelMetaResolver {
                             meta.contextLength || 0,
                             typeof meta.supportsImages === 'boolean' ? (meta.supportsImages ? 1 : 0) : -1,
                             typeof meta.supportsTools === 'boolean' ? (meta.supportsTools ? 1 : 0) : -1,
-                            String(m.name || '').slice(0, 120)];
+                            String(m.name || '').slice(0, 120),
+                            typeof meta.supportsReasoning === 'boolean' ? (meta.supportsReasoning ? 1 : 0) : -1,
+                            meta.supportedParameters || [],
+                            meta.supportedReasoningEfforts || [],
+                            meta.defaultReasoningEffort || ''];
                     });
                 this._cacheSet(OR_CACHE_KEY, rows);
                 const { exact, norm } = this._indexRows(rows);
@@ -514,10 +522,26 @@ export class ModelMetaResolver {
         if (hay.includes('image') || hay.includes('vision')) out.supportsImages = true;
         else if (hay.includes('text')) out.supportsImages = false;
 
-        const params = Array.isArray(m.supported_parameters) ? m.supported_parameters.join(',').toLowerCase() : '';
-        if (params.includes('tool') || params.includes('function')) out.supportsTools = true;
-        else if (params) out.supportsTools = false;
+        const supportedParams = Array.isArray(m.supported_parameters) ? m.supported_parameters : [];
+        const params = supportedParams.map(p => String(p).toLowerCase());
+        if (params.some(p => p.includes('tool') || p.includes('function'))) out.supportsTools = true;
+        else if (params.length) out.supportsTools = false;
 
+        const effs = Array.isArray(m.reasoning?.supported_efforts) ? m.reasoning.supported_efforts : [];
+        if (effs.length > 0) {
+            out.supportedReasoningEfforts = effs;
+            out.supportsReasoning = true;
+        } else if (params.includes('reasoning_effort')) {
+            out.supportsReasoning = true;
+        } else if (params.length > 0) {
+            out.supportsReasoning = false;
+        }
+
+        if (m.reasoning?.default_effort) {
+            out.defaultReasoningEffort = m.reasoning.default_effort;
+        }
+
+        out.supportedParameters = supportedParams;
         if (m.name) out.name = m.name;
         return out;
     }
@@ -557,6 +581,10 @@ export class ModelMetaResolver {
             if (!out.contextLength && Number(src.contextLength) > 0) { out.contextLength = Number(src.contextLength); touched = true; }
             if (typeof out.supportsImages !== 'boolean' && typeof src.supportsImages === 'boolean') { out.supportsImages = src.supportsImages; touched = true; }
             if (typeof out.supportsTools !== 'boolean' && typeof src.supportsTools === 'boolean') { out.supportsTools = src.supportsTools; touched = true; }
+            if (typeof out.supportsReasoning !== 'boolean' && typeof src.supportsReasoning === 'boolean') { out.supportsReasoning = src.supportsReasoning; touched = true; }
+            if (!out.supportedReasoningEfforts && Array.isArray(src.supportedReasoningEfforts)) { out.supportedReasoningEfforts = src.supportedReasoningEfforts; touched = true; }
+            if (!out.defaultReasoningEffort && src.defaultReasoningEffort) { out.defaultReasoningEffort = src.defaultReasoningEffort; touched = true; }
+            if (!out.supportedParameters && Array.isArray(src.supportedParameters)) { out.supportedParameters = src.supportedParameters; touched = true; }
             if (!out.name && src.name) out.name = src.name;
             if (touched && src.metaSource && !out.metaSource) out.metaSource = src.metaSource;
             return touched;
@@ -604,6 +632,10 @@ export class ModelMetaResolver {
             if (n.c && Number(src.contextLength) > 0) { out.contextLength = Number(src.contextLength); touched = true; }
             if (n.v && typeof src.supportsImages === 'boolean') { out.supportsImages = src.supportsImages; touched = true; }
             if (n.t && typeof src.supportsTools === 'boolean') { out.supportsTools = src.supportsTools; touched = true; }
+            if (typeof out.supportsReasoning !== 'boolean' && typeof src.supportsReasoning === 'boolean') { out.supportsReasoning = src.supportsReasoning; touched = true; }
+            if (!out.supportedReasoningEfforts && Array.isArray(src.supportedReasoningEfforts)) { out.supportedReasoningEfforts = src.supportedReasoningEfforts; touched = true; }
+            if (!out.defaultReasoningEffort && src.defaultReasoningEffort) { out.defaultReasoningEffort = src.defaultReasoningEffort; touched = true; }
+            if (!out.supportedParameters && Array.isArray(src.supportedParameters)) { out.supportedParameters = src.supportedParameters; touched = true; }
             if (!out.name && src.name) out.name = src.name;
             if (touched && !out.metaSource) out.metaSource = tag;
         };
@@ -613,7 +645,7 @@ export class ModelMetaResolver {
             let n = need();
             if (n.c || n.v || n.t) fill(this.lookupModelsDev(id), 'modelsdev');
             n = need();
-            if (n.c || n.v || n.t) fill(await this.lookupOnline(id), 'openrouter');
+            if (n.c || n.v || n.t || typeof out.supportsReasoning !== 'boolean') fill(await this.lookupOnline(id), 'openrouter');
         }
         if (!out.metaSource) {
             const kb = this._kbLookup(id);
@@ -684,6 +716,21 @@ export class ModelMetaResolver {
             if (typeof fresh.supportsTools === 'boolean' &&
                 (typeof m.supportsTools !== 'boolean' || (canOverwrite && m.supportsTools !== fresh.supportsTools))) {
                 m.supportsTools = fresh.supportsTools; touched = true;
+            }
+            if (typeof fresh.supportsReasoning === 'boolean' &&
+                (typeof m.supportsReasoning !== 'boolean' || canOverwrite)) {
+                m.supportsReasoning = fresh.supportsReasoning; touched = true;
+            }
+            if (Array.isArray(fresh.supportedReasoningEfforts) &&
+                (!m.supportedReasoningEfforts || canOverwrite)) {
+                m.supportedReasoningEfforts = fresh.supportedReasoningEfforts; touched = true;
+            }
+            if (fresh.defaultReasoningEffort && (!m.defaultReasoningEffort || canOverwrite)) {
+                m.defaultReasoningEffort = fresh.defaultReasoningEffort; touched = true;
+            }
+            if (Array.isArray(fresh.supportedParameters) &&
+                (!m.supportedParameters || canOverwrite)) {
+                m.supportedParameters = fresh.supportedParameters; touched = true;
             }
             if (touched) {
                 changed = true;

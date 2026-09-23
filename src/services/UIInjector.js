@@ -290,9 +290,25 @@ export class UIInjector {
                 display: flex !important;
                 align-items: center !important;
                 justify-content: flex-end !important;
-                gap: 6px !important;
-                width: 32px !important;
-                min-width: 32px !important;
+                gap: 4px !important;
+                width: 36px !important;
+                min-width: 36px !important;
+            }
+            .sx-model-check-slot {
+                width: 14px !important;
+                height: 14px !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                flex-shrink: 0 !important;
+            }
+            .sx-model-arrow-slot {
+                width: 14px !important;
+                height: 14px !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                flex-shrink: 0 !important;
             }
             .sx-provider-header {
                 padding: 8px 8px 3px 8px !important;
@@ -585,6 +601,10 @@ export class UIInjector {
             if (fm.contextLength) out.contextLength = fm.contextLength;
             if (typeof fm.supportsImages === 'boolean') out.supportsImages = fm.supportsImages;
             if (typeof fm.supportsTools === 'boolean') out.supportsTools = fm.supportsTools;
+            if (typeof fm.supportsReasoning === 'boolean') out.supportsReasoning = fm.supportsReasoning;
+            if (Array.isArray(fm.supportedReasoningEfforts)) out.supportedReasoningEfforts = fm.supportedReasoningEfforts;
+            if (fm.defaultReasoningEffort) out.defaultReasoningEffort = fm.defaultReasoningEffort;
+            if (Array.isArray(fm.supportedParameters)) out.supportedParameters = fm.supportedParameters;
             if (fm.metaSource) out.metaSource = fm.metaSource;
             return out;
         };
@@ -669,6 +689,10 @@ export class UIInjector {
                     if (fm.contextLength && !ex.contextLength) { ex.contextLength = fm.contextLength; metaUpdated = true; }
                     if (typeof fm.supportsImages === 'boolean' && typeof ex.supportsImages !== 'boolean') { ex.supportsImages = fm.supportsImages; metaUpdated = true; }
                     if (typeof fm.supportsTools === 'boolean' && typeof ex.supportsTools !== 'boolean') { ex.supportsTools = fm.supportsTools; metaUpdated = true; }
+                    if (typeof fm.supportsReasoning === 'boolean' && typeof ex.supportsReasoning !== 'boolean') { ex.supportsReasoning = fm.supportsReasoning; metaUpdated = true; }
+                    if (Array.isArray(fm.supportedReasoningEfforts) && !ex.supportedReasoningEfforts) { ex.supportedReasoningEfforts = fm.supportedReasoningEfforts; metaUpdated = true; }
+                    if (fm.defaultReasoningEffort && !ex.defaultReasoningEffort) { ex.defaultReasoningEffort = fm.defaultReasoningEffort; metaUpdated = true; }
+                    if (Array.isArray(fm.supportedParameters) && !ex.supportedParameters) { ex.supportedParameters = fm.supportedParameters; metaUpdated = true; }
                 });
                 // Also backfill ALL stored models missing meta (not just this provider)
                 if (self.meta) {
@@ -1244,16 +1268,22 @@ export class UIInjector {
                 st.id = 'sx-custom-model-style';
                 st.textContent = `
                     .sx-custom-model-item {
-                        height: 27px !important;
-                        min-height: 27px !important;
-                        padding: 0 8px !important;
+                        min-height: 28px !important;
+                        padding: 3px 8px !important;
                         margin: 1px 0 !important;
-                        border-radius: 5px !important;
+                        border-radius: 6px !important;
                         cursor: pointer !important;
                         user-select: none !important;
                         display: flex !important;
                         align-items: center !important;
+                        justify-content: space-between !important;
+                        gap: 8px !important;
+                        box-sizing: border-box !important;
                         transition: background-color 0.1s ease, color 0.1s ease !important;
+                    }
+                    .sx-custom-model-item.has-badges {
+                        min-height: 42px !important;
+                        padding: 5px 8px !important;
                     }
                     .sx-custom-model-item.is-hidden {
                         display: none !important;
@@ -1265,15 +1295,77 @@ export class UIInjector {
                         background-color: rgba(255, 255, 255, 0.05) !important;
                         font-weight: 500 !important;
                     }
+                    .sx-model-info-col {
+                        flex: 1 1 auto !important;
+                        min-width: 0 !important;
+                        display: flex !important;
+                        flex-direction: column !important;
+                        justify-content: center !important;
+                        gap: 2px !important;
+                    }
                     .sx-custom-model-item .sx-model-title {
                         font-size: 12px !important;
-                        line-height: normal !important;
-                        color: rgba(255, 255, 255, 0.9) !important;
+                        line-height: 1.3 !important;
+                        color: rgba(255, 255, 255, 0.92) !important;
                         overflow: hidden !important;
                         text-overflow: ellipsis !important;
                         white-space: nowrap !important;
-                        flex: 1 !important;
-                        min-width: 0 !important;
+                        width: 100% !important;
+                    }
+                    .sx-model-badges-row {
+                        display: flex !important;
+                        align-items: center !important;
+                        gap: 4px !important;
+                        flex-wrap: wrap !important;
+                        margin-top: 1px !important;
+                    }
+                    .sx-model-right-actions {
+                        flex-shrink: 0 !important;
+                        margin-left: auto !important;
+                        display: flex !important;
+                        align-items: center !important;
+                        justify-content: flex-end !important;
+                        gap: 4px !important;
+                        width: 36px !important;
+                        min-width: 36px !important;
+                    }
+                    .sx-model-check-slot {
+                        width: 14px !important;
+                        height: 14px !important;
+                        display: flex !important;
+                        align-items: center !important;
+                        justify-content: center !important;
+                        flex-shrink: 0 !important;
+                    }
+                    .sx-model-arrow-slot {
+                        width: 14px !important;
+                        height: 14px !important;
+                        display: flex !important;
+                        align-items: center !important;
+                        justify-content: center !important;
+                        flex-shrink: 0 !important;
+                    }
+                    .sx-model-chevron-hint {
+                        display: inline-flex !important;
+                        align-items: center !important;
+                        justify-content: center !important;
+                        cursor: pointer !important;
+                        color: rgba(255, 255, 255, 0.3) !important;
+                        transition: color 0.12s ease !important;
+                        flex-shrink: 0 !important;
+                        line-height: 1 !important;
+                    }
+                    .sx-custom-model-item:hover .sx-model-chevron-hint {
+                        color: rgba(255, 255, 255, 0.85) !important;
+                    }
+                    .sx-reasoning-arrow {
+                        opacity: 0.45 !important;
+                        transition: opacity 0.12s ease, transform 0.12s ease !important;
+                        flex-shrink: 0 !important;
+                    }
+                    .sx-custom-model-item:hover .sx-reasoning-arrow {
+                        opacity: 0.9 !important;
+                        transform: translateX(1px) !important;
                     }
                     .sx-provider-header {
                         padding: 8px 8px 3px 8px !important;
@@ -1287,66 +1379,44 @@ export class UIInjector {
                         margin-top: 0 !important;
                         border-top: none !important;
                     }
-                    .sx-model-reasoning-trigger {
-                        display: inline-flex !important;
-                        align-items: center !important;
-                        gap: 2px !important;
-                        padding: 1px 5px !important;
-                        border-radius: 4px !important;
-                        font-size: 9.5px !important;
-                        font-weight: 600 !important;
-                        color: rgba(255, 255, 255, 0.75) !important;
-                        background: rgba(255, 255, 255, 0.06) !important;
-                        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-                        cursor: pointer !important;
-                        transition: all 0.12s ease !important;
-                        user-select: none !important;
-                        line-height: normal !important;
-                        margin-right: 4px !important;
-                    }
-                    .sx-model-reasoning-trigger:hover {
-                        background: rgba(255, 255, 255, 0.15) !important;
-                        color: #ffffff !important;
-                        border-color: rgba(255, 255, 255, 0.28) !important;
-                    }
-                    .sx-reasoning-arrow {
-                        font-size: 10px !important;
-                        font-weight: 700 !important;
-                        opacity: 0.65 !important;
-                        margin-left: 2px !important;
-                    }
                     .sx-nested-menu {
                         position: fixed !important;
                         z-index: 999999 !important;
-                        background: #18181b !important;
-                        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+                        background: #1e1e1e !important;
+                        border: 1px solid rgba(255, 255, 255, 0.12) !important;
                         border-radius: 8px !important;
                         padding: 4px !important;
                         min-width: 125px !important;
-                        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.75) !important;
-                        backdrop-filter: blur(16px) !important;
+                        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7) !important;
+                        backdrop-filter: blur(20px) !important;
                         font-family: inherit !important;
                         display: flex !important;
                         flex-direction: column !important;
-                        gap: 1px !important;
+                        gap: 2px !important;
+                        box-sizing: border-box !important;
                     }
                     .sx-nested-item {
                         height: 28px !important;
-                        padding: 0 8px 0 10px !important;
-                        border-radius: 5px !important;
+                        padding: 0 10px !important;
+                        border-radius: 6px !important;
                         font-size: 12px !important;
                         font-weight: 500 !important;
-                        color: rgba(255, 255, 255, 0.85) !important;
+                        color: rgba(255, 255, 255, 0.8) !important;
                         cursor: pointer !important;
                         display: flex !important;
                         align-items: center !important;
                         justify-content: space-between !important;
-                        transition: background 0.1s ease !important;
+                        transition: background 0.12s ease, color 0.12s ease !important;
                         user-select: none !important;
                     }
                     .sx-nested-item:hover {
-                        background: rgba(255, 255, 255, 0.1) !important;
+                        background: rgba(255, 255, 255, 0.08) !important;
                         color: #ffffff !important;
+                    }
+                    .sx-nested-item.is-active {
+                        font-weight: 600 !important;
+                        color: #ffffff !important;
+                        background: rgba(255, 255, 255, 0.08) !important;
                     }
                     .sx-effort-popover {
                         position: fixed !important;
@@ -1459,8 +1529,9 @@ export class UIInjector {
                         const hasOtherBadges = !!rightBadges;
                         let reasoningLabel = '';
                         if (isReasoning) {
-                            const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || 'medium';
-                            reasoningLabel = curReasoning.charAt(0).toUpperCase() + curReasoning.slice(1);
+                            const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || m.defaultReasoningEffort || 'default';
+                            const optObj = this.getModelReasoningOptions(m).find(o => o.id === curReasoning);
+                            reasoningLabel = optObj ? optObj.label : (curReasoning.charAt(0).toUpperCase() + curReasoning.slice(1));
                             if (hasOtherBadges) {
                                 rightBadges += `<span class="sx-reasoning-subtag is-badge" data-model-id="${m.id}" data-has-badges="true">${reasoningLabel}</span>`;
                             } else {
@@ -1475,7 +1546,7 @@ export class UIInjector {
                         item.dataset.modelLabel = m.name;
                         item.dataset.sxProvider = pId;
 
-                        const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;${isSelected ? '' : 'visibility:hidden;'}"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+                        const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
 
                         item.innerHTML = `
                             <div class="sx-model-info-col">
@@ -1483,11 +1554,17 @@ export class UIInjector {
                                 ${hasBadges ? `<div class="sx-model-badges-row">${rightBadges}</div>` : ''}
                             </div>
                             <div class="sx-model-right-actions">
-                                ${checkSvg}
-                                <div class="sx-model-chevron-hint" style="${isReasoning ? '' : 'visibility:hidden;pointer-events:none;'}" title="${isReasoning ? `Reasoning: ${reasoningLabel}` : ''}">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
-                                        <polyline points="9 18 15 12 9 6"></polyline>
-                                    </svg>
+                                <div class="sx-model-check-slot">
+                                    ${isSelected ? checkSvg : ''}
+                                </div>
+                                <div class="sx-model-arrow-slot">
+                                    ${isReasoning ? `
+                                        <div class="sx-model-chevron-hint" title="Reasoning: ${this.sxEsc(reasoningLabel)}">
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-reasoning-arrow">
+                                                <polyline points="9 18 15 12 9 6"></polyline>
+                                            </svg>
+                                        </div>
+                                    ` : ''}
                                 </div>
                             </div>
                         `;
@@ -1527,12 +1604,12 @@ export class UIInjector {
 
                             listContainer.querySelectorAll('.sx-custom-model-item').forEach(el => {
                                 el.classList.remove('is-selected');
-                                const c = el.querySelector('.sx-item-check');
-                                if (c) c.style.visibility = 'hidden';
+                                const cs = el.querySelector('.sx-model-check-slot');
+                                if (cs) cs.innerHTML = '';
                             });
                             item.classList.add('is-selected');
-                            const c = item.querySelector('.sx-item-check');
-                            if (c) c.style.visibility = 'visible';
+                            const cs = item.querySelector('.sx-model-check-slot');
+                            if (cs) cs.innerHTML = checkSvg;
 
                             this.quota?.updateContextButtonUI();
 
@@ -1546,25 +1623,27 @@ export class UIInjector {
                 });
             } else {
                 // Sync checkmarks & reasoning labels
+                const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
                 listContainer.querySelectorAll('.sx-custom-model-item').forEach(el => {
                     const sel = el.dataset.modelId === activeId;
                     el.classList.toggle('is-selected', sel);
-                    const c = el.querySelector('.sx-item-check');
-                    if (c) c.style.visibility = sel ? 'visible' : 'hidden';
+                    const cs = el.querySelector('.sx-model-check-slot');
+                    if (cs) cs.innerHTML = sel ? checkSvg : '';
 
                     const mId = el.dataset.modelId;
                     if (mId && this._modelReasoning && this._modelReasoning[mId]) {
+                        const val = this._modelReasoning[mId];
+                        const mObj = this.state.getModels().find(mod => mod.id === mId);
+                        const optObj = this.getModelReasoningOptions(mObj).find(o => o.id === val);
+                        const label = optObj ? optObj.label : (val.charAt(0).toUpperCase() + val.slice(1));
                         const subtag = el.querySelector('.sx-reasoning-subtag');
                         if (subtag) {
-                            const val = this._modelReasoning[mId];
-                            const label = val.charAt(0).toUpperCase() + val.slice(1);
                             const isBadge = subtag.classList.contains('is-badge') || subtag.getAttribute('data-has-badges') === 'true';
                             subtag.textContent = isBadge ? label : `(${label})`;
                         }
                         const cHint = el.querySelector('.sx-model-chevron-hint');
                         if (cHint) {
-                            const val = this._modelReasoning[mId];
-                            cHint.title = `Reasoning: ${val.charAt(0).toUpperCase() + val.slice(1)}`;
+                            cHint.title = `Reasoning: ${label}`;
                         }
                     }
                 });
@@ -1585,65 +1664,77 @@ export class UIInjector {
     isModelSupportingReasoning(m) {
         if (!m) return false;
         if (m.supportsReasoning === false) return false;
-        if (m.supportsReasoning === true) return true;
 
+        // 1. Explicit supported reasoning efforts from API / model definition
         if (Array.isArray(m.supportedReasoningEfforts) && m.supportedReasoningEfforts.length > 0) return true;
         if (Array.isArray(m.reasoning_efforts) && m.reasoning_efforts.length > 0) return true;
         if (Array.isArray(m.reasoningEfforts) && m.reasoningEfforts.length > 0) return true;
+        if (Array.isArray(m.reasoning?.supported_efforts) && m.reasoning.supported_efforts.length > 0) return true;
 
-        const params = Array.isArray(m.supported_parameters) ? m.supported_parameters.join(' ') : String(m.supported_parameters || '');
-        if (/(?:reasoning|thinking|thought)/i.test(params)) return true;
-
-        const str = `${m.id || ''} ${m.modelId || ''} ${m.name || ''}`.toLowerCase();
-        if (/(?:embedding|embed|whisper|tts|moderation|dall-e|stable-diffusion|flux|midjourney)/i.test(str)) {
-            return false;
+        // 2. OpenRouter / Provider supported_parameters check
+        const params = Array.isArray(m.supported_parameters) ? m.supported_parameters : (Array.isArray(m.supportedParameters) ? m.supportedParameters : null);
+        if (params) {
+            const hasReasoningEffort = params.some(p => {
+                const s = String(p).toLowerCase();
+                return s === 'reasoning_effort' || s === 'reasoning-effort';
+            });
+            if (hasReasoningEffort) return true;
+            // API explicitly sent parameters and reasoning_effort is NOT supported
+            if (params.length > 0) return false;
         }
 
-        // Modern LLMs support reasoning/thinking efforts
-        return true;
+        // 3. Metadata resolver explicitly resolved supportsReasoning
+        if (m.supportsReasoning === true) return true;
+
+        // 4. Known reasoning models for direct providers where API metadata doesn't declare parameters
+        const id = `${m.id || ''} ${m.modelId || ''}`.toLowerCase();
+        if (/(?:embedding|embed|whisper|tts|moderation|dall-e|stable-diffusion|flux|midjourney)/i.test(id)) {
+            return false;
+        }
+        if (/^(openai\/)?o[134](?:-mini|-preview|-high)?(?:$|[\/:])/i.test(id)) return true;
+        if (/(?:^|\/)(?:o1|o3|o4|gpt-5-codex|nex-n2\.5)/i.test(id)) return true;
+
+        return false;
     }
 
     getModelReasoningOptions(m) {
-        if (!m) return [
-            { id: 'low', label: 'Low' },
-            { id: 'medium', label: 'Medium' },
-            { id: 'high', label: 'High' },
-            { id: 'max', label: 'Max' }
-        ];
+        const canonicalOrder = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+        const formatLabel = (id) => {
+            if (id === 'xhigh') return 'Extra High';
+            return id.charAt(0).toUpperCase() + id.slice(1);
+        };
 
-        // 1. Check if API sent explicit reasoning effort options for this model
-        const apiEfforts = m.supportedReasoningEfforts
-            || m.reasoning_efforts
-            || m.reasoningEfforts
-            || m.parameters?.reasoning_effort?.options
-            || m.parameters?.reasoning?.options
-            || m.supported_parameters_options?.reasoning_effort;
+        const rawEfforts = m?.supportedReasoningEfforts
+            || m?.reasoning_efforts
+            || m?.reasoningEfforts
+            || m?.reasoning?.supported_efforts
+            || m?.parameters?.reasoning_effort?.options
+            || m?.parameters?.reasoning?.options;
 
-        if (Array.isArray(apiEfforts) && apiEfforts.length > 0) {
-            return apiEfforts.map(opt => {
-                const s = String(opt).trim();
-                return {
-                    id: s.toLowerCase(),
-                    label: s.charAt(0).toUpperCase() + s.slice(1)
-                };
+        if (Array.isArray(rawEfforts) && rawEfforts.length > 0) {
+            const set = new Set(rawEfforts.map(x => String(x).toLowerCase().trim()));
+            const sorted = [];
+            canonicalOrder.forEach(lvl => {
+                if (set.has(lvl)) {
+                    sorted.push({ id: lvl, label: formatLabel(lvl) });
+                    set.delete(lvl);
+                }
             });
-        }
+            set.forEach(rem => {
+                if (rem) sorted.push({ id: rem, label: formatLabel(rem) });
+            });
 
-        // 2. Family-specific defaults
-        const str = `${m.id || ''} ${m.modelId || ''} ${m.name || ''}`.toLowerCase();
-        if (/(?:o1|o3|o4|gpt-5)/i.test(str)) {
             return [
-                { id: 'low', label: 'Low' },
-                { id: 'medium', label: 'Medium' },
-                { id: 'high', label: 'High' }
+                { id: 'default', label: 'Default' },
+                ...sorted
             ];
         }
 
         return [
-            { id: 'low', label: 'Low' },
+            { id: 'default', label: 'Default' },
+            { id: 'none', label: 'None' },
             { id: 'medium', label: 'Medium' },
-            { id: 'high', label: 'High' },
-            { id: 'max', label: 'Max' }
+            { id: 'high', label: 'High' }
         ];
     }
 
@@ -1668,12 +1759,12 @@ export class UIInjector {
 
         const m = this.state.getModels().find(mod => mod.id === modelId) || { id: modelId, name: modelName };
         const options = this.getModelReasoningOptions(m);
-        const curReasoning = (this._modelReasoning && this._modelReasoning[modelId]) || (options[1] ? options[1].id : options[0]?.id || 'medium');
+        const curReasoning = (this._modelReasoning && this._modelReasoning[modelId]) || m.defaultReasoningEffort || 'default';
 
         menu.innerHTML = options.map(opt => {
-            const isActive = curReasoning === opt.id || (curReasoning === 'normal' && opt.id === 'medium');
+            const isActive = curReasoning === opt.id || (!this._modelReasoning?.[modelId] && opt.id === 'default');
             const checkIcon = isActive
-                ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:#ffffff;flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`
+                ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#86efac" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="color:#86efac;flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`
                 : '';
             return `
                 <div class="sx-nested-item ${isActive ? 'is-active' : ''}" data-val="${opt.id}">

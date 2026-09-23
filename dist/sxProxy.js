@@ -2391,12 +2391,15 @@ function startInternalProxy() {
                             const mKey2 = customModel?.modelId || '';
                             const effReasoning = (agentEffortState.modelReasoning && (agentEffortState.modelReasoning[mKey1] || agentEffortState.modelReasoning[mKey2]))
                                                 || effortProfile.reasoningEffort
-                                                || 'normal';
-                            if (effReasoning && effReasoning !== 'none') {
+                                                || 'default';
+                            const mStr = `${mKey1} ${mKey2}`.toLowerCase();
+                            const supportsThinking = customModel?.supportsReasoning === true
+                                || /(?:3-7|3\.7|claude-4|claude-opus-4|opus-5|sonnet-4|thinking)/i.test(mStr);
+                            if (supportsThinking && effReasoning && effReasoning !== 'none' && effReasoning !== 'default') {
                                 let budget = 8192;
                                 if (effReasoning === 'low') budget = 2048;
                                 else if (effReasoning === 'high') budget = 16384;
-                                else if (effReasoning === 'max') budget = 32768;
+                                else if (effReasoning === 'max' || effReasoning === 'xhigh') budget = 32768;
                                 payload.thinking = { type: 'enabled', budget_tokens: budget };
                                 payload.max_tokens = Math.max(payload.max_tokens, budget + 4000);
                             }
@@ -2648,30 +2651,44 @@ function startInternalProxy() {
 
                             const cleanBase = (provider.baseUrl || 'https://api.openai.com/v1').replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
                             const apiUrl = cleanBase + '/chat/completions';
+                            const mKey1 = customModel?.id || '';
+                            const mKey2 = customModel?.modelId || '';
+                            const mStr = `${mKey1} ${mKey2}`.toLowerCase();
+                            const isReasoningSupported = customModel?.supportsReasoning === true
+                                || (Array.isArray(customModel?.supportedReasoningEfforts) && customModel.supportedReasoningEfforts.length > 0)
+                                || (Array.isArray(customModel?.supported_parameters) && customModel.supported_parameters.some(p => /reasoning|thinking/i.test(p)))
+                                || (Array.isArray(customModel?.supportedParameters) && customModel.supportedParameters.some(p => /reasoning|thinking/i.test(p)))
+                                || /^(openai\/)?o[134](?:-mini|-preview|-high)?(?:$|[\/:])/i.test(mStr)
+                                || /(?:^|\/)(?:o1|o3|o4|gpt-5-codex|deepseek-r1|nex-n2\.5)/i.test(mStr);
+
                             const payload = {
                                 model: customModel.modelId,
                                 stream: true,
-                                messages: [],
-                                include_reasoning: true,
-                                // Groq service_tier omitted: user's org only has on_demand; default is safe
+                                messages: []
                             };
+                            if (isReasoningSupported) {
+                                payload.include_reasoning = true;
+                            }
                             if (oaTools) payload.tools = oaTools;
-                            const mKey1 = customModel?.id || '';
-                            const mKey2 = customModel?.modelId || '';
+
                             const effReasoning = (agentEffortState.modelReasoning && (agentEffortState.modelReasoning[mKey1] || agentEffortState.modelReasoning[mKey2]))
                                                 || effortProfile.reasoningEffort
-                                                || 'normal';
-                            if (effReasoning && effReasoning !== 'none') {
-                                if (effReasoning === 'low') {
+                                                || 'default';
+
+                            if (isReasoningSupported && effReasoning && effReasoning !== 'default') {
+                                if (effReasoning === 'none') {
+                                    payload.reasoning_effort = 'none';
+                                    payload.reasoning = { effort: 'none' };
+                                } else if (effReasoning === 'low') {
                                     payload.reasoning_effort = 'low';
                                     payload.reasoning = { effort: 'low', max_tokens: 2048 };
                                 } else if (effReasoning === 'high') {
                                     payload.reasoning_effort = 'high';
                                     payload.reasoning = { effort: 'high', max_tokens: 16384 };
-                                } else if (effReasoning === 'max') {
+                                } else if (effReasoning === 'max' || effReasoning === 'xhigh') {
                                     payload.reasoning_effort = 'high';
                                     payload.reasoning = { effort: 'high', max_tokens: 32768 };
-                                } else {
+                                } else if (effReasoning === 'medium') {
                                     payload.reasoning_effort = 'medium';
                                     payload.reasoning = { effort: 'medium', max_tokens: 8192 };
                                 }

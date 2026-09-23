@@ -172,10 +172,19 @@ export class NetworkClient {
         const contextLength = this._extractContextLength(m);
         const supportsImages = this._extractVision(m);
         const supportsTools = this._extractTools(m);
+        const supportsReasoning = this._extractReasoning(m);
+        const supportedParameters = Array.isArray(m.supported_parameters) ? m.supported_parameters : (Array.isArray(m.supportedParameters) ? m.supportedParameters : undefined);
+        const supportedReasoningEfforts = Array.isArray(m.reasoning?.supported_efforts) ? m.reasoning.supported_efforts : (Array.isArray(m.supportedReasoningEfforts) ? m.supportedReasoningEfforts : undefined);
+        const defaultReasoningEffort = m.reasoning?.default_effort || m.defaultReasoningEffort || undefined;
+
         const out = { id, name };
         if (contextLength) out.contextLength = contextLength;
         if (typeof supportsImages === 'boolean') out.supportsImages = supportsImages;
         if (typeof supportsTools === 'boolean') out.supportsTools = supportsTools;
+        if (typeof supportsReasoning === 'boolean') out.supportsReasoning = supportsReasoning;
+        if (supportedReasoningEfforts) out.supportedReasoningEfforts = supportedReasoningEfforts;
+        if (defaultReasoningEffort) out.defaultReasoningEffort = defaultReasoningEffort;
+        if (supportedParameters) out.supportedParameters = supportedParameters;
         return out;
     }
 
@@ -242,6 +251,21 @@ export class NetworkClient {
         if (Array.isArray(caps)) {
             const s = caps.map(String).join(',').toLowerCase();
             if (s.includes('tool') || s.includes('function')) return true;
+        }
+        return undefined;
+    }
+
+    _extractReasoning(m) {
+        if (typeof m.supports_reasoning === 'boolean') return m.supports_reasoning;
+        if (typeof m.supportsReasoning === 'boolean') return m.supportsReasoning;
+        if (Array.isArray(m.reasoning?.supported_efforts) && m.reasoning.supported_efforts.length > 0) return true;
+        if (Array.isArray(m.supported_reasoning_efforts) && m.supported_reasoning_efforts.length > 0) return true;
+        if (Array.isArray(m.reasoning_efforts) && m.reasoning_efforts.length > 0) return true;
+        const params = m.supported_parameters || m.supported_features || m.features;
+        if (Array.isArray(params)) {
+            const s = params.map(String).join(',').toLowerCase();
+            if (s.includes('reasoning_effort')) return true;
+            if (s.length > 0) return false;
         }
         return undefined;
     }
