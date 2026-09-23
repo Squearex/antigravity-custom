@@ -304,22 +304,32 @@ export class UIInjector {
                 border-top: none !important;
             }
 
-            /* Model Reasoning subtag in parentheses underneath model title */
+            /* Model Reasoning subtag underneath model title */
             .sx-reasoning-subtag {
                 font-size: 9.5px !important;
-                font-weight: 600 !important;
+                font-weight: 500 !important;
                 color: rgba(255, 255, 255, 0.45) !important;
-                background: rgba(255, 255, 255, 0.05) !important;
-                border: 1px solid rgba(255, 255, 255, 0.1) !important;
-                padding: 0.5px 5px !important;
-                border-radius: 3px !important;
                 line-height: normal !important;
                 user-select: none !important;
                 transition: all 0.12s ease !important;
             }
+            .sx-reasoning-subtag.is-badge {
+                font-size: 8.5px !important;
+                font-weight: 600 !important;
+                letter-spacing: 0.2px !important;
+                color: #c084fc !important;
+                background: rgba(192, 132, 252, 0.08) !important;
+                border: 1px solid rgba(192, 132, 252, 0.22) !important;
+                padding: 0.5px 5px !important;
+                border-radius: 3px !important;
+            }
             .sx-custom-model-item:hover .sx-reasoning-subtag {
                 color: rgba(255, 255, 255, 0.8) !important;
-                border-color: rgba(255, 255, 255, 0.2) !important;
+            }
+            .sx-custom-model-item:hover .sx-reasoning-subtag.is-badge {
+                color: #d8b4fe !important;
+                background: rgba(192, 132, 252, 0.14) !important;
+                border-color: rgba(192, 132, 252, 0.35) !important;
             }
 
             /* Clean subtle chevron arrow at the far right of model row */
@@ -1443,11 +1453,16 @@ export class UIInjector {
                             rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Tools</span>`;
                         }
 
+                        const hasOtherBadges = !!rightBadges;
                         let reasoningLabel = '';
                         if (isReasoning) {
                             const curReasoning = (this._modelReasoning && this._modelReasoning[m.id]) || 'medium';
                             reasoningLabel = curReasoning.charAt(0).toUpperCase() + curReasoning.slice(1);
-                            rightBadges += `<span class="sx-reasoning-subtag" data-model-id="${m.id}">(${reasoningLabel})</span>`;
+                            if (hasOtherBadges) {
+                                rightBadges += `<span class="sx-reasoning-subtag is-badge" data-model-id="${m.id}" data-has-badges="true">${reasoningLabel}</span>`;
+                            } else {
+                                rightBadges += `<span class="sx-reasoning-subtag" data-model-id="${m.id}" data-has-badges="false">(${reasoningLabel})</span>`;
+                            }
                         }
 
                         const hasBadges = !!rightBadges;
@@ -1541,7 +1556,9 @@ export class UIInjector {
                         const subtag = el.querySelector('.sx-reasoning-subtag');
                         if (subtag) {
                             const val = this._modelReasoning[mId];
-                            subtag.textContent = `(${val.charAt(0).toUpperCase() + val.slice(1)})`;
+                            const label = val.charAt(0).toUpperCase() + val.slice(1);
+                            const isBadge = subtag.classList.contains('is-badge') || subtag.getAttribute('data-has-badges') === 'true';
+                            subtag.textContent = isBadge ? label : `(${label})`;
                         }
                         const cHint = el.querySelector('.sx-model-chevron-hint');
                         if (cHint) {
@@ -1653,7 +1670,8 @@ export class UIInjector {
 
                 const subtag = triggerEl.querySelector('.sx-reasoning-subtag');
                 if (subtag) {
-                    subtag.textContent = `(${newLabel})`;
+                    const isBadge = subtag.classList.contains('is-badge') || subtag.getAttribute('data-has-badges') === 'true';
+                    subtag.textContent = isBadge ? newLabel : `(${newLabel})`;
                 }
                 const cHint = triggerEl.querySelector('.sx-model-chevron-hint');
                 if (cHint) {
