@@ -1642,7 +1642,7 @@ export class UIInjector {
                     lbl.textContent = optObj ? optObj.label : val;
                 }
 
-                this.network.post('/sx/set-agent-effort', {
+                this.network.post('/set-agent-effort', {
                     modelId: modelId,
                     reasoningEffort: val
                 }).catch(() => {});
@@ -1695,7 +1695,7 @@ export class UIInjector {
             this._lastEffortFetch = Date.now();
             try {
                 const cKey = this.models.getActiveConversationKey();
-                const res = await this.network.get('/sx/get-agent-effort?convId=' + encodeURIComponent(cKey));
+                const res = await this.network.get('/get-agent-effort?convId=' + encodeURIComponent(cKey));
                 if (res && res.ok) {
                     if (res.profile) this._currentEffort = res.profile;
                     if (res.modelReasoning) this._modelReasoning = res.modelReasoning;
@@ -1825,7 +1825,7 @@ export class UIInjector {
             this._currentEffort.agentEffort = curAgent;
 
             const cKey = this.models.getActiveConversationKey();
-            this.network.post('/sx/set-agent-effort', {
+            this.network.post('/set-agent-effort', {
                 convId: cKey,
                 agentEffort: curAgent
             }).catch(() => {});

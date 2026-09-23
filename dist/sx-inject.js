@@ -264,10 +264,21 @@
       this.logger = logger;
       this.baseUrl = baseUrl;
     }
+    _buildUrl(path) {
+      if (path.startsWith("http://") || path.startsWith("https://")) return path;
+      let cleanPath = path;
+      if (this.baseUrl.endsWith("/sx") && cleanPath.startsWith("/sx/")) {
+        cleanPath = cleanPath.slice(3);
+      } else if (!cleanPath.startsWith("/")) {
+        cleanPath = "/" + cleanPath;
+      }
+      return `${this.baseUrl}${cleanPath}`;
+    }
     async get(path) {
+      const url = this._buildUrl(path);
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open("GET", `${this.baseUrl}${path}`, true);
+        xhr.open("GET", url, true);
         xhr.timeout = 1e4;
         xhr.onload = () => {
           try {
@@ -282,9 +293,10 @@
       });
     }
     async post(path, data) {
+      const url = this._buildUrl(path);
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        xhr.open("POST", `${this.baseUrl}${path}`, true);
+        xhr.open("POST", url, true);
         xhr.setRequestHeader("Content-Type", "application/json");
         xhr.timeout = 15e3;
         xhr.onload = () => {
@@ -4492,7 +4504,7 @@
             const optObj = options.find((o) => o.id === val);
             lbl.textContent = optObj ? optObj.label : val;
           }
-          this.network.post("/sx/set-agent-effort", {
+          this.network.post("/set-agent-effort", {
             modelId,
             reasoningEffort: val
           }).catch(() => {
@@ -4537,7 +4549,7 @@
         this._lastEffortFetch = Date.now();
         try {
           const cKey = this.models.getActiveConversationKey();
-          const res = await this.network.get("/sx/get-agent-effort?convId=" + encodeURIComponent(cKey));
+          const res = await this.network.get("/get-agent-effort?convId=" + encodeURIComponent(cKey));
           if (res && res.ok) {
             if (res.profile) this._currentEffort = res.profile;
             if (res.modelReasoning) this._modelReasoning = res.modelReasoning;
@@ -4649,7 +4661,7 @@
         if (!this._currentEffort) this._currentEffort = {};
         this._currentEffort.agentEffort = curAgent;
         const cKey = this.models.getActiveConversationKey();
-        this.network.post("/sx/set-agent-effort", {
+        this.network.post("/set-agent-effort", {
           convId: cKey,
           agentEffort: curAgent
         }).catch(() => {

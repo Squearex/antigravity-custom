@@ -8,10 +8,22 @@ export class NetworkClient {
         this.baseUrl = baseUrl;
     }
 
+    _buildUrl(path) {
+        if (path.startsWith('http://') || path.startsWith('https://')) return path;
+        let cleanPath = path;
+        if (this.baseUrl.endsWith('/sx') && cleanPath.startsWith('/sx/')) {
+            cleanPath = cleanPath.slice(3);
+        } else if (!cleanPath.startsWith('/')) {
+            cleanPath = '/' + cleanPath;
+        }
+        return `${this.baseUrl}${cleanPath}`;
+    }
+
     async get(path) {
+        const url = this._buildUrl(path);
         return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            xhr.open('GET', `${this.baseUrl}${path}`, true);
+            xhr.open('GET', url, true);
             xhr.timeout = 10000;
             xhr.onload = () => {
                 try {
@@ -27,9 +39,10 @@ export class NetworkClient {
     }
 
     async post(path, data) {
+        const url = this._buildUrl(path);
         return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            xhr.open('POST', `${this.baseUrl}${path}`, true);
+            xhr.open('POST', url, true);
             xhr.setRequestHeader('Content-Type', 'application/json');
             xhr.timeout = 15000;
             xhr.onload = () => {
