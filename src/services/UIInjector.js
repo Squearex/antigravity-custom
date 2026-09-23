@@ -383,13 +383,15 @@ export class UIInjector {
             .sx-nested-menu {
                 position: fixed !important;
                 z-index: 999999 !important;
-                background: #1e2029 !important;
-                border: 1px solid rgba(255, 255, 255, 0.12) !important;
+                background: #14151b !important;
+                border: 1px solid rgba(255, 255, 255, 0.14) !important;
                 border-radius: 10px !important;
                 padding: 4px !important;
-                min-width: 125px !important;
-                box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65) !important;
-                backdrop-filter: blur(20px) !important;
+                min-width: 135px !important;
+                max-height: calc(100vh - 24px) !important;
+                overflow-y: auto !important;
+                box-shadow: 0 16px 36px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
+                backdrop-filter: blur(24px) !important;
                 font-family: inherit !important;
                 display: flex !important;
                 flex-direction: column !important;
@@ -1534,15 +1536,44 @@ export class UIInjector {
         if (!sxModels || sxModels.length === 0) return;
 
         modelPanel.style.background = '#14151b';
-        modelPanel.style.borderRadius = '8px';
-        modelPanel.style.overflow = 'hidden';
+        modelPanel.style.border = '1px solid rgba(255, 255, 255, 0.12)';
+        modelPanel.style.borderRadius = '10px';
+        modelPanel.style.boxShadow = '0 20px 48px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08)';
+        modelPanel.style.backdropFilter = 'blur(24px)';
+        modelPanel.style.width = '320px';
+        modelPanel.style.minWidth = '320px';
+        modelPanel.style.maxWidth = '340px';
+        modelPanel.style.padding = '0';
+        modelPanel.style.transition = 'transform 0.08s ease-out';
+
+        // Position model panel cleanly above the chat input box so it never covers what the user is typing
+        try {
+            const promptBox = document.querySelector('[contenteditable="true"], textarea')?.closest('form, div.relative.flex, div.border');
+            if (promptBox) {
+                const boxRect = promptBox.getBoundingClientRect();
+                const mRect = modelPanel.getBoundingClientRect();
+                if (mRect.top < boxRect.top && mRect.bottom > boxRect.top - 4) {
+                    const shiftY = mRect.bottom - (boxRect.top - 8);
+                    const safeShift = Math.min(shiftY, Math.max(0, mRect.top - 12));
+                    if (safeShift > 0 && safeShift < 160) {
+                        modelPanel.style.transform = `translateY(-${safeShift}px)`;
+                    }
+                }
+            }
+        } catch(e) {}
+
+        const scrollContainer = modelPanel.querySelector('.overflow-y-auto');
+        if (scrollContainer) {
+            scrollContainer.style.maxHeight = '340px';
+            scrollContainer.style.padding = '4px 6px';
+        }
 
         // Sticky search input at the very top of panel
         let searchWrap = modelPanel.querySelector('#sx-model-search-wrap');
         if (!searchWrap) {
             searchWrap = document.createElement('div');
             searchWrap.id = 'sx-model-search-wrap';
-            searchWrap.style.cssText = 'padding: 8px 8px 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.06); background: #14151b !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box; border-top-left-radius: 8px; border-top-right-radius: 8px;';
+            searchWrap.style.cssText = 'padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); background: #14151b !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box; border-top-left-radius: 10px; border-top-right-radius: 10px;';
             searchWrap.innerHTML = `
                 <div style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 10px;gap:7px;height:32px;box-sizing:border-box;width:100%;transition:border-color 0.15s;">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.3);flex-shrink:0;">
@@ -1732,7 +1763,9 @@ export class UIInjector {
                         border: 1px solid rgba(255, 255, 255, 0.14) !important;
                         border-radius: 8px !important;
                         padding: 4px !important;
-                        min-width: 125px !important;
+                        min-width: 135px !important;
+                        max-height: calc(100vh - 24px) !important;
+                        overflow-y: auto !important;
                         box-shadow: 0 16px 36px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
                         backdrop-filter: blur(24px) !important;
                         font-family: inherit !important;
@@ -2008,7 +2041,7 @@ export class UIInjector {
         if (!fBadge) {
             fBadge = document.createElement('div');
             fBadge.id = 'sx-panel-footer-badge';
-            fBadge.style.cssText = 'margin-top:4px;padding:6px 10px;border-top:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:space-between;font-size:10.5px;user-select:none;';
+            fBadge.style.cssText = 'padding:6px 12px;border-top:1px solid rgba(255,255,255,0.08);background:#14151b;border-bottom-left-radius:10px;border-bottom-right-radius:10px;display:flex;align-items:center;justify-content:space-between;font-size:10.5px;user-select:none;box-sizing:border-box;';
             modelPanel.appendChild(fBadge);
         }
         fBadge.innerHTML = '<span style="font-weight:700;"><span style="color:#38bdf8;text-shadow:0 0 10px rgba(56,189,248,0.35);">SX</span> <span style="color:#ffffff;">Development</span></span><span style="font-size:9.5px;color:rgba(255,255,255,0.35);font-weight:500;">Custom Engine</span>';
@@ -2143,7 +2176,7 @@ export class UIInjector {
         let left = pRect ? (pRect.right + 4) : (tRect.right + 6);
         let top = tRect.top - 2;
 
-        const menuWidth = 135;
+        const menuWidth = 140;
         if (left + menuWidth > window.innerWidth - 8) {
             if (pRect) {
                 left = Math.max(8, pRect.left - menuWidth - 4);
@@ -2151,9 +2184,17 @@ export class UIInjector {
                 left = Math.max(8, tRect.left - menuWidth - 4);
             }
         }
-        if (top + 160 > window.innerHeight) {
-            top = Math.max(8, window.innerHeight - 165);
+
+        // Accurately measure menu height so it NEVER goes off-screen
+        const itemCount = options.length;
+        const estimatedHeight = itemCount * 30 + 10;
+        const menuHeight = menu.offsetHeight || estimatedHeight;
+
+        if (top + menuHeight > window.innerHeight - 12) {
+            top = Math.max(12, window.innerHeight - menuHeight - 12);
         }
+        if (top < 12) top = 12;
+
         menu.style.top = top + 'px';
         menu.style.left = left + 'px';
 
