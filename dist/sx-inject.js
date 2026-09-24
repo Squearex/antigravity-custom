@@ -4771,14 +4771,14 @@
             [role="menu"]:has([data-testid="model-selector-panel"]) {
                 background: hsl(var(--popover, var(--card, 222 47% 11%))) !important;
                 border: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.12))) !important;
-                border-radius: 10px !important;
-                box-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25) !important;
+                border-radius: 12px !important;
+                box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) !important;
                 backdrop-filter: blur(20px) !important;
                 padding: 0 !important;
                 overflow: hidden !important;
-                width: 320px !important;
-                min-width: 320px !important;
-                max-width: 340px !important;
+                width: 420px !important;
+                min-width: 400px !important;
+                max-width: 440px !important;
                 z-index: 100000 !important;
             }
 
@@ -4865,32 +4865,34 @@
 
             /* Custom model item layout with two-row support to prevent title truncation */
             .sx-custom-model-item {
-                min-height: 32px !important;
-                padding: 4px 8px !important;
-                margin: 1px 0 !important;
-                border-radius: 6px !important;
+                min-height: 36px !important;
+                padding: 6px 10px !important;
+                margin: 1.5px 0 !important;
+                border-radius: 8px !important;
                 cursor: pointer !important;
                 user-select: none !important;
                 display: flex !important;
                 align-items: center !important;
                 justify-content: space-between !important;
-                gap: 8px !important;
+                gap: 10px !important;
                 box-sizing: border-box !important;
-                transition: background-color 0.1s ease, color 0.1s ease !important;
+                transition: background-color 0.12s ease !important;
             }
             .sx-custom-model-item.has-badges {
-                min-height: 42px !important;
-                padding: 5px 8px !important;
+                min-height: 44px !important;
+                padding: 6px 10px !important;
             }
             .sx-custom-model-item.is-hidden {
                 display: none !important;
             }
             .sx-custom-model-item:hover {
-                background-color: rgba(255, 255, 255, 0.08) !important;
+                background-color: rgba(255, 255, 255, 0.07) !important;
             }
             .sx-custom-model-item.is-selected {
                 background-color: rgba(255, 255, 255, 0.05) !important;
-                font-weight: 500 !important;
+                border-left: 2px solid #38bdf8 !important;
+                border-top-left-radius: 2px !important;
+                border-bottom-left-radius: 2px !important;
             }
             .sx-model-info-col {
                 flex: 1 1 auto !important;
@@ -4898,10 +4900,11 @@
                 display: flex !important;
                 flex-direction: column !important;
                 justify-content: center !important;
-                gap: 2px !important;
+                gap: 3px !important;
             }
             .sx-custom-model-item .sx-model-title {
-                font-size: 12px !important;
+                font-size: 12.5px !important;
+                font-weight: 500 !important;
                 line-height: 1.3 !important;
                 color: rgba(255, 255, 255, 0.92) !important;
                 overflow: hidden !important;
@@ -4909,12 +4912,51 @@
                 white-space: nowrap !important;
                 width: 100% !important;
             }
+            .sx-custom-model-item.is-selected .sx-model-title {
+                color: #ffffff !important;
+                font-weight: 600 !important;
+            }
             .sx-model-badges-row {
                 display: flex !important;
                 align-items: center !important;
-                gap: 4px !important;
+                gap: 5px !important;
                 flex-wrap: wrap !important;
                 margin-top: 1px !important;
+            }
+            .sx-meta-chip {
+                font-size: 9px !important;
+                font-weight: 500 !important;
+                line-height: 1 !important;
+                padding: 1.5px 5.5px !important;
+                border-radius: 4px !important;
+                display: inline-flex !important;
+                align-items: center !important;
+                gap: 3px !important;
+                user-select: none !important;
+                letter-spacing: 0.1px !important;
+            }
+            .sx-chip-ctx {
+                color: #86efac !important;
+                background: rgba(134, 239, 172, 0.08) !important;
+                border: 1px solid rgba(134, 239, 172, 0.22) !important;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
+                font-weight: 600 !important;
+            }
+            .sx-chip-vision {
+                color: #7dd3fc !important;
+                background: rgba(125, 211, 252, 0.08) !important;
+                border: 1px solid rgba(125, 211, 252, 0.2) !important;
+            }
+            .sx-chip-tools {
+                color: #fdba74 !important;
+                background: rgba(253, 186, 116, 0.08) !important;
+                border: 1px solid rgba(253, 186, 116, 0.2) !important;
+            }
+            .sx-chip-free {
+                color: #93c5fd !important;
+                background: rgba(147, 197, 253, 0.08) !important;
+                border: 1px solid rgba(147, 197, 253, 0.22) !important;
+                font-weight: 600 !important;
             }
             .sx-model-right-actions {
                 flex-shrink: 0 !important;
@@ -4943,9 +4985,10 @@
                 flex-shrink: 0 !important;
             }
             .sx-provider-header {
-                padding: 8px 8px 3px 8px !important;
+                padding: 7px 10px 4px 10px !important;
                 display: flex !important;
                 align-items: center !important;
+                justify-content: space-between !important;
                 gap: 6px !important;
                 margin-top: 4px !important;
                 border-top: 1px solid rgba(255, 255, 255, 0.04) !important;
@@ -4953,6 +4996,17 @@
             .sx-provider-header:first-child {
                 margin-top: 0 !important;
                 border-top: none !important;
+            }
+            .sx-provider-count-badge {
+                font-size: 9.5px !important;
+                font-weight: 600 !important;
+                color: rgba(255, 255, 255, 0.35) !important;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
+                padding: 1px 6px !important;
+                border-radius: 8px !important;
+                background: rgba(255, 255, 255, 0.04) !important;
+                border: 1px solid rgba(255, 255, 255, 0.06) !important;
+                user-select: none !important;
             }
 
             /* Model Reasoning subtag underneath model title */
@@ -4965,14 +5019,17 @@
                 transition: all 0.12s ease !important;
             }
             .sx-reasoning-subtag.is-badge {
-                font-size: 8.5px !important;
-                font-weight: 600 !important;
-                letter-spacing: 0.2px !important;
+                font-size: 9px !important;
+                font-weight: 500 !important;
+                letter-spacing: 0.1px !important;
                 color: #c084fc !important;
                 background: rgba(192, 132, 252, 0.08) !important;
-                border: 1px solid rgba(192, 132, 252, 0.22) !important;
-                padding: 0.5px 5px !important;
-                border-radius: 3px !important;
+                border: 1px solid rgba(192, 132, 252, 0.2) !important;
+                padding: 1.5px 5.5px !important;
+                border-radius: 4px !important;
+                line-height: 1 !important;
+                display: inline-flex !important;
+                align-items: center !important;
             }
             .sx-custom-model-item:hover .sx-reasoning-subtag {
                 color: rgba(255, 255, 255, 0.8) !important;
@@ -6155,23 +6212,78 @@
       this.trySXModelsSettingsInject();
       this.trySXAppearanceSettingsInject();
     }
+    _createPanelQuotaRow(modelPanel) {
+      const qRow = document.createElement("div");
+      qRow.id = "sx-panel-quota-row";
+      qRow.className = "sx-panel-quota-row";
+      qRow.title = "View model usage and quota";
+      let curRemaining = 100;
+      if (this.quota) {
+        try {
+          const metrics = typeof this.quota.computeLiveMetrics === "function" ? this.quota.computeLiveMetrics() : null;
+          if (metrics) curRemaining = Math.max(0, 100 - (metrics.percentNum || 0));
+        } catch (e) {
+        }
+      }
+      qRow.innerHTML = `
+            <div class="sx-quota-row-left">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color: rgba(255,255,255,0.7); flex-shrink: 0;">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                </svg>
+                <span class="sx-quota-row-title">View Usage</span>
+            </div>
+            <div class="sx-quota-row-right">
+                <span class="sx-quota-pct-badge">${curRemaining}%</span>
+                <span class="sx-quota-status-dot"></span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-quota-arrow">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                </svg>
+            </div>
+        `;
+      qRow.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const sampleNative = modelPanel.querySelector('[data-testid="model-selector-item"], [role="menuitem"], button');
+        if (sampleNative && typeof sampleNative.click === "function") {
+          sampleNative.click();
+        } else {
+          const trig = document.querySelector('[data-testid="model-selector-trigger"]');
+          if (trig) trig.click();
+          else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+        }
+        setTimeout(() => {
+          const ctxBtn = document.getElementById("sx-context-btn") || document.querySelector('[data-testid="model-selector-trigger"]');
+          if (this.quota && ctxBtn) {
+            this.quota.toggleContextPopover(ctxBtn);
+          }
+        }, 60);
+      });
+      return qRow;
+    }
     trySXModelSelectorPanelInject() {
       const modelPanel = document.querySelector('[data-testid="model-selector-panel"]');
       if (!modelPanel || modelPanel.closest("[data-sx-usage-panel]")) return;
       const sxModels = this.state.getModels();
       if (!sxModels || sxModels.length === 0) return;
+      const providers = this.state.getProviders();
+      const curConvKey = this.models.getActiveConversationKey();
+      const activeId = this.models.getActiveModelForConversation(curConvKey);
+      const activeModelObj = sxModels.find((m) => m.id === activeId);
+      const activeProviderObj = activeModelObj ? providers.find((p) => p.id === activeModelObj.providerId) : null;
+      const isQuotaProvider = !!(activeProviderObj?.hasQuota || activeModelObj?.hasQuota || activeProviderObj?.quotaUrl || activeProviderObj?.id === "antigravity" || activeProviderObj?.id === "google" || activeModelObj?.isNative);
       const menuBox = modelPanel.closest('[role="menu"]') || modelPanel.parentElement;
       const isMenu = menuBox && menuBox !== modelPanel;
       if (isMenu) {
         menuBox.style.setProperty("background", "hsl(var(--popover, var(--card, 222 47% 11%)))", "important");
         menuBox.style.setProperty("border", "1px solid hsl(var(--border, rgba(255, 255, 255, 0.12)))", "important");
-        menuBox.style.setProperty("border-radius", "10px", "important");
-        menuBox.style.setProperty("box-shadow", "0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25)", "important");
+        menuBox.style.setProperty("border-radius", "12px", "important");
+        menuBox.style.setProperty("box-shadow", "0 16px 40px -8px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06)", "important");
         menuBox.style.setProperty("backdrop-filter", "blur(20px)", "important");
         menuBox.style.setProperty("padding", "0", "important");
-        menuBox.style.setProperty("width", "320px", "important");
-        menuBox.style.setProperty("min-width", "320px", "important");
-        menuBox.style.setProperty("max-width", "340px", "important");
+        menuBox.style.setProperty("width", "420px", "important");
+        menuBox.style.setProperty("min-width", "400px", "important");
+        menuBox.style.setProperty("max-width", "440px", "important");
         menuBox.style.setProperty("overflow", "hidden", "important");
         menuBox.style.setProperty("outline", "none", "important");
         menuBox.style.transition = "transform 0.08s ease-out";
@@ -6188,12 +6300,12 @@
       } else {
         modelPanel.style.background = "hsl(var(--popover, var(--card, 222 47% 11%)))";
         modelPanel.style.border = "1px solid hsl(var(--border, rgba(255, 255, 255, 0.12)))";
-        modelPanel.style.borderRadius = "10px";
-        modelPanel.style.boxShadow = "0 10px 30px -4px rgba(0, 0, 0, 0.45), 0 4px 12px -2px rgba(0, 0, 0, 0.25)";
+        modelPanel.style.borderRadius = "12px";
+        modelPanel.style.boxShadow = "0 16px 40px -8px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06)";
         modelPanel.style.backdropFilter = "blur(20px)";
-        modelPanel.style.width = "320px";
-        modelPanel.style.minWidth = "320px";
-        modelPanel.style.maxWidth = "340px";
+        modelPanel.style.width = "420px";
+        modelPanel.style.minWidth = "400px";
+        modelPanel.style.maxWidth = "440px";
         modelPanel.style.padding = "0";
         modelPanel.style.overflow = "hidden";
         modelPanel.style.transition = "transform 0.08s ease-out";
@@ -6204,9 +6316,7 @@
           c.setAttribute("data-sx-hidden", "true");
         }
       });
-      const curConvKey = this.models.getActiveConversationKey();
-      const activeId = this.models.getActiveModelForConversation(curConvKey);
-      const checkSvg = `<svg class="sx-item-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.95);flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+      const checkSvg = `<svg class="sx-item-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="color:#38bdf8;flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
       let root = modelPanel.querySelector("#sx-custom-model-panel-root");
       if (root) {
         root.querySelectorAll(".sx-custom-model-item").forEach((el) => {
@@ -6231,50 +6341,28 @@
             }
           }
         });
-        let qRow2 = root.querySelector("#sx-panel-quota-row");
-        if (!qRow2) {
-          const fBadge2 = root.querySelector("#sx-panel-footer-badge");
-          qRow2 = document.createElement("div");
-          qRow2.id = "sx-panel-quota-row";
-          qRow2.className = "sx-panel-quota-row";
-          qRow2.title = "View model usage and quota";
-          qRow2.innerHTML = `
-                    <div class="sx-quota-row-left">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color: rgba(255,255,255,0.7); flex-shrink: 0;">
-                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                            <polyline points="15 3 21 3 21 9"></polyline>
-                            <line x1="10" y1="14" x2="21" y2="3"></line>
-                        </svg>
-                        <span class="sx-quota-row-title">View Usage</span>
-                    </div>
-                    <div class="sx-quota-row-right">
-                        <span class="sx-quota-pct-badge">100%</span>
-                        <span class="sx-quota-status-dot"></span>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-quota-arrow">
-                            <polyline points="9 18 15 12 9 6"></polyline>
-                        </svg>
-                    </div>
-                `;
-          qRow2.addEventListener("click", (e) => {
-            e.stopPropagation();
-            const trig = document.querySelector('[data-testid="model-selector-trigger"]');
-            if (trig) trig.click();
-            else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
-            setTimeout(() => {
-              const ctxBtn = document.getElementById("sx-context-btn") || document.querySelector('[data-testid="model-selector-trigger"]');
-              if (this.quota && ctxBtn) this.quota.toggleContextPopover(ctxBtn);
-            }, 60);
-          });
-          if (fBadge2) root.insertBefore(qRow2, fBadge2);
-          else root.appendChild(qRow2);
+        const totalCountBadge = root.querySelector("#sx-model-total-count");
+        if (totalCountBadge) {
+          totalCountBadge.textContent = `${sxModels.length} models`;
         }
-        const qPct = qRow2.querySelector(".sx-quota-pct-badge");
-        if (qPct && this.quota) {
-          try {
-            const metrics = typeof this.quota.computeLiveMetrics === "function" ? this.quota.computeLiveMetrics() : null;
-            const remaining = metrics ? Math.max(0, 100 - (metrics.percentNum || 0)) : 100;
-            qPct.textContent = `${remaining}%`;
-          } catch (e) {
+        let qRow = root.querySelector("#sx-panel-quota-row");
+        if (!isQuotaProvider) {
+          if (qRow) qRow.remove();
+        } else {
+          if (!qRow) {
+            const fBadge2 = root.querySelector("#sx-panel-footer-badge");
+            qRow = this._createPanelQuotaRow(modelPanel);
+            if (fBadge2) root.insertBefore(qRow, fBadge2);
+            else root.appendChild(qRow);
+          }
+          const qPct = qRow.querySelector(".sx-quota-pct-badge");
+          if (qPct && this.quota) {
+            try {
+              const metrics = typeof this.quota.computeLiveMetrics === "function" ? this.quota.computeLiveMetrics() : null;
+              const remaining = metrics ? Math.max(0, 100 - (metrics.percentNum || 0)) : 100;
+              qPct.textContent = `${remaining}%`;
+            } catch (e) {
+            }
           }
         }
         return;
@@ -6286,15 +6374,20 @@
       searchWrap.id = "sx-model-search-wrap";
       searchWrap.style.cssText = "padding: 8px 10px; border-bottom: 1px solid hsl(var(--border, rgba(255,255,255,0.08))); background: hsl(var(--popover, var(--card, 222 47% 11%))) !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box;";
       searchWrap.innerHTML = `
-            <div style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 10px;gap:7px;height:32px;box-sizing:border-box;width:100%;transition:border-color 0.15s;">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.3);flex-shrink:0;">
-                    <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                </svg>
-                <input id="sx-model-search-input" type="text" placeholder="Search models..." style="background:transparent;border:none;outline:none;color:rgba(255,255,255,0.9);font-size:12.5px;width:100%;height:100%;font-family:inherit;line-height:normal;padding:0;margin:0;" autocomplete="off" spellcheck="false" />
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;">
+                <div style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 9px;gap:7px;height:32px;box-sizing:border-box;flex:1;min-width:0;transition:border-color 0.15s, background-color 0.15s;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.35);flex-shrink:0;">
+                        <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input id="sx-model-search-input" type="text" placeholder="Search models..." style="background:transparent;border:none;outline:none;color:rgba(255,255,255,0.92);font-size:12px;width:100%;height:100%;font-family:inherit;line-height:normal;padding:0;margin:0;" autocomplete="off" spellcheck="false" />
+                </div>
+                <div id="sx-model-total-count" style="display:inline-flex;align-items:center;font-size:10.5px;font-weight:600;color:rgba(255,255,255,0.4);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:rgba(255,255,255,0.04);padding:3px 8px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);white-space:nowrap;user-select:none;flex-shrink:0;">
+                    ${sxModels.length} models
+                </div>
             </div>
         `;
       root.appendChild(searchWrap);
-      const inputWrap = searchWrap.querySelector("div");
+      const inputWrap = searchWrap.querySelector("div > div");
       const input = searchWrap.querySelector("#sx-model-search-input");
       input.addEventListener("focus", () => {
         inputWrap.style.borderColor = "rgba(255,255,255,0.25)";
@@ -6310,7 +6403,7 @@
       const scrollContainer = document.createElement("div");
       scrollContainer.id = "sx-model-scroll-container";
       scrollContainer.className = "overflow-y-auto";
-      scrollContainer.style.cssText = "max-height: 270px; overflow-y: auto; padding: 4px 6px; box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: 1px;";
+      scrollContainer.style.cssText = "max-height: 290px; overflow-y: auto; padding: 4px 6px; box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: 1px;";
       root.appendChild(scrollContainer);
       input.addEventListener("input", () => {
         const q = input.value.trim().toLowerCase();
@@ -6323,17 +6416,27 @@
           item.classList.toggle("is-hidden", !match);
           if (match) visibleCount++;
         });
+        const totalBadge = root.querySelector("#sx-model-total-count");
+        if (totalBadge) {
+          totalBadge.textContent = q ? `${visibleCount} of ${sxModels.length}` : `${sxModels.length} models`;
+        }
         scrollContainer.querySelectorAll(".sx-provider-header").forEach((hdr) => {
           const pId = hdr.getAttribute("data-provider-id");
-          const hasVisible = Array.from(scrollContainer.querySelectorAll(`.sx-custom-model-item[data-sx-provider="${pId}"]`)).some((it) => !it.classList.contains("is-hidden") && it.style.display !== "none");
-          hdr.style.display = hasVisible ? "flex" : "none";
+          const pItems = Array.from(scrollContainer.querySelectorAll(`.sx-custom-model-item[data-sx-provider="${pId}"]`));
+          const pVisible = pItems.filter((it) => !it.classList.contains("is-hidden") && it.style.display !== "none").length;
+          hdr.style.display = pVisible > 0 ? "flex" : "none";
+          const pCountBadge = hdr.querySelector(".sx-provider-count-badge");
+          if (pCountBadge) {
+            const total = pCountBadge.getAttribute("data-total-count") || pItems.length;
+            pCountBadge.textContent = q ? `${pVisible} of ${total}` : `${total} ${total === "1" ? "model" : "models"}`;
+          }
         });
         let emptyMsg = scrollContainer.querySelector("#sx-model-search-empty");
         if (visibleCount === 0) {
           if (!emptyMsg) {
             emptyMsg = document.createElement("div");
             emptyMsg.id = "sx-model-search-empty";
-            emptyMsg.style.cssText = "padding: 16px 10px; font-size: 11.5px; color: rgba(255,255,255,0.3); text-align: center;";
+            emptyMsg.style.cssText = "padding: 20px 10px; font-size: 12px; color: rgba(255,255,255,0.3); text-align: center;";
             emptyMsg.innerText = "No matching models found";
             scrollContainer.appendChild(emptyMsg);
           }
@@ -6342,7 +6445,6 @@
           emptyMsg.style.setProperty("display", "none", "important");
         }
       });
-      const providers = this.state.getProviders();
       const groups = {};
       providers.forEach((p) => {
         groups[p.id] = [];
@@ -6361,8 +6463,11 @@
         header.className = "sx-provider-header";
         header.setAttribute("data-provider-id", pId);
         header.innerHTML = `
-                <span style="width:6px;height:6px;border-radius:50%;background:${pMeta.color};display:inline-block;"></span>
-                <span style="font-size:10px;font-weight:700;color:${pMeta.color};text-transform:uppercase;letter-spacing:0.5px;">${this.sxEsc(pMeta.name)}</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="width:6px;height:6px;border-radius:50%;background:${pMeta.color};display:inline-block;box-shadow:0 0 6px ${pMeta.color}66;"></span>
+                    <span style="font-size:10px;font-weight:700;color:${pMeta.color};text-transform:uppercase;letter-spacing:0.6px;">${this.sxEsc(pMeta.name)}</span>
+                </div>
+                <span class="sx-provider-count-badge" data-total-count="${groupModels.length}">${groupModels.length} ${groupModels.length === 1 ? "model" : "models"}</span>
             `;
         scrollContainer.appendChild(header);
         groupModels.forEach((m) => {
@@ -6373,19 +6478,23 @@
           let rightBadges = "";
           let ctxTag = this.models.formatContextSize(m.contextLength);
           if (!ctxTag) {
-            const mLow = (m.modelId || m.name || "").toLowerCase();
-            if (mLow.includes("1m") || mLow.includes("ultra")) ctxTag = "1M";
-            else if (mLow.includes("256k") || mLow.includes("pro")) ctxTag = "256k";
-            else if (mLow.includes("128k")) ctxTag = "128k";
+            const mLow2 = (m.modelId || m.name || "").toLowerCase();
+            if (mLow2.includes("1m") || mLow2.includes("ultra")) ctxTag = "1M";
+            else if (mLow2.includes("256k") || mLow2.includes("pro")) ctxTag = "256k";
+            else if (mLow2.includes("128k")) ctxTag = "128k";
           }
           if (ctxTag) {
-            rightBadges += `<span style="font-size:8.5px;font-weight:700;letter-spacing:0.2px;color:#a3e635;background:rgba(163,230,53,0.08);border:1px solid rgba(163,230,53,0.22);padding:0.5px 4px;border-radius:3px;line-height:normal;">${ctxTag}</span>`;
+            rightBadges += `<span class="sx-meta-chip sx-chip-ctx">${ctxTag}</span>`;
           }
           if (isVision) {
-            rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#38bdf8;background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Vision</span>`;
+            rightBadges += `<span class="sx-meta-chip sx-chip-vision"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>Vision</span>`;
           }
           if (m.supportsTools === true) {
-            rightBadges += `<span style="font-size:8.5px;font-weight:600;letter-spacing:0.2px;color:#fb923c;background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.2);padding:0.5px 4px;border-radius:3px;line-height:normal;">Tools</span>`;
+            rightBadges += `<span class="sx-meta-chip sx-chip-tools"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>Tools</span>`;
+          }
+          const mLow = (m.modelId || m.name || "").toLowerCase();
+          if (mLow.includes("free") || m.isFree) {
+            rightBadges += `<span class="sx-meta-chip sx-chip-free">Free</span>`;
           }
           const hasOtherBadges = !!rightBadges;
           let reasoningLabel = "";
@@ -6477,53 +6586,10 @@
           scrollContainer.appendChild(item);
         });
       });
-      const qRow = document.createElement("div");
-      qRow.id = "sx-panel-quota-row";
-      qRow.className = "sx-panel-quota-row";
-      qRow.title = "View model usage and quota";
-      let curRemaining = 100;
-      if (this.quota) {
-        try {
-          const metrics = typeof this.quota.computeLiveMetrics === "function" ? this.quota.computeLiveMetrics() : null;
-          if (metrics) curRemaining = Math.max(0, 100 - (metrics.percentNum || 0));
-        } catch (e) {
-        }
+      if (isQuotaProvider) {
+        const qRow = this._createPanelQuotaRow(modelPanel);
+        root.appendChild(qRow);
       }
-      qRow.innerHTML = `
-            <div class="sx-quota-row-left">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color: rgba(255,255,255,0.7); flex-shrink: 0;">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                    <polyline points="15 3 21 3 21 9"></polyline>
-                    <line x1="10" y1="14" x2="21" y2="3"></line>
-                </svg>
-                <span class="sx-quota-row-title">View Usage</span>
-            </div>
-            <div class="sx-quota-row-right">
-                <span class="sx-quota-pct-badge">${curRemaining}%</span>
-                <span class="sx-quota-status-dot"></span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-quota-arrow">
-                    <polyline points="9 18 15 12 9 6"></polyline>
-                </svg>
-            </div>
-        `;
-      qRow.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const sampleNative = modelPanel.querySelector('[data-testid="model-selector-item"], [role="menuitem"], button');
-        if (sampleNative && typeof sampleNative.click === "function") {
-          sampleNative.click();
-        } else {
-          const trig = document.querySelector('[data-testid="model-selector-trigger"]');
-          if (trig) trig.click();
-          else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
-        }
-        setTimeout(() => {
-          const ctxBtn = document.getElementById("sx-context-btn") || document.querySelector('[data-testid="model-selector-trigger"]');
-          if (this.quota && ctxBtn) {
-            this.quota.toggleContextPopover(ctxBtn);
-          }
-        }, 60);
-      });
-      root.appendChild(qRow);
       const fBadge = document.createElement("div");
       fBadge.id = "sx-panel-footer-badge";
       fBadge.style.cssText = "padding:6px 12px;border-top:1px solid hsl(var(--border, rgba(255,255,255,0.08)));background:hsl(var(--popover, var(--card, 222 47% 11%)));border-bottom-left-radius:10px;border-bottom-right-radius:10px;display:flex;align-items:center;justify-content:space-between;font-size:10.5px;user-select:none;box-sizing:border-box;";
@@ -7769,7 +7835,7 @@
   };
 
   // src/index.js
-  var SX_BUILD = "2026.09.22-r14";
+  var SX_BUILD = "2026.09.22-r15";
   (function bootstrapSX() {
     const logger = new Logger("SX");
     logger.info("Core", `Bootstrapping SX Core SDK v2.0 (build ${SX_BUILD})...`);
