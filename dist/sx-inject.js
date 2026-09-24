@@ -5821,46 +5821,32 @@
         if (curWrap) curWrap.remove();
         const sxWrap = document.createElement("div");
         sxWrap.id = "sx-content-wrapper";
-        sxWrap.style.cssText = "padding: 0 32px 32px 32px; box-sizing: border-box; width: 100%; height: 100%; overflow-y: auto;";
+        sxWrap.className = "w-full bg-transparent h-full overflow-y-auto";
+        sxWrap.style.cssText = "box-sizing: border-box; width: 100%; height: 100%; overflow-y: auto;";
         rightPanel.appendChild(sxWrap);
+        const innerContainer = document.createElement("div");
+        innerContainer.className = "p-6 flex flex-col gap-4 w-full max-w-2xl mx-auto";
+        sxWrap.appendChild(innerContainer);
         const sxHeader = document.createElement("div");
         sxHeader.id = "sx-custom-engine-header";
+        sxHeader.className = "flex flex-col gap-2 w-full mb-2 bg-transparent";
         sxHeader.innerHTML = `
-                <div style="display:flex;align-items:center;justify-content:space-between;padding:24px 0 16px 0;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:20px;">
-                    <div>
-                        <div style="font-size:22px;font-weight:700;color:rgba(255,255,255,0.95);letter-spacing:-0.4px;">Models &amp; Usage</div>
-                        <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:4px;">Do\u011Frudan custom provider ba\u011Flant\u0131s\u0131 aktif.</div>
+                <div class="flex justify-between items-start gap-4 w-full bg-transparent pr-8 lg:pr-0">
+                    <div class="flex-1 flex flex-col gap-1 min-w-0 bg-transparent">
+                        <h2 class="text-xl m-0 font-medium truncate flex-1 text-foreground">Models</h2>
+                        <div class="text-sm text-muted-foreground bg-transparent">Manage custom models and provider connections.</div>
                     </div>
-                    <button type="button" class="sx-close-dialog-btn" style="background:transparent;border:none;color:rgba(255,255,255,0.4);cursor:pointer;padding:8px;border-radius:6px;display:flex;align-items:center;justify-content:center;transition:all 0.15s;" title="Close">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                    </button>
                 </div>
             `;
-        const cBtn = sxHeader.querySelector(".sx-close-dialog-btn");
-        if (cBtn) {
-          cBtn.addEventListener("click", () => {
-            const nativeClose = dialog.querySelector('button[aria-label*="Close" i], button.absolute');
-            if (nativeClose) nativeClose.click();
-            else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
-          });
-          cBtn.addEventListener("mouseenter", () => {
-            cBtn.style.color = "#ffffff";
-            cBtn.style.background = "rgba(255,255,255,0.1)";
-          });
-          cBtn.addEventListener("mouseleave", () => {
-            cBtn.style.color = "rgba(255,255,255,0.4)";
-            cBtn.style.background = "transparent";
-          });
-        }
-        sxWrap.appendChild(sxHeader);
+        innerContainer.appendChild(sxHeader);
         const provSec = document.createElement("div");
         provSec.id = "sx-providers-section";
         provSec.className = "sx-section";
-        sxWrap.appendChild(provSec);
+        innerContainer.appendChild(provSec);
         const modelsSec = document.createElement("div");
         modelsSec.id = "sx-models-section";
         modelsSec.className = "sx-section";
-        sxWrap.appendChild(modelsSec);
+        innerContainer.appendChild(modelsSec);
         const renderProviders = () => {
           const providers = this.state.getProviders();
           const models = this.state.getModels();
@@ -7956,7 +7942,7 @@
   };
 
   // src/index.js
-  var SX_BUILD = "2026.09.22-r17";
+  var SX_BUILD = "2026.09.22-r18";
   (function bootstrapSX() {
     const logger = new Logger("SX");
     logger.info("Core", `Bootstrapping SX Core SDK v2.0 (build ${SX_BUILD})...`);
