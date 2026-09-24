@@ -4592,6 +4592,7 @@
           setTimeout(() => this.hookDOM(), 120);
         }
         if (e.target.closest('[data-testid="model-selector-trigger"]')) {
+          this._shouldScrollToSelectedModel = true;
           this.trySXModelSelectorPanelInject();
           requestAnimationFrame(() => this.trySXModelSelectorPanelInject());
           setTimeout(() => this.trySXModelSelectorPanelInject(), 10);
@@ -6422,6 +6423,24 @@
             }
           }
         }
+        const scrollContainer2 = root.querySelector("#sx-model-scroll-container");
+        if (scrollContainer2 && this._shouldScrollToSelectedModel) {
+          this._shouldScrollToSelectedModel = false;
+          const scrollIntoActive2 = () => {
+            const sel = scrollContainer2.querySelector(".sx-custom-model-item.is-selected");
+            if (sel) {
+              const itemTop = sel.offsetTop;
+              const targetScroll = Math.max(0, itemTop - scrollContainer2.clientHeight / 2 + sel.clientHeight / 2);
+              scrollContainer2.scrollTop = targetScroll;
+              this._lastModelScrollTop = targetScroll;
+            } else if (typeof this._lastModelScrollTop === "number") {
+              scrollContainer2.scrollTop = this._lastModelScrollTop;
+            }
+          };
+          requestAnimationFrame(scrollIntoActive2);
+          setTimeout(scrollIntoActive2, 20);
+          setTimeout(scrollIntoActive2, 60);
+        }
         return;
       }
       root = document.createElement("div");
@@ -6463,6 +6482,9 @@
       scrollContainer.id = "sx-model-scroll-container";
       scrollContainer.className = "overflow-y-auto";
       scrollContainer.style.cssText = "max-height: 290px; overflow-y: auto; padding: 4px 6px 24px 6px; box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: 1px;";
+      scrollContainer.addEventListener("scroll", () => {
+        this._lastModelScrollTop = scrollContainer.scrollTop;
+      }, { passive: true });
       root.appendChild(scrollContainer);
       input.addEventListener("input", () => {
         const q = input.value.trim().toLowerCase();
@@ -6631,6 +6653,7 @@
             item.classList.add("is-selected");
             const cs = item.querySelector(".sx-model-check-slot");
             if (cs) cs.innerHTML = checkSvg;
+            this._lastModelScrollTop = scrollContainer.scrollTop;
             this.quota?.updateContextButtonUI();
             const sampleNative = modelPanel.querySelector('[data-testid="model-selector-item"], [role="menuitem"], button');
             if (sampleNative && typeof sampleNative.click === "function") {
@@ -6655,7 +6678,21 @@
       fBadge.innerHTML = '<span style="font-weight:700;"><span style="color:#38bdf8;text-shadow:0 0 10px rgba(56,189,248,0.35);">SX</span> <span style="color:#ffffff;">Development</span></span><span style="font-size:9.5px;color:rgba(255,255,255,0.35);font-weight:500;">Custom Engine</span>';
       root.appendChild(fBadge);
       modelPanel.appendChild(root);
-      setTimeout(() => input.focus(), 50);
+      const scrollIntoActive = () => {
+        const sel = scrollContainer.querySelector(".sx-custom-model-item.is-selected");
+        if (sel) {
+          const itemTop = sel.offsetTop;
+          const targetScroll = Math.max(0, itemTop - scrollContainer.clientHeight / 2 + sel.clientHeight / 2);
+          scrollContainer.scrollTop = targetScroll;
+          this._lastModelScrollTop = targetScroll;
+        } else if (typeof this._lastModelScrollTop === "number") {
+          scrollContainer.scrollTop = this._lastModelScrollTop;
+        }
+      };
+      requestAnimationFrame(scrollIntoActive);
+      setTimeout(scrollIntoActive, 20);
+      setTimeout(scrollIntoActive, 60);
+      setTimeout(() => input.focus({ preventScroll: true }), 50);
     }
     isModelSupportingReasoning(m) {
       if (!m) return false;
@@ -6789,7 +6826,32 @@
             reasoningEffort: val
           }).catch(() => {
           });
+          const cKey = this.models.getActiveConversationKey();
+          this.models.setActiveModelForConversation(modelId, cKey, true);
+          const sc = triggerEl.closest("#sx-model-scroll-container") || document.querySelector("#sx-model-scroll-container");
+          if (sc) {
+            sc.querySelectorAll(".sx-custom-model-item").forEach((el) => {
+              el.classList.remove("is-selected");
+              const cs2 = el.querySelector(".sx-model-check-slot");
+              if (cs2) cs2.innerHTML = "";
+            });
+            this._lastModelScrollTop = sc.scrollTop;
+          }
+          triggerEl.classList.add("is-selected");
+          const cs = triggerEl.querySelector(".sx-model-check-slot");
+          if (cs) cs.innerHTML = `<svg class="sx-item-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="color:#38bdf8;flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+          this.quota?.updateContextButtonUI();
+          this.hookDOM();
           this.closeModelReasoningSubmenu();
+          const sampleNative = document.querySelector('[data-testid="model-selector-panel"] [data-testid="model-selector-item"], [data-testid="model-selector-panel"] [role="menuitem"], [data-testid="model-selector-panel"] button');
+          if (sampleNative && typeof sampleNative.click === "function") {
+            sampleNative.click();
+          } else {
+            const trig = document.querySelector('[data-testid="model-selector-trigger"]');
+            if (trig) trig.click();
+            else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+          }
+          setTimeout(() => this.hookDOM(), 30);
         };
       });
       const onMouseLeave = (e) => {
@@ -7894,7 +7956,7 @@
   };
 
   // src/index.js
-  var SX_BUILD = "2026.09.22-r16";
+  var SX_BUILD = "2026.09.22-r17";
   (function bootstrapSX() {
     const logger = new Logger("SX");
     logger.info("Core", `Bootstrapping SX Core SDK v2.0 (build ${SX_BUILD})...`);

@@ -76,6 +76,7 @@ export class UIInjector {
 
             // Model selector trigger instant injection
             if (e.target.closest('[data-testid="model-selector-trigger"]')) {
+                this._shouldScrollToSelectedModel = true;
                 this.trySXModelSelectorPanelInject();
                 requestAnimationFrame(() => this.trySXModelSelectorPanelInject());
                 setTimeout(() => this.trySXModelSelectorPanelInject(), 10);
@@ -2031,6 +2032,27 @@ export class UIInjector {
                     } catch(e) {}
                 }
             }
+
+            // Scroll to active selected model if requested
+            const scrollContainer = root.querySelector('#sx-model-scroll-container');
+            if (scrollContainer && this._shouldScrollToSelectedModel) {
+                this._shouldScrollToSelectedModel = false;
+                const scrollIntoActive = () => {
+                    const sel = scrollContainer.querySelector('.sx-custom-model-item.is-selected');
+                    if (sel) {
+                        const itemTop = sel.offsetTop;
+                        const targetScroll = Math.max(0, itemTop - (scrollContainer.clientHeight / 2) + (sel.clientHeight / 2));
+                        scrollContainer.scrollTop = targetScroll;
+                        this._lastModelScrollTop = targetScroll;
+                    } else if (typeof this._lastModelScrollTop === 'number') {
+                        scrollContainer.scrollTop = this._lastModelScrollTop;
+                    }
+                };
+                requestAnimationFrame(scrollIntoActive);
+                setTimeout(scrollIntoActive, 20);
+                setTimeout(scrollIntoActive, 60);
+            }
+
             return;
         }
 
@@ -2080,6 +2102,9 @@ export class UIInjector {
         scrollContainer.id = 'sx-model-scroll-container';
         scrollContainer.className = 'overflow-y-auto';
         scrollContainer.style.cssText = 'max-height: 290px; overflow-y: auto; padding: 4px 6px 24px 6px; box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: 1px;';
+        scrollContainer.addEventListener('scroll', () => {
+            this._lastModelScrollTop = scrollContainer.scrollTop;
+        }, { passive: true });
         root.appendChild(scrollContainer);
 
         // Search filter listener
@@ -2269,6 +2294,8 @@ export class UIInjector {
                     const cs = item.querySelector('.sx-model-check-slot');
                     if (cs) cs.innerHTML = checkSvg;
 
+                    this._lastModelScrollTop = scrollContainer.scrollTop;
+
                     this.quota?.updateContextButtonUI();
 
                     // Close the Base UI / Radix menu cleanly
@@ -2301,7 +2328,22 @@ export class UIInjector {
         root.appendChild(fBadge);
 
         modelPanel.appendChild(root);
-        setTimeout(() => input.focus(), 50);
+
+        const scrollIntoActive = () => {
+            const sel = scrollContainer.querySelector('.sx-custom-model-item.is-selected');
+            if (sel) {
+                const itemTop = sel.offsetTop;
+                const targetScroll = Math.max(0, itemTop - (scrollContainer.clientHeight / 2) + (sel.clientHeight / 2));
+                scrollContainer.scrollTop = targetScroll;
+                this._lastModelScrollTop = targetScroll;
+            } else if (typeof this._lastModelScrollTop === 'number') {
+                scrollContainer.scrollTop = this._lastModelScrollTop;
+            }
+        };
+        requestAnimationFrame(scrollIntoActive);
+        setTimeout(scrollIntoActive, 20);
+        setTimeout(scrollIntoActive, 60);
+        setTimeout(() => input.focus({ preventScroll: true }), 50);
     }
 
     isModelSupportingReasoning(m) {
@@ -2483,7 +2525,39 @@ export class UIInjector {
                     reasoningEffort: val
                 }).catch(() => {});
 
+                // 1. Immediately select this model as active model for the conversation
+                const cKey = this.models.getActiveConversationKey();
+                this.models.setActiveModelForConversation(modelId, cKey, true);
+
+                // Update is-selected state and preserve scroll position
+                const sc = triggerEl.closest('#sx-model-scroll-container') || document.querySelector('#sx-model-scroll-container');
+                if (sc) {
+                    sc.querySelectorAll('.sx-custom-model-item').forEach(el => {
+                        el.classList.remove('is-selected');
+                        const cs = el.querySelector('.sx-model-check-slot');
+                        if (cs) cs.innerHTML = '';
+                    });
+                    this._lastModelScrollTop = sc.scrollTop;
+                }
+                triggerEl.classList.add('is-selected');
+                const cs = triggerEl.querySelector('.sx-model-check-slot');
+                if (cs) cs.innerHTML = `<svg class="sx-item-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="color:#38bdf8;flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+
+                this.quota?.updateContextButtonUI();
+                this.hookDOM();
+
                 this.closeModelReasoningSubmenu();
+
+                // Close the Base UI / Radix menu cleanly
+                const sampleNative = document.querySelector('[data-testid="model-selector-panel"] [data-testid="model-selector-item"], [data-testid="model-selector-panel"] [role="menuitem"], [data-testid="model-selector-panel"] button');
+                if (sampleNative && typeof sampleNative.click === 'function') {
+                    sampleNative.click();
+                } else {
+                    const trig = document.querySelector('[data-testid="model-selector-trigger"]');
+                    if (trig) trig.click();
+                    else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+                }
+                setTimeout(() => this.hookDOM(), 30);
             };
         });
 
