@@ -2767,21 +2767,52 @@ function startInternalProxy() {
                                                 || 'default';
 
                             if (isReasoningSupported && effReasoning && effReasoning !== 'default') {
-                                if (effReasoning === 'none') {
-                                    payload.reasoning_effort = 'none';
-                                    payload.reasoning = { effort: 'none' };
-                                } else if (effReasoning === 'low') {
-                                    payload.reasoning_effort = 'low';
-                                    payload.reasoning = { effort: 'low', max_tokens: 2048 };
-                                } else if (effReasoning === 'high') {
-                                    payload.reasoning_effort = 'high';
-                                    payload.reasoning = { effort: 'high', max_tokens: 16384 };
-                                } else if (effReasoning === 'max' || effReasoning === 'xhigh') {
-                                    payload.reasoning_effort = 'high';
-                                    payload.reasoning = { effort: 'high', max_tokens: 32768 };
-                                } else if (effReasoning === 'medium') {
-                                    payload.reasoning_effort = 'medium';
-                                    payload.reasoning = { effort: 'medium', max_tokens: 8192 };
+                                const params = Array.isArray(customModel?.supported_parameters) ? customModel.supported_parameters
+                                    : (Array.isArray(customModel?.supportedParameters) ? customModel.supportedParameters : []);
+                                const hasEffortParam = params.includes('reasoning_effort') || (Array.isArray(customModel?.supportedReasoningEfforts) && customModel.supportedReasoningEfforts.length > 0);
+                                const hasTokenOnlyParam = (params.includes('max_tokens') || params.includes('reasoning')) && !hasEffortParam && !/o[134]/i.test(mStr);
+
+                                if (hasTokenOnlyParam) {
+                                    // Quantitative reasoning token budget ONLY - never send effort alongside it
+                                    let budget = 8192;
+                                    if (effReasoning === 'none') budget = 0;
+                                    else if (effReasoning === 'low') budget = 2048;
+                                    else if (effReasoning === 'medium') budget = 8192;
+                                    else if (effReasoning === 'high') budget = 16384;
+                                    else if (effReasoning === 'max' || effReasoning === 'xhigh') budget = 32768;
+                                    if (budget > 0) {
+                                        payload.reasoning = { max_tokens: budget };
+                                    } else {
+                                        payload.reasoning = { max_tokens: 0 };
+                                    }
+                                } else {
+                                    // Qualitative effort setting ONLY - never send max_tokens inside reasoning!
+                                    let effortVal = effReasoning;
+                                    let oaEffort = 'medium';
+                                    if (effReasoning === 'none') {
+                                        effortVal = 'none';
+                                        oaEffort = 'none';
+                                    } else if (effReasoning === 'low') {
+                                        effortVal = 'low';
+                                        oaEffort = 'low';
+                                    } else if (effReasoning === 'medium') {
+                                        effortVal = 'medium';
+                                        oaEffort = 'medium';
+                                    } else if (effReasoning === 'high') {
+                                        effortVal = 'high';
+                                        oaEffort = 'high';
+                                    } else if (effReasoning === 'max' || effReasoning === 'xhigh') {
+                                        oaEffort = 'high';
+                                        const suppEffs = customModel?.supportedReasoningEfforts || [];
+                                        effortVal = suppEffs.includes('max') ? 'max' : (suppEffs.includes('xhigh') ? 'xhigh' : 'high');
+                                    }
+
+                                    if (cleanBase.includes('api.openai.com')) {
+                                        payload.reasoning_effort = oaEffort;
+                                    } else {
+                                        payload.reasoning_effort = oaEffort;
+                                        payload.reasoning = { effort: effortVal };
+                                    }
                                 }
                             }
 
