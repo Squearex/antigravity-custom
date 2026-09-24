@@ -18,7 +18,7 @@ import { UIInjector } from './services/UIInjector.js';
 import { ModelMetaResolver } from './services/ModelMetaResolver.js';
 
 // Bump on every release so console/deploy skew is visible.
-export const SX_BUILD = '2026.09.22-r18';
+export const SX_BUILD = '2026.09.22-r19';
 
 (function bootstrapSX() {
     const logger = new Logger('SX');

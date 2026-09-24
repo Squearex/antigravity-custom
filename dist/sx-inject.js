@@ -6112,19 +6112,62 @@
         }
       } catch (e) {
       }
-      const promptInput = document.querySelector('[contenteditable="true"], div.cursor-text[role="combobox"], textarea');
+      const isQuestionWidget = (el) => {
+        if (!el) return false;
+        let cur = el;
+        for (let i = 0; i < 8 && cur && cur !== document.body; i++) {
+          const text = cur.textContent || "";
+          const hasQuestionBtns = Array.from(cur.querySelectorAll("button")).some((b) => {
+            const bt = (b.textContent || "").trim().toLowerCase();
+            return bt === "continue" || bt === "skip" || bt === "devam" || bt === "atla";
+          });
+          if (hasQuestionBtns) return true;
+          if (/\b\d+\s+of\s+\d+\b/i.test(text) && (text.includes("Cancel") || text.includes("Skip") || text.includes("Continue"))) {
+            return true;
+          }
+          cur = cur.parentElement;
+        }
+        return false;
+      };
+      ["sx-effort-pill", "sx-context-btn", "sx-perf-btn"].forEach((id) => {
+        const b = document.getElementById(id);
+        if (b && isQuestionWidget(b)) {
+          b.remove();
+        }
+      });
+      const isQuestionActive = Array.from(document.querySelectorAll("button")).some((b) => {
+        const bt = (b.textContent || "").trim().toLowerCase();
+        return (bt === "continue" || bt === "skip") && b.offsetWidth > 0;
+      });
+      const allInputs = Array.from(document.querySelectorAll('[contenteditable="true"], div.cursor-text[role="combobox"], textarea'));
+      const promptInput = allInputs.find((inp) => !isQuestionWidget(inp));
       const promptRoot = promptInput ? promptInput.closest('form, div.relative, [data-testid="chat-input-container"]') : null;
-      const actionContainer = document.querySelector(
-        'div.flex.items-center.gap-1:has([data-tooltip-id*="input-send-button"]), div.flex.items-center.gap-1:has([data-testid="send-button"]), div.flex.items-center.gap-1:has(button[aria-label*="Record voice" i]), div.flex.items-center.gap-1:has(button[aria-label*="Cancel" i])'
-      ) || (promptRoot ? promptRoot.querySelector("div.flex.items-center.gap-1") : null);
+      let actionContainer = document.querySelector(
+        'div.flex.items-center.gap-1:has([data-tooltip-id*="input-send-button"]), div.flex.items-center.gap-1:has([data-testid="send-button"]), div.flex.items-center.gap-1:has([data-testid="stop-button"]), div.flex.items-center.gap-1:has(button[aria-label*="Record voice" i]), div.flex.items-center.gap-1:has(button[aria-label*="Stop" i])'
+      );
+      if (actionContainer && isQuestionWidget(actionContainer)) {
+        actionContainer = null;
+      }
+      if (!actionContainer && promptRoot && !isQuestionWidget(promptRoot)) {
+        const candidate = promptRoot.querySelector("div.shrink-0.flex.items-center.gap-1, div.flex.items-center.gap-1:has(button)");
+        if (candidate && !isQuestionWidget(candidate)) {
+          actionContainer = candidate;
+        }
+      }
+      if (isQuestionActive && (!promptInput || promptInput.offsetWidth === 0)) {
+        ["sx-effort-pill", "sx-context-btn", "sx-perf-btn"].forEach((id) => {
+          const b = document.getElementById(id);
+          if (b) b.remove();
+        });
+        actionContainer = null;
+      }
       if (actionContainer) {
         let ctxBtn = document.getElementById("sx-context-btn");
         let perfBtn = document.getElementById("sx-perf-btn");
         let effortBtn = document.getElementById("sx-effort-pill");
         const micWrapper = actionContainer.querySelector('div.flex.items-center:has(button[aria-label*="Record voice" i]), div.flex.items-center:has([data-tooltip-id*="record-tooltip"])') || actionContainer.querySelector('button[aria-label*="Record voice" i]');
-        const sendBtn = actionContainer.querySelector('[data-testid="send-button"], button[aria-label*="send" i], [data-tooltip-id*="send-tooltip"]');
-        const cancelBtn = actionContainer.querySelector('button[aria-label*="Cancel" i], [data-tooltip-id*="cancel-tooltip"]');
-        const targetAnchor = micWrapper || sendBtn || cancelBtn;
+        const sendBtn = actionContainer.querySelector('[data-testid="send-button"], [data-testid="stop-button"], button[aria-label*="send" i], button[aria-label*="stop" i], [data-tooltip-id*="send-tooltip"]');
+        const targetAnchor = micWrapper || sendBtn;
         if (!effortBtn) {
           effortBtn = document.createElement("button");
           effortBtn.id = "sx-effort-pill";
@@ -7942,7 +7985,7 @@
   };
 
   // src/index.js
-  var SX_BUILD = "2026.09.22-r18";
+  var SX_BUILD = "2026.09.22-r19";
   (function bootstrapSX() {
     const logger = new Logger("SX");
     logger.info("Core", `Bootstrapping SX Core SDK v2.0 (build ${SX_BUILD})...`);
