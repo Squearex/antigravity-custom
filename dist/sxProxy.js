@@ -2757,22 +2757,28 @@ function startInternalProxy() {
                                 stream: true,
                                 messages: []
                             };
-                            if (isReasoningSupported) {
-                                payload.include_reasoning = true;
-                            }
-                            if (oaTools) payload.tools = oaTools;
-
                             const effReasoning = (agentEffortState.modelReasoning && (agentEffortState.modelReasoning[mKey1] || agentEffortState.modelReasoning[mKey2]))
                                                 || effortProfile.reasoningEffort
                                                 || 'default';
+
+                            if (isReasoningSupported) {
+                                if (effReasoning === 'none') {
+                                    payload.include_reasoning = false;
+                                } else {
+                                    payload.include_reasoning = true;
+                                }
+                            }
+                            if (oaTools) payload.tools = oaTools;
 
                             if (isReasoningSupported && effReasoning && effReasoning !== 'default') {
                                 const params = Array.isArray(customModel?.supported_parameters) ? customModel.supported_parameters
                                     : (Array.isArray(customModel?.supportedParameters) ? customModel.supportedParameters : []);
                                 const hasEffortParam = params.includes('reasoning_effort') || (Array.isArray(customModel?.supportedReasoningEfforts) && customModel.supportedReasoningEfforts.length > 0);
                                 const hasTokenOnlyParam = (params.includes('max_tokens') || params.includes('reasoning')) && !hasEffortParam && !/o[134]/i.test(mStr);
+                                const isOpenRouter = cleanBase.includes('openrouter.ai') || (provider?.name || '').toLowerCase().includes('openrouter');
+                                const isGroqOrOpenAI = isGroq || cleanBase.includes('api.openai.com') || cleanBase.includes('azure') || (provider?.name || '').toLowerCase().includes('groq') || (provider?.name || '').toLowerCase().includes('openai');
 
-                                if (hasTokenOnlyParam) {
+                                if (hasTokenOnlyParam && !isGroqOrOpenAI) {
                                     // Quantitative reasoning token budget ONLY - never send effort alongside it
                                     let budget = 8192;
                                     if (effReasoning === 'none') budget = 0;
@@ -2807,11 +2813,20 @@ function startInternalProxy() {
                                         effortVal = suppEffs.includes('max') ? 'max' : (suppEffs.includes('xhigh') ? 'xhigh' : 'high');
                                     }
 
-                                    if (cleanBase.includes('api.openai.com')) {
+                                    if (isGroqOrOpenAI) {
+                                        // Groq and official OpenAI strictly require root reasoning_effort and reject reasoning object
                                         payload.reasoning_effort = oaEffort;
-                                    } else {
-                                        payload.reasoning_effort = oaEffort;
+                                    } else if (isOpenRouter) {
+                                        // OpenRouter natively supports reasoning: { effort } including max/xhigh.
+                                        // Never send reasoning_effort to avoid HTTP 400 conflicting values error.
                                         payload.reasoning = { effort: effortVal };
+                                    } else {
+                                        // Other OpenAI-compatible gateways:
+                                        if (params.includes('reasoning') && !params.includes('reasoning_effort')) {
+                                            payload.reasoning = { effort: effortVal };
+                                        } else {
+                                            payload.reasoning_effort = oaEffort;
+                                        }
                                     }
                                 }
                             }
