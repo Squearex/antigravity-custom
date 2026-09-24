@@ -4764,6 +4764,61 @@
                 width: 320px !important;
                 min-width: 320px !important;
                 max-width: 340px !important;
+                z-index: 100000 !important;
+            }
+
+            .sx-panel-quota-row {
+                padding: 6.5px 12px !important;
+                border-top: 1px solid hsl(var(--border, rgba(255, 255, 255, 0.08))) !important;
+                background: hsl(var(--popover, var(--card, 222 47% 11%))) !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                cursor: pointer !important;
+                user-select: none !important;
+                transition: background-color 0.12s ease !important;
+                box-sizing: border-box !important;
+                width: 100% !important;
+            }
+            .sx-panel-quota-row:hover {
+                background: rgba(255, 255, 255, 0.06) !important;
+            }
+            .sx-quota-row-left {
+                display: flex !important;
+                align-items: center !important;
+                gap: 7px !important;
+            }
+            .sx-quota-row-title {
+                font-size: 11.5px !important;
+                font-weight: 500 !important;
+                color: rgba(255, 255, 255, 0.85) !important;
+            }
+            .sx-quota-row-right {
+                display: flex !important;
+                align-items: center !important;
+                gap: 6px !important;
+            }
+            .sx-quota-pct-badge {
+                font-size: 11px !important;
+                font-weight: 600 !important;
+                font-family: ui-monospace, monospace !important;
+                color: #a3e635 !important;
+            }
+            .sx-quota-status-dot {
+                width: 6.5px !important;
+                height: 6.5px !important;
+                border-radius: 50% !important;
+                background: #22c55e !important;
+                box-shadow: 0 0 6px rgba(34, 197, 94, 0.6) !important;
+                display: inline-block !important;
+            }
+            .sx-quota-arrow {
+                color: rgba(255, 255, 255, 0.3) !important;
+                transition: transform 0.12s ease, color 0.12s ease !important;
+            }
+            .sx-panel-quota-row:hover .sx-quota-arrow {
+                color: rgba(255, 255, 255, 0.7) !important;
+                transform: translateX(1.5px) !important;
             }
 
             [role="menu"] > [data-testid="model-selector-panel"],
@@ -6161,6 +6216,49 @@
             }
           }
         });
+        let qRow2 = root.querySelector("#sx-panel-quota-row");
+        if (!qRow2) {
+          const fBadge2 = root.querySelector("#sx-panel-footer-badge");
+          qRow2 = document.createElement("div");
+          qRow2.id = "sx-panel-quota-row";
+          qRow2.className = "sx-panel-quota-row";
+          qRow2.title = "View model usage and quota";
+          qRow2.innerHTML = `
+                    <div class="sx-quota-row-left">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color: rgba(255,255,255,0.7); flex-shrink: 0;">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                            <polyline points="15 3 21 3 21 9"></polyline>
+                            <line x1="10" y1="14" x2="21" y2="3"></line>
+                        </svg>
+                        <span class="sx-quota-row-title">View Usage</span>
+                    </div>
+                    <div class="sx-quota-row-right">
+                        <span class="sx-quota-pct-badge">100%</span>
+                        <span class="sx-quota-status-dot"></span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-quota-arrow">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                    </div>
+                `;
+          qRow2.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const trig = document.querySelector('[data-testid="model-selector-trigger"]');
+            if (trig) trig.click();
+            else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+            setTimeout(() => {
+              const ctxBtn = document.getElementById("sx-context-btn") || document.querySelector('[data-testid="model-selector-trigger"]');
+              if (this.quota && ctxBtn) this.quota.toggleContextPopover(ctxBtn);
+            }, 60);
+          });
+          if (fBadge2) root.insertBefore(qRow2, fBadge2);
+          else root.appendChild(qRow2);
+        }
+        const qPct = qRow2.querySelector(".sx-quota-pct-badge");
+        if (qPct && this.quota) {
+          const metrics = this.quota.computeLiveMetrics();
+          const remaining = metrics ? Math.max(0, 100 - metrics.percentNum) : 100;
+          qPct.textContent = `${remaining}%`;
+        }
         return;
       }
       root = document.createElement("div");
@@ -6194,7 +6292,7 @@
       const scrollContainer = document.createElement("div");
       scrollContainer.id = "sx-model-scroll-container";
       scrollContainer.className = "overflow-y-auto";
-      scrollContainer.style.cssText = "max-height: 340px; overflow-y: auto; padding: 4px 6px; box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: 1px;";
+      scrollContainer.style.cssText = "max-height: 270px; overflow-y: auto; padding: 4px 6px; box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: 1px;";
       root.appendChild(scrollContainer);
       input.addEventListener("input", () => {
         const q = input.value.trim().toLowerCase();
@@ -6361,6 +6459,50 @@
           scrollContainer.appendChild(item);
         });
       });
+      const qRow = document.createElement("div");
+      qRow.id = "sx-panel-quota-row";
+      qRow.className = "sx-panel-quota-row";
+      qRow.title = "View model usage and quota";
+      let curRemaining = 100;
+      if (this.quota) {
+        const metrics = this.quota.computeLiveMetrics();
+        if (metrics) curRemaining = Math.max(0, 100 - metrics.percentNum);
+      }
+      qRow.innerHTML = `
+            <div class="sx-quota-row-left">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color: rgba(255,255,255,0.7); flex-shrink: 0;">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                </svg>
+                <span class="sx-quota-row-title">View Usage</span>
+            </div>
+            <div class="sx-quota-row-right">
+                <span class="sx-quota-pct-badge">${curRemaining}%</span>
+                <span class="sx-quota-status-dot"></span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="sx-quota-arrow">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                </svg>
+            </div>
+        `;
+      qRow.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const sampleNative = modelPanel.querySelector('[data-testid="model-selector-item"], [role="menuitem"], button');
+        if (sampleNative && typeof sampleNative.click === "function") {
+          sampleNative.click();
+        } else {
+          const trig = document.querySelector('[data-testid="model-selector-trigger"]');
+          if (trig) trig.click();
+          else window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+        }
+        setTimeout(() => {
+          const ctxBtn = document.getElementById("sx-context-btn") || document.querySelector('[data-testid="model-selector-trigger"]');
+          if (this.quota && ctxBtn) {
+            this.quota.toggleContextPopover(ctxBtn);
+          }
+        }, 60);
+      });
+      root.appendChild(qRow);
       const fBadge = document.createElement("div");
       fBadge.id = "sx-panel-footer-badge";
       fBadge.style.cssText = "padding:6px 12px;border-top:1px solid hsl(var(--border, rgba(255,255,255,0.08)));background:hsl(var(--popover, var(--card, 222 47% 11%)));border-bottom-left-radius:10px;border-bottom-right-radius:10px;display:flex;align-items:center;justify-content:space-between;font-size:10.5px;user-select:none;box-sizing:border-box;";
