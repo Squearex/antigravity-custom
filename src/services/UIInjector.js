@@ -1859,9 +1859,11 @@ export class UIInjector {
             }
             const qPct = qRow.querySelector('.sx-quota-pct-badge');
             if (qPct && this.quota) {
-                const metrics = this.quota.computeLiveMetrics();
-                const remaining = metrics ? Math.max(0, 100 - metrics.percentNum) : 100;
-                qPct.textContent = `${remaining}%`;
+                try {
+                    const metrics = typeof this.quota.computeLiveMetrics === 'function' ? this.quota.computeLiveMetrics() : null;
+                    const remaining = metrics ? Math.max(0, 100 - (metrics.percentNum || 0)) : 100;
+                    qPct.textContent = `${remaining}%`;
+                } catch(e) {}
             }
             return;
         }
@@ -2097,8 +2099,10 @@ export class UIInjector {
 
         let curRemaining = 100;
         if (this.quota) {
-            const metrics = this.quota.computeLiveMetrics();
-            if (metrics) curRemaining = Math.max(0, 100 - metrics.percentNum);
+            try {
+                const metrics = typeof this.quota.computeLiveMetrics === 'function' ? this.quota.computeLiveMetrics() : null;
+                if (metrics) curRemaining = Math.max(0, 100 - (metrics.percentNum || 0));
+            } catch(e) {}
         }
 
         qRow.innerHTML = `

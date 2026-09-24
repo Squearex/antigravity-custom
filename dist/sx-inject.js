@@ -2963,6 +2963,21 @@
       }
       return "";
     }
+    computeLiveMetrics(cleanConvId = null, targetModel = null) {
+      try {
+        if (!cleanConvId || !targetModel) {
+          const sxModels = this.models?.state?.getModels?.() || [];
+          const activeConvKey = this.models?.getActiveConversationKey?.();
+          const activeId = this.models?.getActiveModelForConversation?.(activeConvKey);
+          const activeM = targetModel || sxModels.find((m) => m.id === activeId) || sxModels[0] || null;
+          const convId = cleanConvId || (activeConvKey || "").replace(/^conv_/, "");
+          return this.calculateLiveContextMetrics(convId, activeM);
+        }
+        return this.calculateLiveContextMetrics(cleanConvId, targetModel);
+      } catch (e) {
+        return null;
+      }
+    }
     calculateLiveContextMetrics(cleanConvId, targetModel) {
       const cacheKey = (cleanConvId || "new") + "_" + (targetModel?.id || "");
       const cacheEntry = this._contextDetailsCache[cacheKey];
@@ -6255,9 +6270,12 @@
         }
         const qPct = qRow2.querySelector(".sx-quota-pct-badge");
         if (qPct && this.quota) {
-          const metrics = this.quota.computeLiveMetrics();
-          const remaining = metrics ? Math.max(0, 100 - metrics.percentNum) : 100;
-          qPct.textContent = `${remaining}%`;
+          try {
+            const metrics = typeof this.quota.computeLiveMetrics === "function" ? this.quota.computeLiveMetrics() : null;
+            const remaining = metrics ? Math.max(0, 100 - (metrics.percentNum || 0)) : 100;
+            qPct.textContent = `${remaining}%`;
+          } catch (e) {
+          }
         }
         return;
       }
@@ -6465,8 +6483,11 @@
       qRow.title = "View model usage and quota";
       let curRemaining = 100;
       if (this.quota) {
-        const metrics = this.quota.computeLiveMetrics();
-        if (metrics) curRemaining = Math.max(0, 100 - metrics.percentNum);
+        try {
+          const metrics = typeof this.quota.computeLiveMetrics === "function" ? this.quota.computeLiveMetrics() : null;
+          if (metrics) curRemaining = Math.max(0, 100 - (metrics.percentNum || 0));
+        } catch (e) {
+        }
       }
       qRow.innerHTML = `
             <div class="sx-quota-row-left">
@@ -7748,7 +7769,7 @@
   };
 
   // src/index.js
-  var SX_BUILD = "2026.09.22-r13";
+  var SX_BUILD = "2026.09.22-r14";
   (function bootstrapSX() {
     const logger = new Logger("SX");
     logger.info("Core", `Bootstrapping SX Core SDK v2.0 (build ${SX_BUILD})...`);

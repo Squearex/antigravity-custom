@@ -237,6 +237,22 @@ export class QuotaMonitor {
         return '';
     }
 
+    computeLiveMetrics(cleanConvId = null, targetModel = null) {
+        try {
+            if (!cleanConvId || !targetModel) {
+                const sxModels = this.models?.state?.getModels?.() || [];
+                const activeConvKey = this.models?.getActiveConversationKey?.();
+                const activeId = this.models?.getActiveModelForConversation?.(activeConvKey);
+                const activeM = targetModel || sxModels.find(m => m.id === activeId) || sxModels[0] || null;
+                const convId = cleanConvId || (activeConvKey || '').replace(/^conv_/, '');
+                return this.calculateLiveContextMetrics(convId, activeM);
+            }
+            return this.calculateLiveContextMetrics(cleanConvId, targetModel);
+        } catch(e) {
+            return null;
+        }
+    }
+
     calculateLiveContextMetrics(cleanConvId, targetModel) {
         const cacheKey = (cleanConvId || 'new') + '_' + (targetModel?.id || '');
         const cacheEntry = this._contextDetailsCache[cacheKey];
