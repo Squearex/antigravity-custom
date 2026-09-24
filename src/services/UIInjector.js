@@ -374,6 +374,7 @@ export class UIInjector {
                 justify-content: space-between !important;
                 gap: 10px !important;
                 box-sizing: border-box !important;
+                flex-shrink: 0 !important;
                 transition: background-color 0.12s ease !important;
             }
             .sx-custom-model-item.has-badges {
@@ -673,6 +674,24 @@ export class UIInjector {
                 box-sizing: border-box !important;
                 font-family: inherit !important;
                 color: hsl(var(--popover-foreground, var(--foreground, #f1f5f9))) !important;
+            }
+
+            /* Model selector search input reset & scroll container padding */
+            #sx-model-search-input {
+                outline: none !important;
+                box-shadow: none !important;
+                border: none !important;
+                background: transparent !important;
+                -webkit-appearance: none !important;
+            }
+            #sx-model-search-input:focus {
+                outline: none !important;
+                box-shadow: none !important;
+                border: none !important;
+                background: transparent !important;
+            }
+            #sx-model-scroll-container {
+                padding-bottom: 24px !important;
             }
         `;
         const target = document.head || document.documentElement;
@@ -1842,6 +1861,48 @@ export class UIInjector {
         return qRow;
     }
 
+    _dockModelPanelAboveChat(targetBox, modelPanel) {
+        if (!targetBox) return;
+        const pos = targetBox.parentElement;
+        const card = document.querySelector('[contenteditable="true"], textarea')?.closest('[class*="rounded-2xl"], form')
+            || document.getElementById('antigravity.agentSidePanelInputBox')
+            || document.querySelector('.bg-card-border');
+        if (!card) return;
+
+        // Reset transform on parent positioner so position: fixed works relative to viewport
+        if (pos && pos !== document.body) {
+            pos.style.setProperty('transform', 'none', 'important');
+            pos.style.setProperty('top', '0px', 'important');
+            pos.style.setProperty('left', '0px', 'important');
+            pos.style.setProperty('position', 'fixed', 'important');
+            pos.style.setProperty('pointer-events', 'none', 'important');
+        }
+
+        const cardRect = card.getBoundingClientRect();
+        targetBox.style.setProperty('position', 'fixed', 'important');
+        targetBox.style.setProperty('pointer-events', 'auto', 'important');
+        targetBox.style.setProperty('bottom', `${Math.max(8, Math.round(window.innerHeight - cardRect.top + 8))}px`, 'important');
+        targetBox.style.setProperty('top', 'auto', 'important');
+        targetBox.style.setProperty('transform', 'none', 'important');
+
+        // Align horizontally with the left edge of the prompt card, ensuring it fits inside viewport
+        const targetLeft = Math.round(cardRect.left);
+        const maxLeft = Math.max(8, window.innerWidth - 440);
+        targetBox.style.setProperty('left', `${Math.min(targetLeft, maxLeft)}px`, 'important');
+
+        if (!targetBox._sxDockHooked) {
+            targetBox._sxDockHooked = true;
+            const updateDock = () => {
+                if (document.contains(targetBox)) {
+                    this._dockModelPanelAboveChat(targetBox, modelPanel);
+                }
+            };
+            window.addEventListener('resize', updateDock, { passive: true });
+            setTimeout(updateDock, 40);
+            setTimeout(updateDock, 120);
+        }
+    }
+
     trySXModelSelectorPanelInject() {
         const modelPanel = document.querySelector('[data-testid="model-selector-panel"]');
         if (!modelPanel || modelPanel.closest('[data-sx-usage-panel]')) return;
@@ -1865,6 +1926,8 @@ export class UIInjector {
 
         const menuBox = modelPanel.closest('[role="menu"]') || modelPanel.parentElement;
         const isMenu = menuBox && menuBox !== modelPanel;
+        const targetBox = menuBox || modelPanel;
+        this._dockModelPanelAboveChat(targetBox, modelPanel);
 
         if (isMenu) {
             menuBox.style.setProperty('background', 'hsl(var(--popover, var(--card, 222 47% 11%)))', 'important');
@@ -1944,6 +2007,9 @@ export class UIInjector {
             const totalCountBadge = root.querySelector('#sx-model-total-count');
             if (totalCountBadge) {
                 totalCountBadge.textContent = `${sxModels.length} models`;
+                totalCountBadge.style.background = 'transparent';
+                totalCountBadge.style.border = 'none';
+                totalCountBadge.style.boxShadow = 'none';
             }
 
             let qRow = root.querySelector('#sx-panel-quota-row');
@@ -1979,23 +2045,31 @@ export class UIInjector {
         searchWrap.style.cssText = 'padding: 8px 10px; border-bottom: 1px solid hsl(var(--border, rgba(255,255,255,0.08))); background: hsl(var(--popover, var(--card, 222 47% 11%))) !important; position: sticky; top: 0; z-index: 20; box-sizing: border-box;';
         searchWrap.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;box-sizing:border-box;">
-                <div style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 9px;gap:7px;height:32px;box-sizing:border-box;flex:1;min-width:0;transition:border-color 0.15s, background-color 0.15s;">
+                <div id="sx-model-search-input-wrap" style="display:flex;align-items:center;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0 9px;gap:7px;height:32px;box-sizing:border-box;flex:1;min-width:0;transition:border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(255,255,255,0.35);flex-shrink:0;">
                         <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
-                    <input id="sx-model-search-input" type="text" placeholder="Search models..." style="background:transparent;border:none;outline:none;color:rgba(255,255,255,0.92);font-size:12px;width:100%;height:100%;font-family:inherit;line-height:normal;padding:0;margin:0;" autocomplete="off" spellcheck="false" />
+                    <input id="sx-model-search-input" type="text" placeholder="Search models..." style="background:transparent;border:none;outline:none;box-shadow:none;-webkit-appearance:none;color:rgba(255,255,255,0.92);font-size:12px;width:100%;height:100%;font-family:inherit;line-height:normal;padding:0;margin:0;" autocomplete="off" spellcheck="false" />
                 </div>
-                <div id="sx-model-total-count" style="display:inline-flex;align-items:center;font-size:10.5px;font-weight:600;color:rgba(255,255,255,0.4);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:rgba(255,255,255,0.04);padding:3px 8px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);white-space:nowrap;user-select:none;flex-shrink:0;">
+                <div id="sx-model-total-count" style="display:inline-flex;align-items:center;font-size:11px;font-weight:600;color:rgba(255,255,255,0.45);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:transparent;border:none;box-shadow:none;padding:0 4px;white-space:nowrap;user-select:none;flex-shrink:0;">
                     ${sxModels.length} models
                 </div>
             </div>
         `;
         root.appendChild(searchWrap);
 
-        const inputWrap = searchWrap.querySelector('div > div');
+        const inputWrap = searchWrap.querySelector('#sx-model-search-input-wrap') || searchWrap.querySelector('div > div');
         const input = searchWrap.querySelector('#sx-model-search-input');
-        input.addEventListener('focus', () => { inputWrap.style.borderColor = 'rgba(255,255,255,0.25)'; inputWrap.style.background = 'rgba(255,255,255,0.07)'; });
-        input.addEventListener('blur', () => { inputWrap.style.borderColor = 'rgba(255,255,255,0.1)'; inputWrap.style.background = 'rgba(255,255,255,0.05)'; });
+        input.addEventListener('focus', () => {
+            inputWrap.style.borderColor = 'rgba(56, 189, 248, 0.45)';
+            inputWrap.style.boxShadow = '0 0 0 1px rgba(56, 189, 248, 0.2)';
+            inputWrap.style.background = 'rgba(255,255,255,0.07)';
+        });
+        input.addEventListener('blur', () => {
+            inputWrap.style.borderColor = 'rgba(255,255,255,0.1)';
+            inputWrap.style.boxShadow = 'none';
+            inputWrap.style.background = 'rgba(255,255,255,0.05)';
+        });
 
         ['keydown', 'keyup', 'keypress'].forEach(evt => {
             input.addEventListener(evt, e => e.stopPropagation());
@@ -2005,7 +2079,7 @@ export class UIInjector {
         const scrollContainer = document.createElement('div');
         scrollContainer.id = 'sx-model-scroll-container';
         scrollContainer.className = 'overflow-y-auto';
-        scrollContainer.style.cssText = 'max-height: 290px; overflow-y: auto; padding: 4px 6px; box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: 1px;';
+        scrollContainer.style.cssText = 'max-height: 290px; overflow-y: auto; padding: 4px 6px 24px 6px; box-sizing: border-box; width: 100%; display: flex; flex-direction: column; gap: 1px;';
         root.appendChild(scrollContainer);
 
         // Search filter listener
