@@ -465,6 +465,48 @@ function install(targetAppDir) {
         console.log(`${c.cyan}ℹ${c.reset} preload.js zaten yamalanmış.`);
     }
 
+    // 4b. Patch languageServer.js (Redirect Language Server AI/Inference RPCs to SX Proxy 127.0.0.1:15725)
+    const lsJsPath = path.join(targetDist, 'languageServer.js');
+    if (fs.existsSync(lsJsPath)) {
+        let lsContent = fs.readFileSync(lsJsPath, 'utf8');
+        const lsOrig = path.join(targetDist, 'languageServer.js.orig');
+        if (!fs.existsSync(lsOrig)) {
+            fs.copyFileSync(lsJsPath, lsOrig);
+            console.log(`${c.green}✓${c.reset} Orijinal languageServer.js yedeklendi (languageServer.js.orig).`);
+        }
+
+        if (!lsContent.includes('15725')) {
+            const proxyFlags = `
+            '--api_server_url',
+            'http://127.0.0.1:15725',
+            '--cloud_code_endpoint',
+            'http://127.0.0.1:15725',
+            '--inference_api_server_url',
+            'http://127.0.0.1:15725',`;
+
+            let lsModified = false;
+            if (lsContent.includes('const args = [')) {
+                lsContent = lsContent.replace('const args = [', 'const args = [' + proxyFlags);
+                lsModified = true;
+            } else if (lsContent.includes('let args = [')) {
+                lsContent = lsContent.replace('let args = [', 'let args = [' + proxyFlags);
+                lsModified = true;
+            } else if (lsContent.includes('args = [')) {
+                lsContent = lsContent.replace('args = [', 'args = [' + proxyFlags);
+                lsModified = true;
+            }
+
+            if (lsModified) {
+                fs.writeFileSync(lsJsPath, lsContent, 'utf8');
+                console.log(`${c.green}✓${c.reset} languageServer.js başarıyla yamalandı (SX Proxy köprüsü kuruldu).`);
+            } else {
+                console.log(`${c.yellow}⚠️ Uyarı:${c.reset} languageServer.js içinde 'args' listesi bulunamadı.`);
+            }
+        } else {
+            console.log(`${c.cyan}ℹ${c.reset} languageServer.js zaten yamalanmış.`);
+        }
+    }
+
     // 5. Python Speech Setup & Bytecode Compilation
     const pyBin = detectPython();
     setupPythonSpeech(pyBin);
@@ -623,6 +665,13 @@ function uninstall(targetAppDir) {
         console.log(`${c.green}✓${c.reset} preload.js orijinal haline geri yüklendi.`);
     }
 
+    const lsJsPath = path.join(targetDist, 'languageServer.js');
+    const lsOrig = path.join(targetDist, 'languageServer.js.orig');
+    if (fs.existsSync(lsOrig)) {
+        fs.copyFileSync(lsOrig, lsJsPath);
+        console.log(`${c.green}✓${c.reset} languageServer.js orijinal haline geri yüklendi.`);
+    }
+
     const filesToRemove = [
         'sxProxy.js',
         'sx-inject.js',
@@ -681,11 +730,14 @@ function status(targetAppDir) {
     console.log(`Konum: ${targetAppDir}`);
     const mainJs = path.join(targetAppDir, 'dist', 'main.js');
     const preloadJs = path.join(targetAppDir, 'dist', 'preload.js');
+    const lsJs = path.join(targetAppDir, 'dist', 'languageServer.js');
     const isPatched = fs.existsSync(mainJs) && fs.readFileSync(mainJs, 'utf8').includes('sxProxy');
     const isPreloadPatched = fs.existsSync(preloadJs) && fs.readFileSync(preloadJs, 'utf8').includes('sx:get-inject-script');
+    const isLsPatched = fs.existsSync(lsJs) && fs.readFileSync(lsJs, 'utf8').includes('15725');
 
     console.log(`main.js: ${isPatched ? c.green + 'Yamalı (SX Aktif)' : c.yellow + 'Orijinal'}${c.reset}`);
     console.log(`preload.js: ${isPreloadPatched ? c.green + 'Yamalı (SX Aktif)' : c.yellow + 'Orijinal'}${c.reset}`);
+    console.log(`languageServer.js: ${isLsPatched ? c.green + 'Yamalı (SX Proxy Aktif)' : c.yellow + 'Orijinal'}${c.reset}`);
 
     const py = detectPython();
     console.log(`Python: ${py ? c.green + py : c.yellow + 'Bulunamadı'}${c.reset}`);

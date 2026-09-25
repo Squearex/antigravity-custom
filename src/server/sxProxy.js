@@ -2535,19 +2535,40 @@ function startInternalProxy() {
                         const sourceRepo = (versionInfo && versionInfo.sourceRepo && fs.existsSync(path.join(versionInfo.sourceRepo, '.git')))
                             ? versionInfo.sourceRepo
                             : path.resolve(__dirname, '..');
-                        const remoteOut = execSync('git ls-remote origin main', { cwd: sourceRepo, timeout: 6000 }).toString();
-                        const match = remoteOut.match(/^([a-f0-9]{7,40})/);
-                        if (match) {
-                            latestCommit = match[1].slice(0, 7);
-                            checkSource = 'git_remote';
-                            const localCommit = execSync('git rev-parse --short HEAD', { cwd: sourceRepo, timeout: 3000 }).toString().trim();
-                            if (localCommit && latestCommit && !localCommit.startsWith(latestCommit) && !latestCommit.startsWith(localCommit)) {
-                                updateAvailable = true;
-                                try {
-                                    execSync('git fetch origin main --quiet', { cwd: sourceRepo, timeout: 8000 });
-                                    latestMessage = execSync('git log -1 --format="%s" origin/main', { cwd: sourceRepo, timeout: 3000 }).toString().trim();
-                                } catch(e) {}
+                        const hasGit = fs.existsSync(path.join(sourceRepo, '.git'));
+                        if (hasGit) {
+                            const remoteOut = execSync('git ls-remote origin main', { cwd: sourceRepo, timeout: 6000, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+                            const match = remoteOut.match(/^([a-f0-9]{7,40})/);
+                            if (match) {
+                                latestCommit = match[1].slice(0, 7);
+                                checkSource = 'git_remote';
+                                const localCommit = execSync('git rev-parse --short HEAD', { cwd: sourceRepo, timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+                                if (localCommit && latestCommit && !localCommit.startsWith(latestCommit) && !latestCommit.startsWith(localCommit)) {
+                                    updateAvailable = true;
+                                    try {
+                                        execSync('git fetch origin main --quiet', { cwd: sourceRepo, timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] });
+                                        latestMessage = execSync('git log -1 --format="%s" origin/main', { cwd: sourceRepo, timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+                                    } catch(e) {}
+                                }
                             }
+                        } else {
+                            // Packaged mode: check GitHub Releases API
+                            try {
+                                const ghRes = await fetch('https://api.github.com/repos/Squearex/antigravity-custom/releases/latest', {
+                                    headers: { 'User-Agent': 'Antigravity-Custom-Updater' },
+                                    signal: AbortSignal.timeout(4000)
+                                });
+                                if (ghRes.ok) {
+                                    const ghData = await ghRes.json();
+                                    const relTag = (ghData.tag_name || '').replace(/^v/, '');
+                                    const curVer = (versionInfo.version || '2.2.0').replace(/^v/, '');
+                                    checkSource = 'github_release';
+                                    if (relTag && curVer && relTag !== curVer) {
+                                        updateAvailable = true;
+                                        latestMessage = ghData.name || `Yeni sürüm: v${relTag}`;
+                                    }
+                                }
+                            } catch(e) {}
                         }
                     } catch(gitErr) {
                         // Git check failed or not a git checkout
