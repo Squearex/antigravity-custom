@@ -128,7 +128,7 @@ try {
 // ANTIGRAVITY CUSTOM - DIRECT MODE INJECTION
 // ============================================================================
 try {
-    try { electron_1.ipcRenderer.setMaxListeners(50); } catch(e) {}
+    try { electron_1.ipcRenderer.setMaxListeners(0); } catch(e) {}
     const scriptContent = electron_1.ipcRenderer.sendSync('sx:get-inject-script');
     let savedConfig = { providers: [], models: [] };
     try {

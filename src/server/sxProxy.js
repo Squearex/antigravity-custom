@@ -1499,7 +1499,13 @@ function startInternalProxy() {
                 return;
             }
 
-            const url = req.url || '';
+            let url = req.url || '';
+            try {
+                if (url.startsWith('http://') || url.startsWith('https://')) {
+                    const parsedUrl = new URL(url);
+                    url = parsedUrl.pathname + parsedUrl.search;
+                }
+            } catch(e) {}
             console.log('[SX PROXY REQ]', req.method, url);
 
             // GET /sx/quota-status — basic rate-limit / usage hint for UI

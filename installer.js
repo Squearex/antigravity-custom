@@ -327,7 +327,7 @@ function getPreloadHook() {
 try {
     const isCustom = (typeof process !== 'undefined' && process.env && process.env.ANTIGRAVITY_CUSTOM === '1') || (typeof process !== 'undefined' && Array.isArray(process.argv) && process.argv.includes('--custom'));
     if (isCustom) {
-        try { electron_1.ipcRenderer.setMaxListeners(50); } catch(e) {}
+        try { electron_1.ipcRenderer.setMaxListeners(0); } catch(e) {}
         const scriptContent = electron_1.ipcRenderer.sendSync('sx:get-inject-script');
         let savedConfig = { providers: [], models: [] };
         try {

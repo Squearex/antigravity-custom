@@ -22,6 +22,11 @@ export class FetchInterceptor {
     async handleFetch(context, args) {
         const url = args[0]?.toString() || '';
 
+        // Internal SX Proxy or local endpoints pass through directly
+        if (url.includes('/sx/') || url.includes(':15725')) {
+            return this.origFetch.apply(context, args);
+        }
+
         // 0. Native Antigravity Audio Transcription Interceptor (ConnectRPC)
         if (url.includes('StreamAudioTranscription')) {
             return this.handleStreamAudioTranscription(context, args);

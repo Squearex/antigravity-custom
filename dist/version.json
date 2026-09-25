@@ -2,8 +2,8 @@
   "name": "Antigravity Custom (SX Core SDK)",
   "version": "2.2.0",
   "build": "2026.09.25-r20",
-  "commit": "992beab",
-  "updatedAt": "2026-09-25T16:16:51.708Z",
+  "commit": "460dd61",
+  "updatedAt": "2026-09-25T17:08:49.315Z",
   "protected": true,
   "features": [
     "Live Streaming Google Speech Recognition",

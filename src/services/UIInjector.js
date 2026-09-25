@@ -24,8 +24,9 @@ export class UIInjector {
 
     init() {
         this.injectGlobalStyles();
-        setInterval(() => this.checkForUpdates(), 60000);
-        setTimeout(() => this.checkForUpdates(), 20000);
+        // Auto-check for updates once after startup (30s) and periodically every 30 minutes
+        setTimeout(() => this.checkForUpdates(), 30000);
+        setInterval(() => this.checkForUpdates(), 30 * 60 * 1000);
 
         // Check URL route transitions
         setInterval(() => this.checkUrlChange(), 90);
@@ -260,7 +261,11 @@ export class UIInjector {
 
     async checkForUpdates(manual = false) {
         try {
-            const resp = await fetch('http://localhost:15725/sx/check-update');
+            const resp = await fetch('http://127.0.0.1:15725/sx/check-update');
+            if (!resp || !resp.ok) {
+                if (manual) alert('Güncelleme sunucusuna bağlanılamadı.');
+                return;
+            }
             const data = await resp.json();
             if (data && data.ok) {
                 if (data.updateAvailable) {
