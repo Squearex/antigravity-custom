@@ -257,11 +257,14 @@ function setupPythonSpeech(pyBin) {
 function getTopHookMainJs() {
     return `
 // ANTIGRAVITY CUSTOM (SX CORE SDK) HOOK
-const { startInternalProxy, inMemoryConfig } = require("./sxProxy");
-startInternalProxy();
-try {
-    electron_1.app.setPath('userData', path.join(electron_1.app.getPath('appData'), 'Antigravity-Custom'));
-} catch(e) {}
+const IS_SX_CUSTOM = process.env.ANTIGRAVITY_CUSTOM === '1' || (Array.isArray(process.argv) && process.argv.includes('--custom'));
+if (IS_SX_CUSTOM) {
+    try {
+        const { startInternalProxy } = require("./sxProxy");
+        startInternalProxy();
+        electron_1.app.setPath('userData', path.join(electron_1.app.getPath('appData'), 'Antigravity-Custom'));
+    } catch(e) {}
+}
 `;
 }
 
@@ -270,6 +273,8 @@ function getIpcHookMainJs() {
     // SX Core SDK IPC Handlers
     try {
         electron_1.ipcMain.on('sx:get-inject-script', (event) => {
+            const isCustom = process.env.ANTIGRAVITY_CUSTOM === '1' || (Array.isArray(process.argv) && process.argv.includes('--custom'));
+            if (!isCustom) { event.returnValue = ''; return; }
             try {
                 const p = path.join(__dirname, 'sx-inject.js');
                 event.returnValue = fs.readFileSync(p, 'utf8');
@@ -279,6 +284,8 @@ function getIpcHookMainJs() {
             }
         });
         electron_1.ipcMain.on('sx:get-saved-config', (event) => {
+            const isCustom = process.env.ANTIGRAVITY_CUSTOM === '1' || (Array.isArray(process.argv) && process.argv.includes('--custom'));
+            if (!isCustom) { event.returnValue = { providers: [], models: [] }; return; }
             try {
                 const cfgPath = path.join(electron_1.app.getPath('userData'), 'sx_custom_models.json');
                 if (fs.existsSync(cfgPath)) {
@@ -286,7 +293,12 @@ function getIpcHookMainJs() {
                     return;
                 }
             } catch(e) {}
-            event.returnValue = inMemoryConfig || { providers: [], models: [] };
+            try {
+                const { inMemoryConfig } = require("./sxProxy");
+                event.returnValue = inMemoryConfig || { providers: [], models: [] };
+            } catch(e) {
+                event.returnValue = { providers: [], models: [] };
+            }
         });
         electron_1.ipcMain.on('sx:save-config', (event, newConfig) => {
             try {
@@ -313,15 +325,18 @@ function getPreloadHook() {
 // ANTIGRAVITY CUSTOM - DIRECT MODE INJECTION
 // ============================================================================
 try {
-    try { electron_1.ipcRenderer.setMaxListeners(50); } catch(e) {}
-    const scriptContent = electron_1.ipcRenderer.sendSync('sx:get-inject-script');
-    let savedConfig = { providers: [], models: [] };
-    try {
-        savedConfig = electron_1.ipcRenderer.sendSync('sx:get-saved-config') || savedConfig;
-    } catch(e) {}
-    if (scriptContent) {
-        electron_1.webFrame.executeJavaScript(\`window.__SX_SAVED_CONFIG__ = \${JSON.stringify(savedConfig)};\`);
-        electron_1.webFrame.executeJavaScript(scriptContent);
+    const isCustom = (typeof process !== 'undefined' && process.env && process.env.ANTIGRAVITY_CUSTOM === '1') || (typeof process !== 'undefined' && Array.isArray(process.argv) && process.argv.includes('--custom'));
+    if (isCustom) {
+        try { electron_1.ipcRenderer.setMaxListeners(50); } catch(e) {}
+        const scriptContent = electron_1.ipcRenderer.sendSync('sx:get-inject-script');
+        let savedConfig = { providers: [], models: [] };
+        try {
+            savedConfig = electron_1.ipcRenderer.sendSync('sx:get-saved-config') || savedConfig;
+        } catch(e) {}
+        if (scriptContent) {
+            electron_1.webFrame.executeJavaScript(\`window.__SX_SAVED_CONFIG__ = \${JSON.stringify(savedConfig)};\`);
+            electron_1.webFrame.executeJavaScript(scriptContent);
+        }
     }
 } catch (e) {
     console.error('[SX Preload Loader Error]', e);
@@ -465,7 +480,7 @@ function install(targetAppDir) {
         console.log(`${c.cyan}ℹ${c.reset} preload.js zaten yamalanmış.`);
     }
 
-    // 4b. Patch languageServer.js (Redirect Language Server AI/Inference RPCs to SX Proxy 127.0.0.1:15725)
+    // 4b. Patch languageServer.js (Redirect Language Server AI/Inference RPCs to SX Proxy ONLY in custom mode)
     const lsJsPath = path.join(targetDist, 'languageServer.js');
     if (fs.existsSync(lsJsPath)) {
         let lsContent = fs.readFileSync(lsJsPath, 'utf8');
@@ -473,34 +488,42 @@ function install(targetAppDir) {
         if (!fs.existsSync(lsOrig)) {
             fs.copyFileSync(lsJsPath, lsOrig);
             console.log(`${c.green}✓${c.reset} Orijinal languageServer.js yedeklendi (languageServer.js.orig).`);
+        } else {
+            lsContent = fs.readFileSync(lsOrig, 'utf8');
         }
 
-        if (!lsContent.includes('15725')) {
-            const proxyFlags = `
-            '--api_server_url',
-            'http://127.0.0.1:15725',
-            '--cloud_code_endpoint',
-            'http://127.0.0.1:15725',
-            '--inference_api_server_url',
-            'http://127.0.0.1:15725',`;
-
+        if (!lsContent.includes('ANTIGRAVITY_CUSTOM')) {
+            const customLsHook = `
+        // SX Custom AI Proxy Router - Redirects to 127.0.0.1:15725 only when launched in custom mode
+        if (process.env.ANTIGRAVITY_CUSTOM === '1' || (Array.isArray(process.argv) && process.argv.includes('--custom'))) {
+            args.push(
+                '--api_server_url', 'http://127.0.0.1:15725',
+                '--cloud_code_endpoint', 'http://127.0.0.1:15725',
+                '--inference_api_server_url', 'http://127.0.0.1:15725'
+            );
+        }
+`;
             let lsModified = false;
-            if (lsContent.includes('const args = [')) {
-                lsContent = lsContent.replace('const args = [', 'const args = [' + proxyFlags);
+            const anchor = "];\n        // Point the LS at the main process' host bridge server";
+            const altAnchor = "];\n        if (hostBridgeUrl";
+            const altAnchor2 = "let spawnCmd = exports.LS_BINARY;";
+
+            if (lsContent.includes(anchor)) {
+                lsContent = lsContent.replace(anchor, "];" + customLsHook + "        // Point the LS at the main process' host bridge server");
                 lsModified = true;
-            } else if (lsContent.includes('let args = [')) {
-                lsContent = lsContent.replace('let args = [', 'let args = [' + proxyFlags);
+            } else if (lsContent.includes(altAnchor)) {
+                lsContent = lsContent.replace(altAnchor, "];" + customLsHook + "        if (hostBridgeUrl");
                 lsModified = true;
-            } else if (lsContent.includes('args = [')) {
-                lsContent = lsContent.replace('args = [', 'args = [' + proxyFlags);
+            } else if (lsContent.includes(altAnchor2)) {
+                lsContent = lsContent.replace(altAnchor2, customLsHook + "        let spawnCmd = exports.LS_BINARY;");
                 lsModified = true;
             }
 
             if (lsModified) {
                 fs.writeFileSync(lsJsPath, lsContent, 'utf8');
-                console.log(`${c.green}✓${c.reset} languageServer.js başarıyla yamalandı (SX Proxy köprüsü kuruldu).`);
+                console.log(`${c.green}✓${c.reset} languageServer.js başarıyla yamalandı (Çift Mod: Normal vs Custom).`);
             } else {
-                console.log(`${c.yellow}⚠️ Uyarı:${c.reset} languageServer.js içinde 'args' listesi bulunamadı.`);
+                console.log(`${c.yellow}⚠️ Uyarı:${c.reset} languageServer.js içine hook eklenemedi.`);
             }
         } else {
             console.log(`${c.cyan}ℹ${c.reset} languageServer.js zaten yamalanmış.`);
@@ -544,6 +567,7 @@ ${c.emerald}${c.bold}===========================================================
 ${c.green}${c.bold}🎉 TEBRİKLER! ANTIGRAVITY CUSTOM (SX) KURULUMU TAMAMLANDI! 🎉${c.reset}
 ${c.emerald}========================================================================${c.reset}
 ${c.cyan}Özellikler:${c.reset}
+  • Çift Mod Desteği (Normal Antigravity & Antigravity Custom)
   • Canlı Mikrofon & Akıcı Dikte (Google Speech API + Ghost-Text)
   • Gelişmiş Model Hub & Özelleştirilebilir Sağlayıcılar (19+ Preset)
   • Performans ve Token Takip Paneli (TTFT, TPS, Context Usage)
@@ -551,8 +575,9 @@ ${c.cyan}Özellikler:${c.reset}
   • Windows ve Linux tam uyumluluk
 
 ${c.bold}Başlatma Seçenekleri:${c.reset}
-  • Komut Satırı: ${c.cyan}antigravity-custom${c.reset} (veya ${c.cyan}${path.join(appRootDir, IS_WIN ? 'antigravity-custom.cmd' : 'antigravity-custom')}${c.reset})
-  • Masaüstü / Uygulama Menüsü: ${c.cyan}Antigravity Custom (SX)${c.reset}
+  • 🟢 Normal Antigravity: ${c.cyan}./antigravity${c.reset}
+  • ⚡ Custom Antigravity: ${c.cyan}antigravity-custom${c.reset} (veya ${c.cyan}${path.join(appRootDir, IS_WIN ? 'antigravity-custom.cmd' : 'antigravity-custom')}${c.reset})
+  • 🖥️ Masaüstü / Menü:    ${c.cyan}Antigravity Custom (SX)${c.reset}
 `);
 }
 
@@ -570,13 +595,14 @@ if [ -f "$RESOURCES/app.asar" ] && [ ! -f "$RESOURCES/app.asar.orig" ]; then
     mv "$RESOURCES/app.asar" "$RESOURCES/app.asar.orig" 2>/dev/null || true
 fi
 
-# Antigravity Custom Başlat
+# Antigravity Custom Başlat (Özel Model & Proxy Modu)
+export ANTIGRAVITY_CUSTOM=1
 if [ -x "$DIR/antigravity" ]; then
-    exec "$DIR/antigravity" "$@"
+    exec "$DIR/antigravity" --custom "$@"
 elif [ -x "$DIR/Antigravity" ]; then
-    exec "$DIR/Antigravity" "$@"
+    exec "$DIR/Antigravity" --custom "$@"
 else
-    exec antigravity "$@"
+    exec antigravity --custom "$@"
 fi
 `;
             fs.writeFileSync(customLauncherPath, scriptContent.replace(/\r\n/g, '\n'), { encoding: 'utf8', mode: 0o755 });
@@ -636,7 +662,8 @@ set APP_DIR=%~dp0
 if exist "%APP_DIR%resources\\app.asar" if not exist "%APP_DIR%resources\\app.asar.orig" (
     ren "%APP_DIR%resources\\app.asar" "app.asar.orig" >nul 2>&1
 )
-start "" "%APP_DIR%Antigravity.exe" %*
+set ANTIGRAVITY_CUSTOM=1
+start "" "%APP_DIR%Antigravity.exe" --custom %*
 `;
             fs.writeFileSync(customCmdPath, cmdContent, 'utf8');
             console.log(`${c.green}✓${c.reset} 'antigravity-custom.cmd' başlatıcı oluşturuldu: ${customCmdPath}`);

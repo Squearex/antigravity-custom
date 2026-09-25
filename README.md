@@ -46,12 +46,19 @@ irm https://github.com/Squearex/antigravity-custom/releases/latest/download/anti
 
 ---
 
-## 🎯 Nasıl Başlatılır?
+## 🎯 Nasıl Başlatılır? (Çift Mod Desteği)
 
-Kurulum tamamlandıktan sonra SX Custom motorunun devreye girmesi için oluşturulan başlatıcıyı kullanın:
+Kurulum tamamlandıktan sonra iki sürümü de bağımsız olarak dilediğiniz zaman açabilirsiniz:
 
-* 🐧 **Linux:** Terminalde doğrudan `antigravity-custom` çalıştırın veya Uygulamalar menünüzdeki **Antigravity Custom (SX)** simgesine tıklayın.
-* 🪟 **Windows:** Antigravity dizinindeki `antigravity-custom.cmd` veya masaüstü kısayolu ile başlatın.
+* 🟢 **Normal (Orijinal) Antigravity Açmak İçin:**
+  - **Linux:** `./antigravity`
+  - **Windows:** `Antigravity.exe` (Masaüstü / Başlat Menüsü)
+  *(Hiçbir custom proxy devreye girmez; Google sunucularıyla %100 orijinal haliyle çalışır.)*
+
+* ⚡ **Antigravity Custom (SX) Açmak İçin:**
+  - **Linux:** Terminalde `antigravity-custom` çalıştırın veya Menüdeki **"Antigravity Custom (SX)"** simgesine tıklayın.
+  - **Windows:** Kurulum dizinindeki `antigravity-custom.cmd` dosyasını çalıştırın.
+  *(Tüm SX yapay zeka modelleri, canlı sesli dikte, özel temalar ve proxy köprüsü tam performans çalışır.)*
 
 ---
 
