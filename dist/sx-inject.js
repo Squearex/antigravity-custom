@@ -4043,8 +4043,12 @@
       }
     }
     closeTodoPopover() {
-      const todoPop = document.getElementById("sx-todo-popover");
-      if (todoPop) todoPop.remove();
+      const card = document.getElementById("sx-todo-docked-card");
+      if (card) {
+        card.style.display = "none";
+      }
+      const oldPop = document.getElementById("sx-todo-popover");
+      if (oldPop) oldPop.remove();
       const tBtn = document.getElementById("sx-todo-btn");
       if (tBtn) tBtn.classList.remove("sx-active");
       if (this._todoPollTimer) {
@@ -4053,6 +4057,14 @@
       }
     }
     toggleTodoPopover(anchorEl) {
+      const card = document.getElementById("sx-todo-docked-card");
+      if (card && card.style.display !== "none") {
+        this.closeTodoPopover();
+        return;
+      }
+      this.openTodoDockedCard(anchorEl);
+    }
+    openTodoDockedCard(anchorEl = null) {
       const otherPerf = document.getElementById("sx-perf-popover");
       if (otherPerf) otherPerf.remove();
       const otherCtx = document.getElementById("sx-context-popover");
@@ -4062,125 +4074,162 @@
       const infoModal = document.getElementById("sx-effort-info-modal");
       if (infoModal) infoModal.remove();
 
-      let pop = document.getElementById("sx-todo-popover");
-      if (pop) {
-        this.closeTodoPopover();
-        return;
-      }
-      document.querySelectorAll(".sx-active").forEach((el) => {
-        if (el !== anchorEl) el.classList.remove("sx-active");
-      });
-      if (anchorEl) anchorEl.classList.add("sx-active");
+      const btn = anchorEl || document.getElementById("sx-todo-btn");
+      if (btn) btn.classList.add("sx-active");
 
       const convKey = this.models.getActiveConversationKey();
       const cleanConvId = (convKey || "").replace(/^conv_/, "");
 
-      pop = document.createElement("div");
-      pop.id = "sx-todo-popover";
-      pop.style.cssText = `
-        position: fixed !important;
-        width: 350px !important;
-        max-width: calc(100vw - 32px) !important;
-        background: #0f172a !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.65), 0 0 1px 1px rgba(255, 255, 255, 0.08) !important;
-        border-radius: 14px !important;
-        padding: 14px 16px !important;
-        z-index: 100002 !important;
-        color: #e2e8f0 !important;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-        backdrop-filter: blur(16px) !important;
-        -webkit-backdrop-filter: blur(16px) !important;
-        box-sizing: border-box !important;
-        line-height: 1.4 !important;
-      `;
+      // Locate the prompt box container to dock directly above it
+      const textarea = document.querySelector('[contenteditable="true"], textarea, [data-testid="chat-input"]');
+      const formOrCard = textarea ? (
+        textarea.closest('form') ||
+        textarea.closest('[class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[calc"]') ||
+        textarea.closest('.bg-card, [class*="border"]') ||
+        textarea.parentElement?.parentElement
+      ) : (document.querySelector('form') || document.querySelector('[data-testid="chat-input-container"]'));
 
-      pop.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" id="sx-todo-popover-header">
-          <div style="display:flex;align-items:center;gap:7px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
-              <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
-              <path d="m9 14 2 2 4-4"></path>
-            </svg>
-            <span style="font-size:13px;color:#f8fafc;font-weight:600;letter-spacing:0.2px;">Model Görevleri & Süreç</span>
+      let card = document.getElementById("sx-todo-docked-card");
+      if (!card) {
+        card = document.createElement("div");
+        card.id = "sx-todo-docked-card";
+        card.className = "sx-todo-docked-card";
+        card.style.cssText = `
+          width: 100% !important;
+          max-width: 100% !important;
+          box-sizing: border-box !important;
+          margin-bottom: 8px !important;
+          background: rgba(18, 22, 29, 0.96) !important;
+          border: 1px solid rgba(255, 255, 255, 0.09) !important;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35) !important;
+          border-radius: 12px !important;
+          color: #e2e8f0 !important;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+          backdrop-filter: blur(16px) !important;
+          -webkit-backdrop-filter: blur(16px) !important;
+          overflow: hidden !important;
+          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+          z-index: 10 !important;
+        `;
+
+        card.innerHTML = `
+          <!-- Header Bar (Always visible) -->
+          <div id="sx-todo-card-header" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(255,255,255,0.02);cursor:pointer;user-select:none;">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                <path d="m9 14 2 2 4-4"></path>
+              </svg>
+              <span style="font-size:12.5px;color:#f8fafc;font-weight:600;letter-spacing:0.2px;flex-shrink:0;">G\xF6revler & \u0130lerleme</span>
+              <span id="sx-todo-status-badge" style="font-size:10.5px;color:#38bdf8;font-weight:700;background:rgba(56,189,248,0.12);padding:1px 7px;border-radius:10px;border:1px solid rgba(56,189,248,0.25);flex-shrink:0;">Y\xFCkleniyor</span>
+              <span id="sx-todo-header-summary" style="font-size:11px;color:#94a3b8;font-family:ui-monospace,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+              <div style="width:80px;height:5px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden;" title="\u0130lerleme \xE7ubu\u011Fu">
+                <div id="sx-todo-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg, #38bdf8, #10b981);transition:width 0.35s ease;border-radius:4px;"></div>
+              </div>
+              <button id="sx-todo-collapse-btn" style="background:transparent;border:none;color:#94a3b8;cursor:pointer;padding:2px 5px;font-size:11px;border-radius:4px;display:flex;align-items:center;gap:3px;" title="Daralt / Geni\u015Flet">
+                <span id="sx-todo-collapse-txt">Daralt</span>
+                <span id="sx-todo-collapse-arrow" style="font-size:10px;">\u25BE</span>
+              </button>
+              <button id="sx-todo-close-btn" style="background:transparent;border:none;color:#64748b;cursor:pointer;padding:2px 5px;font-size:13px;line-height:1;border-radius:4px;" title="Kapat">\u2715</button>
+            </div>
           </div>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <span id="sx-todo-status-badge" style="font-size:11px;color:#38bdf8;font-weight:600;background:rgba(56,189,248,0.12);padding:1.5px 7px;border-radius:10px;border:1px solid rgba(56,189,248,0.25);">Yükleniyor</span>
-            <button id="sx-todo-close-btn" style="background:transparent;border:none;color:#94a3b8;cursor:pointer;padding:2px 4px;font-size:14px;line-height:1;border-radius:4px;" title="Kapat">✕</button>
+
+          <!-- Expandable Body Content -->
+          <div id="sx-todo-card-body" style="padding:10px 14px 12px 14px;border-top:1px solid rgba(255,255,255,0.06);transition:all 0.2s ease;">
+            <!-- Radar & Metrics Line -->
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+              <div id="sx-todo-live-radar" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:4px 8px;display:flex;align-items:center;gap:7px;flex:1;min-width:0;">
+                <span id="sx-todo-radar-pulse" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#10b981;box-shadow:0 0 6px #10b981;flex-shrink:0;"></span>
+                <div style="flex-grow:1;font-size:11.5px;color:#f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="sx-todo-radar-action">Haz\u0131r</div>
+                <span id="sx-todo-radar-time" style="font-size:10px;color:#94a3b8;font-family:ui-monospace,monospace;flex-shrink:0;"></span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;font-size:11px;font-family:ui-monospace,monospace;color:#94a3b8;flex-shrink:0;">
+                <span>\u23F1\uFE0F <span id="sx-todo-elapsed" style="color:#f8fafc;font-weight:600;">00:00</span></span>
+                <span>\u23F3 <span id="sx-todo-eta" style="color:#38bdf8;font-weight:600;">--</span></span>
+                <span>\uD83C\uDFAF <span id="sx-todo-progress-txt" style="color:#10b981;font-weight:600;">--</span></span>
+              </div>
+            </div>
+
+            <!-- 3-Phase Milestone Indicators -->
+            <div id="sx-todo-phases" style="display:flex;align-items:center;justify-content:space-between;gap:3px;margin-bottom:8px;padding:2px 4px;background:rgba(0,0,0,0.25);border-radius:6px;border:1px solid rgba(255,255,255,0.04);">
+              <div id="sx-phase-1" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:2.5px 2px;border-radius:4px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">\uD83D\uDD0D Ke\u015Fif</div>
+              <div style="color:rgba(255,255,255,0.15);font-size:9px;">\u203A</div>
+              <div id="sx-phase-2" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:2.5px 2px;border-radius:4px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">\uD83D\uDEE0\uFE0F Kodlama</div>
+              <div style="color:rgba(255,255,255,0.15);font-size:9px;">\u203A</div>
+              <div id="sx-phase-3" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:2.5px 2px;border-radius:4px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">\uD83E\uDDEA Test</div>
+            </div>
+
+            <!-- Tasks Checklist Scroll -->
+            <div id="sx-todo-tasks-scroll" style="max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:5px;padding-right:2px;">
+              <div style="font-size:11.5px;color:#64748b;text-align:center;padding:10px 0;">G\xF6revler kontrol ediliyor...</div>
+            </div>
+
+            <!-- Recent Tools Tray -->
+            <div id="sx-todo-tools-tray" style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.05);font-size:10.5px;color:#94a3b8;display:none;">
+              <span style="color:#64748b;">Son Eylemler:</span> <span id="sx-todo-tools-list" style="color:#cbd5e1;font-family:ui-monospace,monospace;"></span>
+            </div>
           </div>
-        </div>
+        `;
 
-        <div style="width:100%;height:1px;background:rgba(255,255,255,0.08);margin:11px 0 12px 0;"></div>
+        let isCollapsed = false;
+        const toggleCollapse = () => {
+          isCollapsed = !isCollapsed;
+          const body = card.querySelector("#sx-todo-card-body");
+          const lbl = card.querySelector("#sx-todo-collapse-txt");
+          const arrow = card.querySelector("#sx-todo-collapse-arrow");
+          if (body) {
+            body.style.display = isCollapsed ? "none" : "block";
+          }
+          if (lbl) lbl.innerText = isCollapsed ? "Geni\u015Flet" : "Daralt";
+          if (arrow) arrow.innerText = isCollapsed ? "\u25B4" : "\u25BE";
+        };
 
-        <div id="sx-todo-stats-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px;">
-          <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:7px 8px;text-align:center;">
-            <div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px;">⏱️ Geçen Süre</div>
-            <div id="sx-todo-elapsed" style="font-size:12.5px;color:#f8fafc;font-family:ui-monospace,monospace;font-weight:700;">--:--</div>
-          </div>
-          <div style="background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.18);border-radius:8px;padding:7px 8px;text-align:center;">
-            <div style="font-size:10.5px;color:#38bdf8;margin-bottom:3px;">⏳ Kalan (ETA)</div>
-            <div id="sx-todo-eta" style="font-size:12.5px;color:#38bdf8;font-family:ui-monospace,monospace;font-weight:700;">--</div>
-          </div>
-          <div style="background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.18);border-radius:8px;padding:7px 8px;text-align:center;">
-            <div style="font-size:10.5px;color:#10b981;margin-bottom:3px;">🎯 İlerleme</div>
-            <div id="sx-todo-progress-txt" style="font-size:12.5px;color:#10b981;font-family:ui-monospace,monospace;font-weight:700;">--</div>
-          </div>
-        </div>
+        card.querySelector("#sx-todo-collapse-btn").onclick = (e) => {
+          e.stopPropagation();
+          toggleCollapse();
+        };
 
-        <div style="margin-bottom:10px;">
-          <div style="width:100%;height:6px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden;">
-            <div id="sx-todo-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg, #38bdf8, #10b981);transition:width 0.4s ease;border-radius:4px;"></div>
-          </div>
-        </div>
+        card.querySelector("#sx-todo-card-header").onclick = (e) => {
+          if (e.target.closest('#sx-todo-close-btn') || e.target.closest('#sx-todo-collapse-btn')) return;
+          toggleCollapse();
+        };
 
-        <div id="sx-todo-live-radar" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:7px 10px;margin-bottom:10px;display:flex;align-items:center;gap:8px;">
-          <span id="sx-todo-radar-pulse" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 6px #10b981;flex-shrink:0;"></span>
-          <div style="flex-grow:1;font-size:11.5px;color:#f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="sx-todo-radar-action">Hazır</div>
-          <span id="sx-todo-radar-time" style="font-size:10px;color:#94a3b8;font-family:ui-monospace,monospace;flex-shrink:0;"></span>
-        </div>
+        card.querySelector("#sx-todo-close-btn").onclick = (e) => {
+          e.stopPropagation();
+          this.closeTodoPopover();
+        };
+      }
 
-        <div id="sx-todo-phases" style="display:flex;align-items:center;justify-content:space-between;gap:3px;margin-bottom:10px;padding:3px;background:rgba(0,0,0,0.25);border-radius:7px;border:1px solid rgba(255,255,255,0.05);">
-          <div id="sx-phase-1" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:3px 2px;border-radius:5px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">🔍 Keşif</div>
-          <div style="color:rgba(255,255,255,0.15);font-size:9px;">›</div>
-          <div id="sx-phase-2" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:3px 2px;border-radius:5px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">🛠️ Kodlama</div>
-          <div style="color:rgba(255,255,255,0.15);font-size:9px;">›</div>
-          <div id="sx-phase-3" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:3px 2px;border-radius:5px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">🧪 Test</div>
-        </div>
-
-        <div id="sx-todo-tasks-scroll" style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding-right:2px;">
-          <div style="font-size:12px;color:#64748b;text-align:center;padding:12px 0;">Görevler kontrol ediliyor...</div>
-        </div>
-
-        <div id="sx-todo-tools-tray" style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);font-size:11px;color:#94a3b8;display:none;">
-          <span style="color:#64748b;">Son Eylemler:</span> <span id="sx-todo-tools-list" style="color:#cbd5e1;font-family:ui-monospace,monospace;"></span>
-        </div>
-      `;
-
-      document.body.appendChild(pop);
-      attachPopoverAboveChat(anchorEl, pop, { placement: "top-start", gap: 10 });
-
-      pop.querySelector("#sx-todo-close-btn").onclick = (e) => {
-        e.stopPropagation();
-        this.closeTodoPopover();
-      };
+      // Dock right above the prompt container
+      if (formOrCard && formOrCard.parentElement) {
+        if (card.nextElementSibling !== formOrCard || card.parentElement !== formOrCard.parentElement) {
+          formOrCard.parentElement.insertBefore(card, formOrCard);
+        }
+      } else {
+        document.body.appendChild(card);
+      }
+      card.style.display = "block";
 
       const renderTasks = (data) => {
-        if (!pop.isConnected) return;
-        const statusBadge = pop.querySelector("#sx-todo-status-badge");
-        const elapsedEl = pop.querySelector("#sx-todo-elapsed");
-        const etaEl = pop.querySelector("#sx-todo-eta");
-        const progTxt = pop.querySelector("#sx-todo-progress-txt");
-        const progBar = pop.querySelector("#sx-todo-progress-bar");
-        const listEl = pop.querySelector("#sx-todo-tasks-scroll");
-        const toolsTray = pop.querySelector("#sx-todo-tools-tray");
-        const toolsList = pop.querySelector("#sx-todo-tools-list");
-        const radarAction = pop.querySelector("#sx-todo-radar-action");
-        const radarTime = pop.querySelector("#sx-todo-radar-time");
-        const radarPulse = pop.querySelector("#sx-todo-radar-pulse");
+        if (!card.isConnected) return;
+        const statusBadge = card.querySelector("#sx-todo-status-badge");
+        const headerSummary = card.querySelector("#sx-todo-header-summary");
+        const elapsedEl = card.querySelector("#sx-todo-elapsed");
+        const etaEl = card.querySelector("#sx-todo-eta");
+        const progTxt = card.querySelector("#sx-todo-progress-txt");
+        const progBar = card.querySelector("#sx-todo-progress-bar");
+        const listEl = card.querySelector("#sx-todo-tasks-scroll");
+        const toolsTray = card.querySelector("#sx-todo-tools-tray");
+        const toolsList = card.querySelector("#sx-todo-tools-list");
+        const radarAction = card.querySelector("#sx-todo-radar-action");
+        const radarTime = card.querySelector("#sx-todo-radar-time");
+        const radarPulse = card.querySelector("#sx-todo-radar-pulse");
 
         if (!data || (!data.tasks?.length && !data.recentTools?.length)) {
-          // Check DOM for checklist items in assistant messages
           const domTasks = [];
           document.querySelectorAll('.prose, [data-testid="message-content"], .message-content').forEach(p => {
             const lines = (p.innerText || '').split('\n');
@@ -4207,8 +4256,8 @@
               inProgress: domTasks.filter(t => t.status === 'in_progress').length,
               pending: domTasks.filter(t => t.status === 'pending').length,
               percent: pct,
-              elapsedFormatted: "Sohbet İçi",
-              etaFormatted: comp === domTasks.length ? "Tamamlandı" : `~${(domTasks.length - comp) * 30} sn`,
+              elapsedFormatted: "Sohbet \u0130\xE7i",
+              etaFormatted: comp === domTasks.length ? "Tamamland\u0131" : `~${(domTasks.length - comp) * 30} sn`,
               isRunning: false
             };
           }
@@ -4216,11 +4265,12 @@
 
         if (!data || (!data.tasks?.length && !data.recentTools?.length)) {
           if (statusBadge) {
-            statusBadge.innerText = "Boşta";
+            statusBadge.innerText = "Bo\u015Fta";
             statusBadge.style.color = "#94a3b8";
             statusBadge.style.background = "rgba(148,163,184,0.1)";
             statusBadge.style.borderColor = "rgba(148,163,184,0.2)";
           }
+          if (headerSummary) headerSummary.innerText = "";
           if (radarAction) radarAction.innerText = "Bekleniyor";
           if (radarPulse) {
             radarPulse.style.background = "#64748b";
@@ -4228,10 +4278,10 @@
           }
           if (listEl) {
             listEl.innerHTML = `
-              <div style="font-size:12px;color:#94a3b8;text-align:center;padding:16px 8px;line-height:1.5;">
-                <div style="font-size:18px;margin-bottom:6px;">📋</div>
-                Bu sohbette henüz aktif görev listesi bulunmuyor.<br>
-                <span style="font-size:11px;color:#64748b;">Model bir plan veya kontrol listesi oluşturduğunda adımlar ve kalan süre burada otomatik takip edilir.</span>
+              <div style="font-size:11.5px;color:#94a3b8;text-align:center;padding:12px 8px;line-height:1.5;">
+                <span style="font-size:15px;margin-bottom:4px;display:inline-block;">\uD83D\uDCCB</span><br>
+                Bu sohbette hen\xFCz aktif g\xF6rev listesi bulunmuyor.<br>
+                <span style="font-size:10.5px;color:#64748b;">Model bir plan veya kontrol listesi olu\u015Fturdu\u011Funda ad\u0131mlar ve kalan s\xFCre burada anl\u0131k g\xF6r\xFCn\xFCr.</span>
               </div>
             `;
           }
@@ -4241,24 +4291,28 @@
         const isRunning = Boolean(data.isRunning);
         if (statusBadge) {
           if (isRunning) {
-            statusBadge.innerText = "● Çalışıyor";
+            statusBadge.innerText = `\u25CF ${data.completed}/${data.total}`;
             statusBadge.style.color = "#10b981";
             statusBadge.style.background = "rgba(16,185,129,0.12)";
             statusBadge.style.borderColor = "rgba(16,185,129,0.25)";
           } else if (data.completed === data.total && data.total > 0) {
-            statusBadge.innerText = "✓ Bitti";
+            statusBadge.innerText = "\u2713 Bitti";
             statusBadge.style.color = "#10b981";
             statusBadge.style.background = "rgba(16,185,129,0.12)";
             statusBadge.style.borderColor = "rgba(16,185,129,0.25)";
           } else {
-            statusBadge.innerText = "Bekliyor";
+            statusBadge.innerText = `${data.completed}/${data.total}`;
             statusBadge.style.color = "#38bdf8";
             statusBadge.style.background = "rgba(56,189,248,0.12)";
             statusBadge.style.borderColor = "rgba(56,189,248,0.25)";
           }
         }
 
-        if (radarAction) radarAction.innerText = data.currentAction || (isRunning ? "💭 Düşünce & Yanıt üretiliyor..." : "✓ Hazır / Bekleniyor");
+        if (headerSummary) {
+          headerSummary.innerText = `\u2022 %${data.percent || 0} \u2022 \u23F3 ${data.etaFormatted || '--'}`;
+        }
+
+        if (radarAction) radarAction.innerText = data.currentAction || (isRunning ? "\uD83D\uDCAD D\xFC\u015F\xFCnce & Yan\u0131t \xFCretiliyor..." : "\u2713 Haz\u0131r / Bekleniyor");
         if (radarTime) radarTime.innerText = data.currentActionElapsedSec > 0 ? `${data.currentActionElapsedSec}s` : "";
         if (radarPulse) {
           radarPulse.style.background = isRunning ? "#10b981" : "#64748b";
@@ -4267,9 +4321,9 @@
 
         // Update Phase pills
         const pIdx = data.phase?.index || 1;
-        const p1 = pop.querySelector("#sx-phase-1");
-        const p2 = pop.querySelector("#sx-phase-2");
-        const p3 = pop.querySelector("#sx-phase-3");
+        const p1 = card.querySelector("#sx-phase-1");
+        const p2 = card.querySelector("#sx-phase-2");
+        const p3 = card.querySelector("#sx-phase-3");
         if (p1 && p2 && p3) {
           [p1, p2, p3].forEach((p, idx) => {
             const step = idx + 1;
@@ -4291,7 +4345,7 @@
 
         if (elapsedEl) elapsedEl.innerText = data.elapsedFormatted || "00:00";
         if (etaEl) etaEl.innerText = data.etaFormatted || "--";
-        const pctLabel = data.hasWeights ? ` (%${data.percent} Ağırlıklı)` : (data.declaredProgress != null ? ` (%${data.percent} Model)` : ` (%${data.percent})`);
+        const pctLabel = data.hasWeights ? ` (%${data.percent} A\u011F\u0131rl\u0131kl\u0131)` : (data.declaredProgress != null ? ` (%${data.percent} Model)` : ` (%${data.percent})`);
         if (progTxt) progTxt.innerText = `${data.completed || 0}/${data.total || 0}${pctLabel}`;
         if (progBar) progBar.style.width = `${data.percent || 0}%`;
 
@@ -4301,30 +4355,30 @@
           listEl.innerHTML = data.tasks.map((task, idx) => {
             const isDone = task.status === 'completed';
             const isProg = task.status === 'in_progress';
-            let iconHtml = `<span style="display:inline-flex;width:14px;height:14px;border-radius:3px;border:1.5px solid #64748b;align-items:center;justify-content:center;"></span>`;
+            let iconHtml = `<span style="display:inline-flex;width:13px;height:13px;border-radius:3px;border:1.5px solid #64748b;align-items:center;justify-content:center;"></span>`;
             let itemBg = "rgba(255,255,255,0.02)";
             let textColor = "#cbd5e1";
             let textDecor = "none";
 
             if (isDone) {
-              iconHtml = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+              iconHtml = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
               itemBg = "rgba(16,185,129,0.04)";
               textColor = "#6ee7b7";
               textDecor = "line-through";
             } else if (isProg) {
-              iconHtml = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#38bdf8;box-shadow:0 0 8px #38bdf8;"></span>`;
+              iconHtml = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#38bdf8;box-shadow:0 0 7px #38bdf8;"></span>`;
               itemBg = "rgba(56,189,248,0.08)";
               textColor = "#f8fafc";
             }
 
             return `
-              <div data-task-idx="${task.index != null ? task.index : idx}" class="sx-task-row" style="display:flex;align-items:flex-start;gap:8px;padding:6px 9px;border-radius:7px;background:${itemBg};cursor:pointer;border:1px solid ${isProg ? 'rgba(56,189,248,0.25)' : 'rgba(255,255,255,0.04)'};transition:background 0.15s ease;">
+              <div data-task-idx="${task.index != null ? task.index : idx}" class="sx-task-row" style="display:flex;align-items:flex-start;gap:7px;padding:5px 8px;border-radius:6px;background:${itemBg};cursor:pointer;border:1px solid ${isProg ? 'rgba(56,189,248,0.25)' : 'rgba(255,255,255,0.04)'};transition:background 0.15s ease;">
                 <div style="flex-shrink:0;margin-top:2px;">${iconHtml}</div>
-                <div style="flex-grow:1;font-size:12px;color:${textColor};text-decoration:${textDecor};line-height:1.35;word-break:break-word;">
+                <div style="flex-grow:1;font-size:11.5px;color:${textColor};text-decoration:${textDecor};line-height:1.35;word-break:break-word;">
                   ${esc(task.text)}
-                  ${task.weight > 0 ? `<span style="font-size:10px;color:#38bdf8;font-weight:700;margin-left:5px;background:rgba(56,189,248,0.15);padding:1px 4px;border-radius:3px;">%${task.weight}</span>` : ''}
-                  ${task.estMins > 0 ? `<span style="font-size:10px;color:#fb923c;font-weight:700;margin-left:5px;background:rgba(251,146,60,0.15);padding:1px 4px;border-radius:3px;">~${task.estMins}dk</span>` : ''}
-                  ${isProg ? `<span style="font-size:10px;color:#38bdf8;font-weight:700;margin-left:5px;background:rgba(56,189,248,0.15);padding:1px 4px;border-radius:3px;">İşleniyor</span>` : ''}
+                  ${task.weight > 0 ? `<span style="font-size:9.5px;color:#38bdf8;font-weight:700;margin-left:5px;background:rgba(56,189,248,0.15);padding:1px 4px;border-radius:3px;">%${task.weight}</span>` : ''}
+                  ${task.estMins > 0 ? `<span style="font-size:9.5px;color:#fb923c;font-weight:700;margin-left:5px;background:rgba(251,146,60,0.15);padding:1px 4px;border-radius:3px;">~${task.estMins}dk</span>` : ''}
+                  ${isProg ? `<span style="font-size:9.5px;color:#38bdf8;font-weight:700;margin-left:5px;background:rgba(56,189,248,0.15);padding:1px 4px;border-radius:3px;">\u0130\u015Fleniyor</span>` : ''}
                 </div>
               </div>
             `;
@@ -4346,22 +4400,22 @@
         if (data.recentTools && data.recentTools.length > 0 && toolsTray && toolsList) {
           toolsTray.style.display = "block";
           const toolNames = data.recentTools.map(t => t.name).filter(Boolean);
-          toolsList.innerText = toolNames.slice(-4).join(" → ");
+          toolsList.innerText = toolNames.slice(-4).join(" \u2192 ");
         }
       };
 
       this.network.fetchConversationTasks(cleanConvId).then(data => {
-        if (pop.isConnected) renderTasks(data);
+        if (card.isConnected) renderTasks(data);
       });
 
       this._todoPollTimer = setInterval(async () => {
-        if (!pop.isConnected) {
+        if (!card.isConnected) {
           clearInterval(this._todoPollTimer);
           this._todoPollTimer = null;
           return;
         }
         const fresh = await this.network.fetchConversationTasks(cleanConvId);
-        if (pop.isConnected && fresh) {
+        if (card.isConnected && fresh) {
           renderTasks(fresh);
           this.updateTodoButtonUI(fresh);
         }
@@ -4852,133 +4906,314 @@
     constructor(logger) {
       this.logger = logger;
       this.isRecording = false;
-      this.recognition = null;
+      this.isTranscribing = false;
       this.activeBtn = null;
-      this.originalContent = "";
+      this.audioContext = null;
+      this.mediaStream = null;
+      this.scriptProcessor = null;
+      this.sourceNode = null;
+      this.recordedChunks = [];
+      this.recordStartTime = 0;
+      this.statusIndicator = null;
+      this._hideTimeout = null;
     }
     init() {
-      // Do not hijack native Antigravity "Record voice" button - native Antigravity handles audio transcription natively.
       document.addEventListener("click", (e) => {
-        const btn = e.target.closest('button.sx-voice-btn');
+        const btn = e.target.closest(
+          'button[aria-label*="Record voice" i], [data-tooltip-id*="record-tooltip"], button.sx-voice-btn, button[aria-label*="ses" i], button[aria-label*="voice" i]'
+        );
         if (btn) {
           e.preventDefault();
           e.stopImmediatePropagation();
           this.toggleRecording(btn);
         }
       }, true);
+
       if (!document.getElementById("sx-voice-recorder-styles")) {
         const st = document.createElement("style");
         st.id = "sx-voice-recorder-styles";
         st.textContent = `
-                @keyframes sx-mic-pulse {
-                    0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-                    70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
-                    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-                }
-                button.sx-recording {
-                    background-color: #ef4444 !important;
-                    color: #ffffff !important;
-                    animation: sx-mic-pulse 1.4s infinite !important;
-                }
-                button.sx-recording svg {
-                    color: #ffffff !important;
-                    fill: #ffffff !important;
-                }
-            `;
+          @keyframes sx-mic-pulse {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+          }
+          button.sx-recording {
+            background-color: #ef4444 !important;
+            color: #ffffff !important;
+            animation: sx-mic-pulse 1.4s infinite !important;
+          }
+          button.sx-recording svg {
+            color: #ffffff !important;
+            fill: #ffffff !important;
+          }
+          button.sx-transcribing {
+            background-color: #f59e0b !important;
+            color: #ffffff !important;
+            opacity: 0.85 !important;
+            pointer-events: none !important;
+          }
+          #sx-voice-status-pill {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+            color: #f8fafc;
+            font-size: 12px;
+            font-weight: 500;
+            padding: 6px 16px;
+            border-radius: 20px;
+            z-index: 100005;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            backdrop-filter: blur(12px);
+            pointer-events: none;
+            transition: all 0.25s ease;
+          }
+        `;
         (document.head || document.documentElement)?.appendChild(st);
       }
-      this.logger.info("VoiceRecorder", "Voice recorder initialized with SpeechRecognition support.");
+      this.logger.info("VoiceRecorder", "Native AudioContext VoiceRecorder initialized.");
     }
-    toggleRecording(btn) {
+    async toggleRecording(btn) {
+      if (this.isTranscribing) return;
       if (this.isRecording) {
-        this.stopRecording();
+        await this.stopRecordingAndTranscribe();
       } else {
-        this.startRecording(btn);
+        await this.startRecording(btn);
       }
     }
-    startRecording(btn) {
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) {
-        alert("Taray\u0131c\u0131n\u0131zda veya sisteminizde ses tan\u0131ma (SpeechRecognition) desteklenmiyor.");
-        return;
-      }
+    async startRecording(btn) {
       try {
-        this.recognition = new SR();
-        this.recognition.continuous = true;
-        this.recognition.interimResults = true;
-        this.recognition.lang = navigator.language || "tr-TR";
-        this.activeBtn = btn;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          alert("Mikrofon eri\u015Fimi bu ortamda desteklenmiyor.");
+          return;
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        this.mediaStream = stream;
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        this.audioContext = new AudioContextClass();
+        this.sourceNode = this.audioContext.createMediaStreamSource(stream);
+        this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
+        this.recordedChunks = [];
+        this.recordStartTime = Date.now();
+
+        this.scriptProcessor.onaudioprocess = (e) => {
+          if (!this.isRecording) return;
+          const channelData = e.inputBuffer.getChannelData(0);
+          this.recordedChunks.push(new Float32Array(channelData));
+        };
+
+        this.sourceNode.connect(this.scriptProcessor);
+        this.scriptProcessor.connect(this.audioContext.destination);
+
         this.isRecording = true;
+        this.activeBtn = btn;
         if (btn) {
           btn.classList.add("sx-recording");
           btn.setAttribute("aria-label", "Stop recording");
-          btn.title = "Kayd\u0131 durdurmak i\xE7in t\u0131klay\u0131n";
+          btn.title = "Kayd\u0131 bitirmek i\xE7in tekrar t\u0131klay\u0131n";
         }
-        const editor = document.querySelector('[contenteditable="true"]');
-        if (editor) editor.focus();
-        let lastFinalText = "";
-        this.recognition.onresult = (event) => {
-          let interim = "";
-          let newFinal = "";
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) {
-              newFinal += event.results[i][0].transcript;
-            } else {
-              interim += event.results[i][0].transcript;
-            }
-          }
-          if (newFinal && newFinal !== lastFinalText) {
-            lastFinalText = newFinal;
-            this.insertTextIntoPrompt(newFinal.trim() + " ");
-          }
-        };
-        this.recognition.onerror = (event) => {
-          this.logger.error("VoiceRecorder", "Speech recognition error", event.error);
-          if (event.error !== "no-speech") {
-            this.stopRecording();
-          }
-        };
-        this.recognition.onend = () => {
-          if (this.isRecording) {
-            try {
-              this.recognition.start();
-            } catch (e) {
-              this.stopRecording();
-            }
-          } else {
-            this.stopRecording();
-          }
-        };
-        this.recognition.start();
-        this.logger.info("VoiceRecorder", "Speech recording started");
-      } catch (e) {
-        this.logger.error("VoiceRecorder", "Failed to start recording", e);
-        this.stopRecording();
+        this.showStatusPill("\uD83D\uDD34 Dinleniyor... Bitirmek i\xE7in mikrofona tekrar t\u0131klay\u0131n");
+        this.logger.info("VoiceRecorder", "AudioContext recording started");
+      } catch (err) {
+        this.logger.error("VoiceRecorder", "Failed to access microphone", err);
+        this.hideStatusPill();
+        alert("Mikrofon eri\u015Fim hatas\u0131: " + (err.message || err));
+        this.cleanupAudio();
       }
     }
-    stopRecording() {
+    async stopRecordingAndTranscribe() {
       this.isRecording = false;
-      if (this.recognition) {
-        try {
-          this.recognition.stop();
-        } catch (e) {
-        }
-        this.recognition = null;
+      const btn = this.activeBtn;
+      if (btn) {
+        btn.classList.remove("sx-recording");
+        btn.classList.add("sx-transcribing");
+        btn.title = "Metne d\xF6n\xFC\u015Ft\xFCr\xFCl\xFCyor...";
       }
-      if (this.activeBtn) {
-        this.activeBtn.classList.remove("sx-recording");
-        this.activeBtn.setAttribute("aria-label", "Record voice memo");
-        this.activeBtn.title = "Ses kayd\u0131 ba\u015Flat";
+
+      const duration = (Date.now() - this.recordStartTime) / 1000;
+      this.showStatusPill("\u23F3 Metne d\xF6n\xFC\u015Ft\xFCr\xFCl\xFCyor...");
+      this.isTranscribing = true;
+
+      const sampleRate = this.audioContext ? this.audioContext.sampleRate : 44100;
+      const chunks = this.recordedChunks;
+
+      this.cleanupAudio();
+
+      if (chunks.length === 0 || duration < 0.3) {
+        this.hideStatusPill();
+        if (btn) {
+          btn.classList.remove("sx-transcribing");
+          btn.title = "Ses kayd\u0131 ba\u015Flat";
+        }
+        this.isTranscribing = false;
+        return;
+      }
+
+      try {
+        let totalLength = 0;
+        for (let i = 0; i < chunks.length; i++) {
+          totalLength += chunks[i].length;
+        }
+        const merged = new Float32Array(totalLength);
+        let offset = 0;
+        for (let i = 0; i < chunks.length; i++) {
+          merged.set(chunks[i], offset);
+          offset += chunks[i].length;
+        }
+
+        const targetSampleRate = 16000;
+        const resampled = this.resampleAudio(merged, sampleRate, targetSampleRate);
+        const wavBlob = this.encodeWAV(resampled, targetSampleRate);
+
+        const resp = await fetch("http://localhost:15725/sx/transcribe-audio?lang=tr-TR", {
+          method: "POST",
+          headers: { "Content-Type": "audio/wav" },
+          body: wavBlob
+        });
+
+        const data = await resp.json();
+        if (data && data.ok && data.text) {
+          const recognized = data.text.trim();
+          this.insertTextIntoPrompt(recognized + " ");
+          this.showStatusPill(`\u2713 "${recognized}" eklendi`, 2500);
+        } else if (data && data.text === "") {
+          this.showStatusPill("\u26A0\uFE0F Ses alg\u0131lanamad\u0131", 2500);
+        } else {
+          this.showStatusPill("\u26A0\uFE0F " + (data.error || "D\xF6n\xFC\u015Ft\xFCrme ba\u015Far\u0131s\u0131z"), 2500);
+        }
+      } catch (err) {
+        this.logger.error("VoiceRecorder", "Transcription error", err);
+        this.showStatusPill("\u26A0\uFE0F Sunucu ba\u011Flant\u0131 hatas\u0131", 2500);
+      } finally {
+        this.isTranscribing = false;
+        if (btn) {
+          btn.classList.remove("sx-transcribing");
+          btn.setAttribute("aria-label", "Record voice memo");
+          btn.title = "Ses kayd\u0131 ba\u015Flat";
+        }
         this.activeBtn = null;
       }
-      this.logger.info("VoiceRecorder", "Speech recording stopped");
+    }
+    resampleAudio(samples, oldRate, newRate) {
+      if (oldRate === newRate) return samples;
+      const ratio = oldRate / newRate;
+      const newLength = Math.round(samples.length / ratio);
+      const result = new Float32Array(newLength);
+      for (let i = 0; i < newLength; i++) {
+        const originIndex = i * ratio;
+        const index = Math.floor(originIndex);
+        const frac = originIndex - index;
+        const next = index + 1 < samples.length ? samples[index + 1] : samples[index];
+        result[i] = samples[index] * (1 - frac) + next * frac;
+      }
+      return result;
+    }
+    encodeWAV(samples, sampleRate) {
+      const buffer = new ArrayBuffer(44 + samples.length * 2);
+      const view = new DataView(buffer);
+      const writeString = (v, off, str) => {
+        for (let i = 0; i < str.length; i++) {
+          v.setUint8(off + i, str.charCodeAt(i));
+        }
+      };
+      writeString(view, 0, "RIFF");
+      view.setUint32(4, 36 + samples.length * 2, true);
+      writeString(view, 8, "WAVE");
+      writeString(view, 12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeString(view, 36, "data");
+      view.setUint32(40, samples.length * 2, true);
+
+      let offset = 44;
+      for (let i = 0; i < samples.length; i++, offset += 2) {
+        const s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, s < 0 ? s * 32768 : s * 32767, true);
+      }
+      return new Blob([view], { type: "audio/wav" });
+    }
+    cleanupAudio() {
+      if (this.sourceNode) {
+        try { this.sourceNode.disconnect(); } catch (e) {}
+        this.sourceNode = null;
+      }
+      if (this.scriptProcessor) {
+        try { this.scriptProcessor.disconnect(); } catch (e) {}
+        this.scriptProcessor = null;
+      }
+      if (this.mediaStream) {
+        try {
+          this.mediaStream.getTracks().forEach((t) => t.stop());
+        } catch (e) {}
+        this.mediaStream = null;
+      }
+      if (this.audioContext) {
+        try { this.audioContext.close(); } catch (e) {}
+        this.audioContext = null;
+      }
+    }
+    showStatusPill(text, autoHideMs = 0) {
+      if (!this.statusIndicator) {
+        this.statusIndicator = document.createElement("div");
+        this.statusIndicator.id = "sx-voice-status-pill";
+        document.body.appendChild(this.statusIndicator);
+      }
+      this.statusIndicator.textContent = text;
+      this.statusIndicator.style.display = "flex";
+      this.statusIndicator.style.opacity = "1";
+
+      if (this._hideTimeout) clearTimeout(this._hideTimeout);
+      if (autoHideMs > 0) {
+        this._hideTimeout = setTimeout(() => {
+          this.hideStatusPill();
+        }, autoHideMs);
+      }
+    }
+    hideStatusPill() {
+      if (this.statusIndicator) {
+        this.statusIndicator.style.opacity = "0";
+        setTimeout(() => {
+          if (this.statusIndicator && this.statusIndicator.style.opacity === "0") {
+            this.statusIndicator.style.display = "none";
+          }
+        }, 300);
+      }
     }
     insertTextIntoPrompt(text) {
       try {
-        const editor = document.querySelector('[contenteditable="true"]');
+        const editor = document.querySelector('[contenteditable="true"]') ||
+                       document.querySelector('textarea.antigravity-prompt-input') ||
+                       document.querySelector('textarea');
         if (editor) {
           editor.focus();
-          document.execCommand("insertText", false, text);
+          if (editor.isContentEditable) {
+            document.execCommand("insertText", false, text);
+          } else {
+            const start = editor.selectionStart || 0;
+            const end = editor.selectionEnd || 0;
+            const val = editor.value || "";
+            editor.value = val.substring(0, start) + text + val.substring(end);
+            editor.selectionStart = editor.selectionEnd = start + text.length;
+            editor.dispatchEvent(new Event("input", { bubbles: true }));
+          }
         }
       } catch (e) {
         this.logger.error("VoiceRecorder", "Error inserting recognized text", e);
@@ -8580,10 +8815,16 @@
       }
       const isCmdOrCtrl = e.ctrlKey || e.metaKey;
       const keyLower = (e.key || "").toLowerCase();
-      const isKeyI = e.code === "KeyI" || keyLower === "i" || keyLower === "ı";
+      const isKeyI = e.code === "KeyI" || keyLower === "i" || keyLower === "ı" || e.key === "I" || e.key === "İ";
       if ((isCmdOrCtrl && e.shiftKey && isKeyI) || e.key === "F12" || e.code === "F12") {
         try {
-          if (window.electron?.toggleDevTools) {
+          if (window.electronNative && typeof window.electronNative.toggleDevTools === "function") {
+            e.preventDefault();
+            e.stopPropagation();
+            window.electronNative.toggleDevTools();
+          } else if (window.electron && typeof window.electron.toggleDevTools === "function") {
+            e.preventDefault();
+            e.stopPropagation();
             window.electron.toggleDevTools();
           }
         } catch(err) {}

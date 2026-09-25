@@ -184,6 +184,32 @@ electron_1.app
     }
     // Register IPC handlers
     (0, ipcHandlers_1.registerIpcHandlers)(storageManager);
+
+    // Global DevTools shortcuts (F12 and Ctrl+Shift+I)
+    try {
+        electron_1.globalShortcut.register('F12', () => {
+            const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
+            if (win) win.webContents.toggleDevTools();
+        });
+        electron_1.globalShortcut.register('CommandOrControl+Shift+I', () => {
+            const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
+            if (win) win.webContents.toggleDevTools();
+        });
+    } catch(e) {
+        console.error('[SX DevTools Shortcut Error]', e);
+    }
+
+    // Explicitly allow microphone/media access for voice recording
+    try {
+        electron_1.session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+            if (permission === 'media' || permission === 'microphone') return true;
+            return true;
+        });
+        electron_1.session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+            if (permission === 'media' || permission === 'microphone') return callback(true);
+            return callback(true);
+        });
+    } catch(e) {}
     electron_1.ipcMain.on('sx:get-inject-script', (event) => {
         try {
             const p = path.join(__dirname, 'sx-inject.js');
