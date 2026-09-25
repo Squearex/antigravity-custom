@@ -8578,6 +8578,16 @@
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r" || e.key === "F5") {
         window.location.reload();
       }
+      const isCmdOrCtrl = e.ctrlKey || e.metaKey;
+      const keyLower = (e.key || "").toLowerCase();
+      const isKeyI = e.code === "KeyI" || keyLower === "i" || keyLower === "ı";
+      if ((isCmdOrCtrl && e.shiftKey && isKeyI) || e.key === "F12" || e.code === "F12") {
+        try {
+          if (window.electron?.toggleDevTools) {
+            window.electron.toggleDevTools();
+          }
+        } catch(err) {}
+      }
     }, true);
     logger.info("Core", "SX Core SDK initialized successfully.");
   })();

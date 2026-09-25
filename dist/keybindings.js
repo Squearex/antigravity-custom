@@ -14,6 +14,12 @@ function registerKeybindings(win, actions) {
                 actions.onQuitRequested();
                 event.preventDefault();
             }
+            const keyLower = (input.key || '').toLowerCase();
+            const isKeyI = input.code === 'KeyI' || keyLower === 'i' || keyLower === 'ı';
+            if ((isCmdOrCtrl && input.shift && isKeyI) || input.key === 'F12' || input.code === 'F12') {
+                win.webContents.toggleDevTools();
+                event.preventDefault();
+            }
         }
     });
 }

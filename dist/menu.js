@@ -79,20 +79,16 @@ function setupApplicationMenu(url) {
             await electron_1.shell.openExternal('https://antigravity.google/docs');
         },
     }));
-    const hideDevTools = (menuInstance) => {
-        menuInstance.items?.forEach((item) => {
-            // Typing specifies this as 'toggleDevTools', but observing this
-            // having the value 'toggledevtools'.
-            if (item.role?.toLocaleLowerCase() === 'toggledevtools') {
-                item.visible = false;
+    addItemToSubmenu(menu, 'Help', 1, new electron_1.MenuItem({
+        label: 'Toggle Developer Tools',
+        accelerator: 'CmdOrCtrl+Shift+I',
+        click: () => {
+            const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
+            if (win) {
+                win.webContents.toggleDevTools();
             }
-            // Recursively search submenus (like 'View').
-            if (item.submenu) {
-                hideDevTools(item.submenu);
-            }
-        });
-    };
-    hideDevTools(menu);
+        },
+    }));
     // Re-apply the menu so the change takes effect.
     electron_1.Menu.setApplicationMenu(menu);
     // Asynchronously adds "Connect to WSL" (Windows only, when WSL is present).
