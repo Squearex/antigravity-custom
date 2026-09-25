@@ -1,0 +1,16 @@
+{
+  "name": "Antigravity Custom (SX Core SDK)",
+  "version": "2.2.0",
+  "build": "2026.09.25-r20",
+  "commit": "74bead2",
+  "updatedAt": "2026-09-25T14:46:24.791Z",
+  "protected": true,
+  "features": [
+    "Live Streaming Google Speech Recognition",
+    "Ghost-Text Realtime Feedback",
+    "Universal Provider & Model Selector",
+    "In-App Auto Update Pill & Dialog",
+    "Native ConnectRPC Audio Worklet Integration",
+    "Full Obfuscation & Source Protection"
+  ]
+}

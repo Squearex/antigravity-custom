@@ -9,6 +9,10 @@
     "email": "antigravity-support@google.com"
   },
   "main": "dist/main.js",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "install-sx": "node installer.js"
+  },
   "dependencies": {
     "@bufbuild/protobuf": "^2.13.0",
     "@connectrpc/connect": "^2.1.2",

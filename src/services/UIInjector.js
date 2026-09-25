@@ -190,22 +190,157 @@ export class UIInjector {
             .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
 
-    async checkForUpdates() {
+    async checkForUpdates(manual = false) {
         try {
-            const r = await this.network.get('/versions');
-            if (!r || !r.ok) return;
-            const curInject = window.__SX_BUILD || '';
-            if (r.injectBuild && curInject && r.injectBuild !== curInject) {
-                if (this._updateNotified !== r.injectBuild) {
-                    this._updateNotified = r.injectBuild;
-                    this.logger?.info?.('UIInjector', `New inject build ${r.injectBuild} available (running ${curInject})`);
-                }
-                if (this._isIdleForReload()) {
-                    this.logger?.info?.('UIInjector', 'Auto-reloading to new build while idle.');
-                    window.location.reload();
+            const resp = await fetch('http://localhost:15725/sx/check-update');
+            const data = await resp.json();
+            if (data && data.ok) {
+                if (data.updateAvailable) {
+                    this._latestUpdateData = data;
+                    this.logger?.info?.('UIInjector', `SX update available: ${data.latestCommit} (${data.latestMessage})`);
+                    this.hookDOM();
+                    if (manual) {
+                        this.showUpdateDialog(data);
+                    }
+                } else {
+                    this._latestUpdateData = null;
+                    document.getElementById('sx-update-pill')?.remove();
+                    if (manual) {
+                        this.showUpToDateToast(data.currentCommit || data.currentVersion);
+                    }
                 }
             }
-        } catch(e) {}
+        } catch(e) {
+            if (manual) {
+                alert('Güncelleme denetlenirken sunucuya bağlanılamadı.');
+            }
+        }
+    }
+
+    showUpdateDialog(updateInfo) {
+        let existing = document.getElementById('sx-update-modal');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'sx-update-modal';
+        overlay.className = 'sx-modal-overlay';
+
+        const dialog = document.createElement('div');
+        dialog.className = 'sx-update-dialog';
+
+        dialog.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.08);padding-bottom:14px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#059669,#0284c7);display:flex;align-items:center;justify-content:center;box-shadow:0 0 12px rgba(16,185,129,0.35);">
+                        <span style="font-size:16px;">⚡</span>
+                    </div>
+                    <div>
+                        <div style="font-size:14px;font-weight:700;color:#f8fafc;letter-spacing:-0.2px;">Antigravity Custom Güncellemesi</div>
+                        <div style="font-size:11px;color:#94a3b8;font-family:ui-monospace,monospace;">SX Core SDK v${updateInfo.currentVersion || '2.2.0'}</div>
+                    </div>
+                </div>
+                <button class="sx-close-btn" style="background:none;border:none;color:#64748b;font-size:18px;cursor:pointer;padding:4px 8px;border-radius:6px;transition:all 0.15s;">✕</button>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:12px;margin-top:4px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);padding:10px 14px;border-radius:8px;">
+                    <div style="font-size:11px;color:#94a3b8;">Mevcut Sürüm: <span style="color:#e2e8f0;font-weight:600;font-family:ui-monospace,monospace;">${updateInfo.currentCommit || '74bead2'}</span></div>
+                    <div style="font-size:11px;color:#34d399;display:flex;align-items:center;gap:6px;">
+                        <span>Yeni Sürüm:</span>
+                        <span style="font-weight:700;font-family:ui-monospace,monospace;background:rgba(16,185,129,0.15);padding:2px 6px;border-radius:4px;border:1px solid rgba(16,185,129,0.3);">${updateInfo.latestCommit || 'Yeni'}</span>
+                    </div>
+                </div>
+
+                <div style="background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.06);padding:12px 14px;border-radius:8px;">
+                    <div style="font-size:10.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">Yenilikler / Değişiklikler</div>
+                    <div style="font-size:12.5px;color:#e2e8f0;line-height:1.5;">${updateInfo.latestMessage || 'Performans iyileştirmeleri ve hata düzeltmeleri.'}</div>
+                </div>
+            </div>
+
+            <div id="sx-update-status" style="display:none;font-size:12px;padding:8px 12px;border-radius:6px;text-align:center;"></div>
+
+            <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:10px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08);">
+                <button id="sx-cancel-update-btn" class="sx-btn" style="padding:7px 16px;font-size:12px;">Daha Sonra</button>
+                <button id="sx-exec-update-btn" class="sx-btn sx-btn-primary" style="padding:7px 18px;font-size:12px;background:linear-gradient(135deg,#10b981,#06b6d4);color:#ffffff;border:none;font-weight:600;box-shadow:0 0 16px rgba(16,185,129,0.35);">
+                    🚀 Şimdi Güncelle ve Yeniden Başlat
+                </button>
+            </div>
+        `;
+
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+
+        const close = () => overlay.remove();
+        dialog.querySelector('.sx-close-btn')?.addEventListener('click', close);
+        dialog.querySelector('#sx-cancel-update-btn')?.addEventListener('click', close);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+        const execBtn = dialog.querySelector('#sx-exec-update-btn');
+        const statusBox = dialog.querySelector('#sx-update-status');
+
+        execBtn?.addEventListener('click', async () => {
+            execBtn.disabled = true;
+            execBtn.style.opacity = '0.6';
+            execBtn.innerHTML = `
+                <svg style="width:14px;height:14px;animation:spin 1s linear infinite;display:inline-block;vertical-align:middle;margin-right:6px;" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" opacity="0.25"></circle>
+                    <path fill="currentColor" opacity="0.75" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                </svg>
+                Güncelleniyor...
+            `;
+            if (statusBox) {
+                statusBox.style.display = 'block';
+                statusBox.style.background = 'rgba(16, 185, 129, 0.1)';
+                statusBox.style.color = '#34d399';
+                statusBox.textContent = 'En son paketler çekiliyor ve kuruluyor...';
+            }
+
+            try {
+                const resp = await fetch('http://localhost:15725/sx/apply-update', { method: 'POST' });
+                const res = await resp.json();
+                if (res && res.ok) {
+                    if (statusBox) {
+                        statusBox.textContent = '✓ Güncelleme tamamlandı! Yeniden başlatılıyor...';
+                    }
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1200);
+                } else {
+                    if (statusBox) {
+                        statusBox.style.background = 'rgba(239, 68, 68, 0.15)';
+                        statusBox.style.color = '#f87171';
+                        statusBox.textContent = 'Hata: ' + (res?.error || 'Güncelleme uygulanamadı.');
+                    }
+                    execBtn.disabled = false;
+                    execBtn.style.opacity = '1';
+                    execBtn.textContent = 'Tekrar Dene';
+                }
+            } catch(err) {
+                if (statusBox) {
+                    statusBox.style.background = 'rgba(239, 68, 68, 0.15)';
+                    statusBox.style.color = '#f87171';
+                    statusBox.textContent = 'Bağlantı hatası: ' + err.message;
+                }
+                execBtn.disabled = false;
+                execBtn.style.opacity = '1';
+                execBtn.textContent = 'Tekrar Dene';
+            }
+        });
+    }
+
+    showUpToDateToast(ver) {
+        const toast = document.createElement('div');
+        toast.className = 'sx-toast';
+        toast.style.cssText = `
+            position: fixed; bottom: 24px; right: 24px; z-index: 999999;
+            background: #0f172a; border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #34d399; padding: 12px 18px; border-radius: 8px; font-size: 12.5px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 8px;
+            animation: sxFadeIn 0.2s ease-out;
+        `;
+        toast.innerHTML = `<span>✓</span><span>SX Core SDK güncel (${ver || ''})</span>`;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3500);
     }
 
     _isIdleForReload() {
@@ -222,11 +357,43 @@ export class UIInjector {
         } catch(e) { return false; }
     }
 
+
     injectGlobalStyles() {
         if (document.getElementById('sx-custom-styles')) return;
         const style = document.createElement('style');
         style.id = 'sx-custom-styles';
         style.textContent = `
+            /* SX Update Pill */
+            .sx-update-pill {
+                display: inline-flex !important; align-items: center !important; gap: 5.5px !important;
+                height: 26px !important; padding: 0 10px !important; border-radius: 9999px !important;
+                background: linear-gradient(135deg, rgba(16, 185, 129, 0.22), rgba(6, 182, 212, 0.28)) !important;
+                border: 1px solid rgba(52, 211, 153, 0.55) !important; color: #34d399 !important;
+                font-size: 11px !important; font-weight: 600 !important; cursor: pointer !important;
+                transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1) !important;
+                box-shadow: 0 0 14px rgba(16, 185, 129, 0.25) !important; user-select: none !important;
+                margin-right: 6px !important;
+            }
+            .sx-update-pill:hover {
+                background: linear-gradient(135deg, rgba(16, 185, 129, 0.38), rgba(6, 182, 212, 0.45)) !important;
+                border-color: #6ee7b7 !important; color: #ffffff !important;
+                box-shadow: 0 0 20px rgba(16, 185, 129, 0.55) !important; transform: translateY(-1px) !important;
+            }
+            .sx-update-dot {
+                width: 6px; height: 6px; border-radius: 50%; background-color: #34d399;
+                box-shadow: 0 0 8px #34d399; animation: sxUpdatePulse 1.6s infinite ease-in-out;
+            }
+            @keyframes sxUpdatePulse {
+                0%, 100% { opacity: 1; transform: scale(1); }
+                50% { opacity: 0.35; transform: scale(0.8); }
+            }
+            .sx-update-dialog {
+                background: #0f172a; border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 14px; width: 480px; max-width: 92vw; padding: 24px; color: #f1f5f9;
+                box-shadow: 0 24px 50px rgba(0, 0, 0, 0.7), 0 0 30px rgba(16, 185, 129, 0.2);
+                display: flex; flex-direction: column; gap: 16px; font-family: inherit;
+            }
+
             .sx-section { margin-top: 24px; margin-bottom: 8px; }
             .sx-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
             .sx-section-title { font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 1px; }
@@ -1701,7 +1868,7 @@ export class UIInjector {
         };
 
         // Safety cleanup: immediately remove our buttons if they ever got placed inside a question card
-        ['sx-effort-pill', 'sx-context-btn', 'sx-perf-btn'].forEach(id => {
+        ['sx-effort-pill', 'sx-context-btn', 'sx-perf-btn', 'sx-update-pill'].forEach(id => {
             const b = document.getElementById(id);
             if (b && isQuestionWidget(b)) {
                 b.remove();
@@ -1740,12 +1907,13 @@ export class UIInjector {
         // If an ask_question is actively shown and normal prompt input is hidden/absent,
         // remove custom chat buttons so they never bleed into the question UI
         if (isQuestionActive && (!promptInput || promptInput.offsetWidth === 0)) {
-            ['sx-effort-pill', 'sx-context-btn', 'sx-perf-btn'].forEach(id => {
+            ['sx-effort-pill', 'sx-context-btn', 'sx-perf-btn', 'sx-update-pill'].forEach(id => {
                 const b = document.getElementById(id);
                 if (b) b.remove();
             });
             actionContainer = null;
         }
+
 
         if (actionContainer) {
             let ctxBtn = document.getElementById('sx-context-btn');
@@ -1814,6 +1982,31 @@ export class UIInjector {
 
             if (ctxBtn.previousElementSibling !== perfBtn) {
                 actionContainer.insertBefore(perfBtn, ctxBtn);
+            }
+
+            let updateBtn = document.getElementById('sx-update-pill');
+            if (this._latestUpdateData && this._latestUpdateData.updateAvailable) {
+                if (!updateBtn) {
+                    updateBtn = document.createElement('button');
+                    updateBtn.id = 'sx-update-pill';
+                    updateBtn.type = 'button';
+                    updateBtn.className = 'sx-update-pill';
+                    updateBtn.title = `⚡ SX Güncelleme Mevcut! (${this._latestUpdateData.latestCommit}): ${this._latestUpdateData.latestMessage || ''}`;
+                    updateBtn.innerHTML = `
+                        <span class="sx-update-dot"></span>
+                        <span style="font-weight:700;">⚡</span>
+                        <span>SX Güncelle</span>
+                    `;
+                    updateBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        this.showUpdateDialog(this._latestUpdateData);
+                    };
+                }
+                if (perfBtn && perfBtn.previousElementSibling !== updateBtn) {
+                    actionContainer.insertBefore(updateBtn, perfBtn);
+                }
+            } else if (updateBtn) {
+                updateBtn.remove();
             }
 
             this.quota.updateContextButtonUI();
