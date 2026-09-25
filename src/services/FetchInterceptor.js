@@ -22,6 +22,17 @@ export class FetchInterceptor {
     async handleFetch(context, args) {
         const url = args[0]?.toString() || '';
 
+        // 0. Native Antigravity Audio Transcription Interceptor (ConnectRPC)
+        if (url.includes('StreamAudioTranscription')) {
+            return this.handleStreamAudioTranscription(context, args);
+        }
+        if (url.includes('SendAudioChunk')) {
+            return this.handleSendAudioChunk(context, args);
+        }
+        if (url.includes('EndAudioSession')) {
+            return this.handleEndAudioSession(context, args);
+        }
+
         // 1. Intercept GetUserStatus
         if (url.includes('GetUserStatus')) {
             try {
@@ -266,5 +277,257 @@ export class FetchInterceptor {
         }
 
         return resp;
+    }
+
+    encodeGrpcFrame(flag, u8) {
+        const frame = new Uint8Array(5 + u8.length);
+        frame[0] = flag;
+        frame[1] = (u8.length >>> 24) & 0xff;
+        frame[2] = (u8.length >>> 16) & 0xff;
+        frame[3] = (u8.length >>> 8) & 0xff;
+        frame[4] = u8.length & 0xff;
+        frame.set(u8, 5);
+        return frame;
+    }
+
+    frameGrpcJson(obj, flag = 0) {
+        return this.encodeGrpcFrame(flag, new TextEncoder().encode(JSON.stringify(obj)));
+    }
+
+    frameGrpcTrailer() {
+        return this.encodeGrpcFrame(128, new TextEncoder().encode("grpc-status: 0\r\n\r\n"));
+    }
+
+    makeGrpcWebUnaryOk() {
+        const f0 = this.frameGrpcJson({});
+        const f128 = this.frameGrpcTrailer();
+        const comb = new Uint8Array(f0.length + f128.length);
+        comb.set(f0, 0);
+        comb.set(f128, f0.length);
+        return comb;
+    }
+
+    handleStreamAudioTranscription(context, args) {
+        const self = this;
+        const sessionId = 'sx_audio_' + Date.now();
+        let streamCtrl = null;
+
+        const session = {
+            sessionId,
+            phraseChunks: [],
+            accumulatedBytes: 0,
+            noiseFloor: 0.015,
+            hadVoice: false,
+            lastVoiceTime: 0,
+            lastInterimTime: 0,
+            checkInterval: null,
+            isFinished: false,
+            isTranscribing: false,
+
+            addChunk(pcmBytes) {
+                if (this.isFinished) return;
+                this.phraseChunks.push(pcmBytes);
+                this.accumulatedBytes += pcmBytes.length;
+
+                const sampleCount = Math.floor(pcmBytes.length / 2);
+                if (sampleCount > 0) {
+                    const view = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
+                    let sumSq = 0;
+                    for (let i = 0; i < sampleCount; i++) {
+                        const sample = view.getInt16(i * 2, true) / 32768.0;
+                        sumSq += sample * sample;
+                    }
+                    const rms = Math.sqrt(sumSq / sampleCount);
+                    if (rms < this.noiseFloor * 1.5) {
+                        this.noiseFloor = this.noiseFloor * 0.96 + rms * 0.04;
+                    }
+                    if (rms > Math.max(0.018, this.noiseFloor * 2.0)) {
+                        this.hadVoice = true;
+                        this.lastVoiceTime = performance.now();
+                    }
+                }
+            },
+
+            async transcribe(isFinal = false) {
+                if (this.isTranscribing) return;
+                if (!this.phraseChunks.length || this.accumulatedBytes < 3200) return;
+
+                const chunks = isFinal ? this.phraseChunks : [...this.phraseChunks];
+                if (isFinal) {
+                    this.phraseChunks = [];
+                    this.accumulatedBytes = 0;
+                    this.hadVoice = false;
+                }
+
+                this.isTranscribing = true;
+
+                const totalLen = chunks.reduce((acc, c) => acc + c.length, 0);
+                const merged = new Uint8Array(totalLen);
+                let off = 0;
+                for (const c of chunks) {
+                    merged.set(c, off);
+                    off += c.length;
+                }
+
+                const wavBlob = self.encodeWAV16(merged, 16000);
+                try {
+                    const lang = navigator.language || 'tr-TR';
+                    const resp = await self.origFetch(`http://localhost:15725/sx/transcribe-audio?lang=${encodeURIComponent(lang)}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'audio/wav' },
+                        body: wavBlob
+                    });
+                    const res = await resp.json();
+                    if (res && res.ok && res.text) {
+                        const text = res.text.trim();
+                        if (text && streamCtrl && !this.isFinished) {
+                            streamCtrl.enqueue(self.frameGrpcJson({
+                                transcription: {
+                                    text: text,
+                                    isFinal: isFinal
+                                }
+                            }));
+                        }
+                    }
+                } catch(e) {
+                    console.error('[SX StreamAudio] Transcription failed:', e);
+                } finally {
+                    this.isTranscribing = false;
+                }
+            },
+
+            async end() {
+                if (this.isFinished) return;
+                this.isFinished = true;
+                if (this.checkInterval) {
+                    clearInterval(this.checkInterval);
+                    this.checkInterval = null;
+                }
+                if (this.accumulatedBytes >= 3200) {
+                    await this.transcribe(true);
+                }
+                if (streamCtrl) {
+                    streamCtrl.enqueue(self.frameGrpcJson({ complete: {} }));
+                    streamCtrl.enqueue(self.frameGrpcTrailer());
+                    try { streamCtrl.close(); } catch(e) {}
+                }
+            }
+        };
+
+        session.checkInterval = setInterval(() => {
+            if (session.isFinished) return;
+            const now = performance.now();
+            if (session.hadVoice) {
+                const silenceMs = now - session.lastVoiceTime;
+                // Case 1: User paused speaking (> 300ms) -> commit final text
+                if (silenceMs >= 300 && session.accumulatedBytes >= 4800) {
+                    session.transcribe(true);
+                }
+                // Case 2: User is actively speaking -> stream interim ghost-text every 350ms
+                else if (silenceMs < 300 && (now - session.lastInterimTime) >= 350 && session.accumulatedBytes >= 6400) {
+                    session.lastInterimTime = now;
+                    session.transcribe(false);
+                }
+            }
+        }, 60);
+
+        this.activeAudioSession = session;
+
+        const stream = new ReadableStream({
+            start(controller) {
+                streamCtrl = controller;
+                controller.enqueue(self.frameGrpcJson({
+                    ready: { sessionId }
+                }));
+            },
+            cancel() {
+                session.end();
+            }
+        });
+
+        return new Response(stream, {
+            status: 200,
+            headers: {
+                'Content-Type': 'application/grpc-web+json'
+            }
+        });
+    }
+
+    async handleSendAudioChunk(context, args) {
+        try {
+            let bodyBytes = args[1]?.body;
+            if (bodyBytes) {
+                let jsonStr = '';
+                if (typeof bodyBytes === 'string') {
+                    jsonStr = bodyBytes;
+                } else if (bodyBytes instanceof Uint8Array || bodyBytes instanceof ArrayBuffer) {
+                    const u8 = bodyBytes instanceof Uint8Array ? bodyBytes : new Uint8Array(bodyBytes);
+                    if (u8.length > 5 && u8[0] === 0) {
+                        const dataLen = (u8[1] << 24) | (u8[2] << 16) | (u8[3] << 8) | u8[4];
+                        jsonStr = new TextDecoder().decode(u8.slice(5, 5 + dataLen));
+                    } else {
+                        jsonStr = new TextDecoder().decode(u8);
+                    }
+                }
+                if (jsonStr) {
+                    const data = JSON.parse(jsonStr);
+                    if (data.data && this.activeAudioSession) {
+                        let pcmBytes;
+                        if (typeof data.data === 'string') {
+                            const binary = atob(data.data);
+                            pcmBytes = new Uint8Array(binary.length);
+                            for (let i = 0; i < binary.length; i++) {
+                                pcmBytes[i] = binary.charCodeAt(i);
+                            }
+                        } else if (Array.isArray(data.data)) {
+                            pcmBytes = new Uint8Array(data.data);
+                        }
+                        if (pcmBytes) {
+                            this.activeAudioSession.addChunk(pcmBytes);
+                        }
+                    }
+                }
+            }
+        } catch(e) {}
+
+        return new Response(this.makeGrpcWebUnaryOk(), {
+            status: 200,
+            headers: { 'Content-Type': 'application/grpc-web+json' }
+        });
+    }
+
+    async handleEndAudioSession(context, args) {
+        if (this.activeAudioSession) {
+            await this.activeAudioSession.end();
+            this.activeAudioSession = null;
+        }
+        return new Response(this.makeGrpcWebUnaryOk(), {
+            status: 200,
+            headers: { 'Content-Type': 'application/grpc-web+json' }
+        });
+    }
+
+
+    encodeWAV16(pcmBytes, sampleRate = 16000) {
+        const buffer = new ArrayBuffer(44 + pcmBytes.length);
+        const view = new DataView(buffer);
+        const writeStr = (off, s) => {
+            for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+        };
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + pcmBytes.length, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true); // PCM
+        view.setUint16(22, 1, true); // Mono
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true);
+        view.setUint16(32, 2, true);
+        view.setUint16(34, 16, true); // 16-bit
+        writeStr(36, 'data');
+        view.setUint32(40, pcmBytes.length, true);
+        new Uint8Array(buffer, 44).set(pcmBytes);
+        return new Blob([buffer], { type: 'audio/wav' });
     }
 }

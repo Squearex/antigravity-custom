@@ -371,21 +371,6 @@
         return null;
       }
     }
-    async fetchConversationTasks(convId) {
-      try {
-        const res = await this.get(`/get-conversation-tasks?convId=${encodeURIComponent(convId)}`);
-        return res && res.ok ? res : null;
-      } catch (e) {
-        return null;
-      }
-    }
-    async updateConversationTask(convId, taskIndex, completed) {
-      try {
-        return await this.post("/update-conversation-tasks", { convId, taskIndex, completed });
-      } catch (e) {
-        return null;
-      }
-    }
     proxyFetch(targetUrl, method = "GET", headers = {}, body) {
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -3436,8 +3421,6 @@
       this._latestLivePerf = null;
       this._observer = null;
       this._perfHistory = {};
-      this._perfCascade = {};
-      this._todoPollTimer = null;
     }
     init() {
       document.addEventListener("click", (e) => {
@@ -3446,10 +3429,6 @@
           perfPop.remove();
           const pBtn = document.getElementById("sx-perf-btn");
           if (pBtn) pBtn.classList.remove("sx-active");
-        }
-        const todoPop = document.getElementById("sx-todo-popover");
-        if (todoPop && !todoPop.contains(e.target) && !e.target.closest("#sx-todo-btn")) {
-          this.closeTodoPopover();
         }
       });
       this.setupMessageFootersObserver();
@@ -3696,12 +3675,8 @@
         if (raw?.history && Array.isArray(raw.history)) {
           this._perfHistory[cleanConvId] = raw.history;
         }
-        if (raw?.cascade) {
-          this._perfCascade[cleanConvId] = raw.cascade;
-        }
-        this.updateTodoButtonUI();
         if (stats && (stats.ttftMs || stats.tps || stats.completionTokens)) {
-          const measured = { ...stats, measured: true, cascade: raw?.cascade || null };
+          const measured = { ...stats, measured: true };
           this._perfStatsCache[cleanConvId] = measured;
           this.updatePerfButtonUI();
           return measured;
@@ -3780,73 +3755,25 @@
             footerEl.appendChild(badge);
           }
           badge.setAttribute("data-measured", "true");
-          const cascade = (isLast && this._perfCascade[cleanConvId] && this._perfCascade[cleanConvId].isCascade) ? this._perfCascade[cleanConvId] : null;
-          let cascadeDurationStr = "";
-          if (cascade) {
-            const cMs = cascade.totalDurationMs || 0;
-            const cSec = Math.round(cMs / 1000);
-            if (cSec >= 3600) {
-              const h = Math.floor(cSec / 3600);
-              const m = Math.floor((cSec % 3600) / 60);
-              cascadeDurationStr = `${h}sa ${m}dk`;
-            } else if (cSec >= 60) {
-              const m = Math.floor(cSec / 60);
-              const s = cSec % 60;
-              cascadeDurationStr = s > 0 ? `${m}dk ${s}s` : `${m}dk`;
-            } else {
-              cascadeDurationStr = `${cSec}s`;
-            }
-          }
-
-          let tooltipParts = [];
-          if (cascade) {
-            tooltipParts = [
-              `Model: ${stats.modelName || "Active Model"}`,
-              `=== Çok Adımlı Agent Süreci ===`,
-              `Toplam Adım: ${cascade.totalTurns}`,
-              `Toplam Üretilen: ~${cascade.totalTokens} token`,
-              `Toplam Süre: ${cascadeDurationStr}`,
-              `Ortalama Hız: ${cascade.avgTps} Token/Saniye`,
-              `Toplam Araç Çağrısı: ${cascade.totalTools}`,
-              `--------------------------------`,
-              `Son Adım Hızı: ${tpsStr} TPS`,
-              `Son Adım TTFT: ${stats.ttftMs || 0}ms`,
-              `Son Adım Token: ${stats.completionTokens || 0}`
-            ];
-          } else {
-            tooltipParts = [
-              `Model: ${stats.modelName || "Active Model"}`,
-              `İnferans Hızı: ${tpsStr} Token/Saniye`,
-              `İlk Yanıt (TTFT): ${stats.ttftMs || 0}ms`,
-              `Üretilen: ${stats.completionTokens || 0} token${stats.thinkingTokens ? ` (${stats.thinkingTokens} düşünce)` : ""}`,
-              stats.promptTokens ? `İstem (Prompt): ~${stats.promptTokens} token` : "",
-              durStr ? `Toplam Süre: ${durStr}` : "",
-              stats.toolCalls ? `Araç Çağrısı: ${stats.toolCalls}` : "",
-              stats.stopReason ? `Bitiş: ${stats.stopReason}` : ""
-            ];
-          }
-          badge.title = tooltipParts.filter(Boolean).join("\n");
-
-          if (cascade) {
-            const displayTps = cascade.avgTps > 0 ? cascade.avgTps : tpsStr;
-            const tokSummary = cascade.totalTokens >= 1000 ? `~${(cascade.totalTokens / 1000).toFixed(1)}k tok` : `~${cascade.totalTokens} tok`;
-            badge.innerHTML = `
-              <span style="color: ${speedColor}; font-weight: 700;">⚡ ${displayTps} TPS (ort)</span>
-              <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
-              <span style="color: #38bdf8; font-weight: 600;">⏱️ ${cascadeDurationStr}</span>
-              <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
-              <span style="color: rgba(255,255,255,0.85);">📊 ${tokSummary} (${cascade.totalTurns} adım)</span>
-            `;
-          } else {
-            badge.innerHTML = `
-              <span style="color: ${speedColor}; font-weight: 700;">⚡ ${tpsStr} TPS</span>
-              <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
-              <span style="color: #38bdf8; font-weight: 600;">⏱️ ${ttftStr}</span>
-              <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
-              <span style="color: rgba(255,255,255,0.85);">📊 ${tokDisp}${splitStr}</span>
-              ${durStr ? `<span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span><span style="color: rgba(255,255,255,0.6);">⏳ ${durStr}</span>` : ""}
-            `;
-          }
+          const tooltipTitle = [
+            `Model: ${stats.modelName || "Active Model"}`,
+            `\u0130nferans H\u0131z\u0131: ${tpsStr} Token/Saniye`,
+            `\u0130lk Yan\u0131t (TTFT): ${stats.ttftMs || 0}ms`,
+            `\xDCretilen: ${stats.completionTokens || 0} token${stats.thinkingTokens ? ` (${stats.thinkingTokens} d\xFC\u015F\xFCnce)` : ""}`,
+            stats.promptTokens ? `\u0130stem (Prompt): ~${stats.promptTokens} token` : "",
+            durStr ? `Toplam S\xFCre: ${durStr}` : "",
+            stats.toolCalls ? `Ara\xE7 \xC7a\u011Fr\u0131s\u0131: ${stats.toolCalls}` : "",
+            stats.stopReason ? `Biti\u015F: ${stats.stopReason}` : ""
+          ].filter(Boolean).join("\n");
+          badge.title = tooltipTitle;
+          badge.innerHTML = `
+                    <span style="color: ${speedColor}; font-weight: 700;">\u26A1 ${tpsStr} TPS</span>
+                    <span style="color: rgba(255,255,255,0.25); font-size: 9px;">\u2022</span>
+                    <span style="color: #38bdf8; font-weight: 600;">\u23F1\uFE0F ${ttftStr}</span>
+                    <span style="color: rgba(255,255,255,0.25); font-size: 9px;">\u2022</span>
+                    <span style="color: rgba(255,255,255,0.85);">\u{1F4CA} ${tokDisp}${splitStr}</span>
+                    ${durStr ? `<span style="color: rgba(255,255,255,0.25); font-size: 9px;">\u2022</span><span style="color: rgba(255,255,255,0.6);">\u23F3 ${durStr}</span>` : ""}
+                `;
         });
       } catch (e) {
       }
@@ -4040,440 +3967,6 @@
         perfBtn.title = `Model Performans\u0131: ${stats.tps || 0} TPS, TTFT ${stats.ttftMs}ms (T\u0131kla)${liveSuffix}`;
       } else {
         perfBtn.title = `Model Performans\u0131 (TTFT, TPS) (T\u0131kla)${liveSuffix}`;
-      }
-    }
-    closeTodoPopover() {
-      const card = document.getElementById("sx-todo-docked-card");
-      if (card) {
-        card.style.display = "none";
-      }
-      const oldPop = document.getElementById("sx-todo-popover");
-      if (oldPop) oldPop.remove();
-      const tBtn = document.getElementById("sx-todo-btn");
-      if (tBtn) tBtn.classList.remove("sx-active");
-      if (this._todoPollTimer) {
-        clearInterval(this._todoPollTimer);
-        this._todoPollTimer = null;
-      }
-    }
-    toggleTodoPopover(anchorEl) {
-      const card = document.getElementById("sx-todo-docked-card");
-      if (card && card.style.display !== "none") {
-        this.closeTodoPopover();
-        return;
-      }
-      this.openTodoDockedCard(anchorEl);
-    }
-    openTodoDockedCard(anchorEl = null) {
-      const otherPerf = document.getElementById("sx-perf-popover");
-      if (otherPerf) otherPerf.remove();
-      const otherCtx = document.getElementById("sx-context-popover");
-      if (otherCtx) otherCtx.remove();
-      const otherEffort = document.getElementById("sx-effort-slider-popover");
-      if (otherEffort) otherEffort.remove();
-      const infoModal = document.getElementById("sx-effort-info-modal");
-      if (infoModal) infoModal.remove();
-
-      const btn = anchorEl || document.getElementById("sx-todo-btn");
-      if (btn) btn.classList.add("sx-active");
-
-      const convKey = this.models.getActiveConversationKey();
-      const cleanConvId = (convKey || "").replace(/^conv_/, "");
-
-      // Locate the prompt box container to dock directly above it
-      const textarea = document.querySelector('[contenteditable="true"], textarea, [data-testid="chat-input"]');
-      const formOrCard = textarea ? (
-        textarea.closest('form') ||
-        textarea.closest('[class*="rounded-2xl"], [class*="rounded-3xl"], [class*="rounded-[calc"]') ||
-        textarea.closest('.bg-card, [class*="border"]') ||
-        textarea.parentElement?.parentElement
-      ) : (document.querySelector('form') || document.querySelector('[data-testid="chat-input-container"]'));
-
-      let card = document.getElementById("sx-todo-docked-card");
-      if (!card) {
-        card = document.createElement("div");
-        card.id = "sx-todo-docked-card";
-        card.className = "sx-todo-docked-card";
-        card.style.cssText = `
-          width: 100% !important;
-          max-width: 100% !important;
-          box-sizing: border-box !important;
-          margin-bottom: 8px !important;
-          background: rgba(18, 22, 29, 0.96) !important;
-          border: 1px solid rgba(255, 255, 255, 0.09) !important;
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35) !important;
-          border-radius: 12px !important;
-          color: #e2e8f0 !important;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-          backdrop-filter: blur(16px) !important;
-          -webkit-backdrop-filter: blur(16px) !important;
-          overflow: hidden !important;
-          transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
-          z-index: 10 !important;
-        `;
-
-        card.innerHTML = `
-          <!-- Header Bar (Always visible) -->
-          <div id="sx-todo-card-header" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:rgba(255,255,255,0.02);cursor:pointer;user-select:none;">
-            <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
-                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
-                <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
-                <path d="m9 14 2 2 4-4"></path>
-              </svg>
-              <span style="font-size:12.5px;color:#f8fafc;font-weight:600;letter-spacing:0.2px;flex-shrink:0;">G\xF6revler & \u0130lerleme</span>
-              <span id="sx-todo-status-badge" style="font-size:10.5px;color:#38bdf8;font-weight:700;background:rgba(56,189,248,0.12);padding:1px 7px;border-radius:10px;border:1px solid rgba(56,189,248,0.25);flex-shrink:0;">Y\xFCkleniyor</span>
-              <span id="sx-todo-header-summary" style="font-size:11px;color:#94a3b8;font-family:ui-monospace,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></span>
-            </div>
-
-            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-              <div style="width:80px;height:5px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden;" title="\u0130lerleme \xE7ubu\u011Fu">
-                <div id="sx-todo-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg, #38bdf8, #10b981);transition:width 0.35s ease;border-radius:4px;"></div>
-              </div>
-              <button id="sx-todo-collapse-btn" style="background:transparent;border:none;color:#94a3b8;cursor:pointer;padding:2px 5px;font-size:11px;border-radius:4px;display:flex;align-items:center;gap:3px;" title="Daralt / Geni\u015Flet">
-                <span id="sx-todo-collapse-txt">Daralt</span>
-                <span id="sx-todo-collapse-arrow" style="font-size:10px;">\u25BE</span>
-              </button>
-              <button id="sx-todo-close-btn" style="background:transparent;border:none;color:#64748b;cursor:pointer;padding:2px 5px;font-size:13px;line-height:1;border-radius:4px;" title="Kapat">\u2715</button>
-            </div>
-          </div>
-
-          <!-- Expandable Body Content -->
-          <div id="sx-todo-card-body" style="padding:10px 14px 12px 14px;border-top:1px solid rgba(255,255,255,0.06);transition:all 0.2s ease;">
-            <!-- Radar & Metrics Line -->
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
-              <div id="sx-todo-live-radar" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:4px 8px;display:flex;align-items:center;gap:7px;flex:1;min-width:0;">
-                <span id="sx-todo-radar-pulse" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#10b981;box-shadow:0 0 6px #10b981;flex-shrink:0;"></span>
-                <div style="flex-grow:1;font-size:11.5px;color:#f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="sx-todo-radar-action">Haz\u0131r</div>
-                <span id="sx-todo-radar-time" style="font-size:10px;color:#94a3b8;font-family:ui-monospace,monospace;flex-shrink:0;"></span>
-              </div>
-              <div style="display:flex;align-items:center;gap:10px;font-size:11px;font-family:ui-monospace,monospace;color:#94a3b8;flex-shrink:0;">
-                <span>\u23F1\uFE0F <span id="sx-todo-elapsed" style="color:#f8fafc;font-weight:600;">00:00</span></span>
-                <span>\u23F3 <span id="sx-todo-eta" style="color:#38bdf8;font-weight:600;">--</span></span>
-                <span>\uD83C\uDFAF <span id="sx-todo-progress-txt" style="color:#10b981;font-weight:600;">--</span></span>
-              </div>
-            </div>
-
-            <!-- 3-Phase Milestone Indicators -->
-            <div id="sx-todo-phases" style="display:flex;align-items:center;justify-content:space-between;gap:3px;margin-bottom:8px;padding:2px 4px;background:rgba(0,0,0,0.25);border-radius:6px;border:1px solid rgba(255,255,255,0.04);">
-              <div id="sx-phase-1" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:2.5px 2px;border-radius:4px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">\uD83D\uDD0D Ke\u015Fif</div>
-              <div style="color:rgba(255,255,255,0.15);font-size:9px;">\u203A</div>
-              <div id="sx-phase-2" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:2.5px 2px;border-radius:4px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">\uD83D\uDEE0\uFE0F Kodlama</div>
-              <div style="color:rgba(255,255,255,0.15);font-size:9px;">\u203A</div>
-              <div id="sx-phase-3" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:2.5px 2px;border-radius:4px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">\uD83E\uDDEA Test</div>
-            </div>
-
-            <!-- Tasks Checklist Scroll -->
-            <div id="sx-todo-tasks-scroll" style="max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:5px;padding-right:2px;">
-              <div style="font-size:11.5px;color:#64748b;text-align:center;padding:10px 0;">G\xF6revler kontrol ediliyor...</div>
-            </div>
-
-            <!-- Recent Tools Tray -->
-            <div id="sx-todo-tools-tray" style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.05);font-size:10.5px;color:#94a3b8;display:none;">
-              <span style="color:#64748b;">Son Eylemler:</span> <span id="sx-todo-tools-list" style="color:#cbd5e1;font-family:ui-monospace,monospace;"></span>
-            </div>
-          </div>
-        `;
-
-        let isCollapsed = false;
-        const toggleCollapse = () => {
-          isCollapsed = !isCollapsed;
-          const body = card.querySelector("#sx-todo-card-body");
-          const lbl = card.querySelector("#sx-todo-collapse-txt");
-          const arrow = card.querySelector("#sx-todo-collapse-arrow");
-          if (body) {
-            body.style.display = isCollapsed ? "none" : "block";
-          }
-          if (lbl) lbl.innerText = isCollapsed ? "Geni\u015Flet" : "Daralt";
-          if (arrow) arrow.innerText = isCollapsed ? "\u25B4" : "\u25BE";
-        };
-
-        card.querySelector("#sx-todo-collapse-btn").onclick = (e) => {
-          e.stopPropagation();
-          toggleCollapse();
-        };
-
-        card.querySelector("#sx-todo-card-header").onclick = (e) => {
-          if (e.target.closest('#sx-todo-close-btn') || e.target.closest('#sx-todo-collapse-btn')) return;
-          toggleCollapse();
-        };
-
-        card.querySelector("#sx-todo-close-btn").onclick = (e) => {
-          e.stopPropagation();
-          this.closeTodoPopover();
-        };
-      }
-
-      // Dock right above the prompt container
-      if (formOrCard && formOrCard.parentElement) {
-        if (card.nextElementSibling !== formOrCard || card.parentElement !== formOrCard.parentElement) {
-          formOrCard.parentElement.insertBefore(card, formOrCard);
-        }
-      } else {
-        document.body.appendChild(card);
-      }
-      card.style.display = "block";
-
-      const renderTasks = (data) => {
-        if (!card.isConnected) return;
-        const statusBadge = card.querySelector("#sx-todo-status-badge");
-        const headerSummary = card.querySelector("#sx-todo-header-summary");
-        const elapsedEl = card.querySelector("#sx-todo-elapsed");
-        const etaEl = card.querySelector("#sx-todo-eta");
-        const progTxt = card.querySelector("#sx-todo-progress-txt");
-        const progBar = card.querySelector("#sx-todo-progress-bar");
-        const listEl = card.querySelector("#sx-todo-tasks-scroll");
-        const toolsTray = card.querySelector("#sx-todo-tools-tray");
-        const toolsList = card.querySelector("#sx-todo-tools-list");
-        const radarAction = card.querySelector("#sx-todo-radar-action");
-        const radarTime = card.querySelector("#sx-todo-radar-time");
-        const radarPulse = card.querySelector("#sx-todo-radar-pulse");
-
-        if (!data || (!data.tasks?.length && !data.recentTools?.length)) {
-          const domTasks = [];
-          document.querySelectorAll('.prose, [data-testid="message-content"], .message-content').forEach(p => {
-            const lines = (p.innerText || '').split('\n');
-            lines.forEach(l => {
-              const m = l.match(/^[-*]\s*\[([ xX/])\]\s*(.*)$/);
-              if (m) {
-                const mark = m[1].toLowerCase();
-                domTasks.push({
-                  status: mark === 'x' ? 'completed' : (mark === '/' ? 'in_progress' : 'pending'),
-                  text: m[2].trim()
-                });
-              }
-            });
-          });
-
-          if (domTasks.length > 0) {
-            const comp = domTasks.filter(t => t.status === 'completed').length;
-            const pct = Math.round((comp / domTasks.length) * 100);
-            data = {
-              ok: true,
-              tasks: domTasks,
-              total: domTasks.length,
-              completed: comp,
-              inProgress: domTasks.filter(t => t.status === 'in_progress').length,
-              pending: domTasks.filter(t => t.status === 'pending').length,
-              percent: pct,
-              elapsedFormatted: "Sohbet \u0130\xE7i",
-              etaFormatted: comp === domTasks.length ? "Tamamland\u0131" : `~${(domTasks.length - comp) * 30} sn`,
-              isRunning: false
-            };
-          }
-        }
-
-        if (!data || (!data.tasks?.length && !data.recentTools?.length)) {
-          if (statusBadge) {
-            statusBadge.innerText = "Bo\u015Fta";
-            statusBadge.style.color = "#94a3b8";
-            statusBadge.style.background = "rgba(148,163,184,0.1)";
-            statusBadge.style.borderColor = "rgba(148,163,184,0.2)";
-          }
-          if (headerSummary) headerSummary.innerText = "";
-          if (radarAction) radarAction.innerText = "Bekleniyor";
-          if (radarPulse) {
-            radarPulse.style.background = "#64748b";
-            radarPulse.style.boxShadow = "none";
-          }
-          if (listEl) {
-            listEl.innerHTML = `
-              <div style="font-size:11.5px;color:#94a3b8;text-align:center;padding:12px 8px;line-height:1.5;">
-                <span style="font-size:15px;margin-bottom:4px;display:inline-block;">\uD83D\uDCCB</span><br>
-                Bu sohbette hen\xFCz aktif g\xF6rev listesi bulunmuyor.<br>
-                <span style="font-size:10.5px;color:#64748b;">Model bir plan veya kontrol listesi olu\u015Fturdu\u011Funda ad\u0131mlar ve kalan s\xFCre burada anl\u0131k g\xF6r\xFCn\xFCr.</span>
-              </div>
-            `;
-          }
-          return;
-        }
-
-        const isRunning = Boolean(data.isRunning);
-        if (statusBadge) {
-          if (isRunning) {
-            statusBadge.innerText = `\u25CF ${data.completed}/${data.total}`;
-            statusBadge.style.color = "#10b981";
-            statusBadge.style.background = "rgba(16,185,129,0.12)";
-            statusBadge.style.borderColor = "rgba(16,185,129,0.25)";
-          } else if (data.completed === data.total && data.total > 0) {
-            statusBadge.innerText = "\u2713 Bitti";
-            statusBadge.style.color = "#10b981";
-            statusBadge.style.background = "rgba(16,185,129,0.12)";
-            statusBadge.style.borderColor = "rgba(16,185,129,0.25)";
-          } else {
-            statusBadge.innerText = `${data.completed}/${data.total}`;
-            statusBadge.style.color = "#38bdf8";
-            statusBadge.style.background = "rgba(56,189,248,0.12)";
-            statusBadge.style.borderColor = "rgba(56,189,248,0.25)";
-          }
-        }
-
-        if (headerSummary) {
-          headerSummary.innerText = `\u2022 %${data.percent || 0} \u2022 \u23F3 ${data.etaFormatted || '--'}`;
-        }
-
-        if (radarAction) radarAction.innerText = data.currentAction || (isRunning ? "\uD83D\uDCAD D\xFC\u015F\xFCnce & Yan\u0131t \xFCretiliyor..." : "\u2713 Haz\u0131r / Bekleniyor");
-        if (radarTime) radarTime.innerText = data.currentActionElapsedSec > 0 ? `${data.currentActionElapsedSec}s` : "";
-        if (radarPulse) {
-          radarPulse.style.background = isRunning ? "#10b981" : "#64748b";
-          radarPulse.style.boxShadow = isRunning ? "0 0 6px #10b981" : "none";
-        }
-
-        // Update Phase pills
-        const pIdx = data.phase?.index || 1;
-        const p1 = card.querySelector("#sx-phase-1");
-        const p2 = card.querySelector("#sx-phase-2");
-        const p3 = card.querySelector("#sx-phase-3");
-        if (p1 && p2 && p3) {
-          [p1, p2, p3].forEach((p, idx) => {
-            const step = idx + 1;
-            if (step < pIdx) {
-              p.style.color = "#10b981";
-              p.style.background = "rgba(16,185,129,0.1)";
-              p.style.fontWeight = "600";
-            } else if (step === pIdx) {
-              p.style.color = "#38bdf8";
-              p.style.background = "rgba(56,189,248,0.18)";
-              p.style.fontWeight = "700";
-            } else {
-              p.style.color = "#64748b";
-              p.style.background = "transparent";
-              p.style.fontWeight = "400";
-            }
-          });
-        }
-
-        if (elapsedEl) elapsedEl.innerText = data.elapsedFormatted || "00:00";
-        if (etaEl) etaEl.innerText = data.etaFormatted || "--";
-        const pctLabel = data.hasWeights ? ` (%${data.percent} A\u011F\u0131rl\u0131kl\u0131)` : (data.declaredProgress != null ? ` (%${data.percent} Model)` : ` (%${data.percent})`);
-        if (progTxt) progTxt.innerText = `${data.completed || 0}/${data.total || 0}${pctLabel}`;
-        if (progBar) progBar.style.width = `${data.percent || 0}%`;
-
-        // Render checklist
-        if (listEl && data.tasks && data.tasks.length > 0) {
-          const esc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-          listEl.innerHTML = data.tasks.map((task, idx) => {
-            const isDone = task.status === 'completed';
-            const isProg = task.status === 'in_progress';
-            let iconHtml = `<span style="display:inline-flex;width:13px;height:13px;border-radius:3px;border:1.5px solid #64748b;align-items:center;justify-content:center;"></span>`;
-            let itemBg = "rgba(255,255,255,0.02)";
-            let textColor = "#cbd5e1";
-            let textDecor = "none";
-
-            if (isDone) {
-              iconHtml = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-              itemBg = "rgba(16,185,129,0.04)";
-              textColor = "#6ee7b7";
-              textDecor = "line-through";
-            } else if (isProg) {
-              iconHtml = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#38bdf8;box-shadow:0 0 7px #38bdf8;"></span>`;
-              itemBg = "rgba(56,189,248,0.08)";
-              textColor = "#f8fafc";
-            }
-
-            return `
-              <div data-task-idx="${task.index != null ? task.index : idx}" class="sx-task-row" style="display:flex;align-items:flex-start;gap:7px;padding:5px 8px;border-radius:6px;background:${itemBg};cursor:pointer;border:1px solid ${isProg ? 'rgba(56,189,248,0.25)' : 'rgba(255,255,255,0.04)'};transition:background 0.15s ease;">
-                <div style="flex-shrink:0;margin-top:2px;">${iconHtml}</div>
-                <div style="flex-grow:1;font-size:11.5px;color:${textColor};text-decoration:${textDecor};line-height:1.35;word-break:break-word;">
-                  ${esc(task.text)}
-                  ${task.weight > 0 ? `<span style="font-size:9.5px;color:#38bdf8;font-weight:700;margin-left:5px;background:rgba(56,189,248,0.15);padding:1px 4px;border-radius:3px;">%${task.weight}</span>` : ''}
-                  ${task.estMins > 0 ? `<span style="font-size:9.5px;color:#fb923c;font-weight:700;margin-left:5px;background:rgba(251,146,60,0.15);padding:1px 4px;border-radius:3px;">~${task.estMins}dk</span>` : ''}
-                  ${isProg ? `<span style="font-size:9.5px;color:#38bdf8;font-weight:700;margin-left:5px;background:rgba(56,189,248,0.15);padding:1px 4px;border-radius:3px;">\u0130\u015Fleniyor</span>` : ''}
-                </div>
-              </div>
-            `;
-          }).join('');
-
-          listEl.querySelectorAll('.sx-task-row').forEach(row => {
-            row.onclick = async (e) => {
-              const idx = parseInt(row.getAttribute('data-task-idx'), 10);
-              if (isNaN(idx)) return;
-              const currentTask = data.tasks.find(t => t.index === idx || data.tasks.indexOf(t) === idx);
-              const willBeCompleted = currentTask?.status !== 'completed';
-              await this.network.updateConversationTask(cleanConvId, idx, willBeCompleted);
-              const fresh = await this.network.fetchConversationTasks(cleanConvId);
-              if (fresh) renderTasks(fresh);
-            };
-          });
-        }
-
-        if (data.recentTools && data.recentTools.length > 0 && toolsTray && toolsList) {
-          toolsTray.style.display = "block";
-          const toolNames = data.recentTools.map(t => t.name).filter(Boolean);
-          toolsList.innerText = toolNames.slice(-4).join(" \u2192 ");
-        }
-      };
-
-      this.network.fetchConversationTasks(cleanConvId).then(data => {
-        if (card.isConnected) renderTasks(data);
-      });
-
-      this._todoPollTimer = setInterval(async () => {
-        if (!card.isConnected) {
-          clearInterval(this._todoPollTimer);
-          this._todoPollTimer = null;
-          return;
-        }
-        const fresh = await this.network.fetchConversationTasks(cleanConvId);
-        if (card.isConnected && fresh) {
-          renderTasks(fresh);
-          this.updateTodoButtonUI(fresh);
-        }
-      }, 1500);
-    }
-    updateTodoButtonUI(taskData = null) {
-      const todoBtn = document.getElementById("sx-todo-btn");
-      if (!todoBtn) return;
-      const convKey = this.models.getActiveConversationKey();
-      const cleanConvId = (convKey || "").replace(/^conv_/, "");
-      
-      const updateBadge = (data) => {
-        if (!todoBtn) return;
-        if (data && data.total > 0) {
-          const isDone = data.completed === data.total;
-          const statusTxt = isDone ? "✓" : `${data.completed}/${data.total}`;
-          todoBtn.title = `Model Görevleri: ${data.completed}/${data.total} Tamamlandı (${data.etaFormatted || ''}) (Tıkla)`;
-          let badge = todoBtn.querySelector(".sx-todo-btn-badge");
-          if (!badge) {
-            badge = document.createElement("span");
-            badge.className = "sx-todo-btn-badge";
-            badge.style.cssText = `
-              position: absolute !important;
-              top: -3px !important;
-              right: -3px !important;
-              font-size: 9px !important;
-              font-weight: 700 !important;
-              line-height: 1 !important;
-              padding: 2px 4px !important;
-              border-radius: 6px !important;
-              pointer-events: none !important;
-            `;
-            todoBtn.appendChild(badge);
-          }
-          if (isDone) {
-            badge.style.background = "#10b981";
-            badge.style.color = "#ffffff";
-          } else if (data.isRunning) {
-            badge.style.background = "#38bdf8";
-            badge.style.color = "#0f172a";
-          } else {
-            badge.style.background = "rgba(148,163,184,0.3)";
-            badge.style.color = "#f8fafc";
-          }
-          badge.innerText = statusTxt;
-        } else {
-          const badge = todoBtn.querySelector(".sx-todo-btn-badge");
-          if (badge) badge.remove();
-          todoBtn.title = "Model Görev Takibi (To-Do & ETA) (Tıkla)";
-        }
-      };
-
-      if (taskData) {
-        updateBadge(taskData);
-      } else if (cleanConvId && cleanConvId !== "new") {
-        this.network.fetchConversationTasks(cleanConvId).then(d => {
-          if (d) updateBadge(d);
-        });
       }
     }
   };
@@ -4670,6 +4163,15 @@
     }
     async handleFetch(context, args) {
       const url = args[0]?.toString() || "";
+      if (url.includes("StreamAudioTranscription")) {
+        return this.handleStreamAudioTranscription(context, args);
+      }
+      if (url.includes("SendAudioChunk")) {
+        return this.handleSendAudioChunk(context, args);
+      }
+      if (url.includes("EndAudioSession")) {
+        return this.handleEndAudioSession(context, args);
+      }
       if (url.includes("GetUserStatus")) {
         try {
           const resp2 = await this.origFetch.apply(context, args);
@@ -4891,350 +4393,224 @@
       }
       return resp;
     }
-  };
-
-  // src/services/VoiceRecorder.js
-  var VoiceRecorder = class {
-    constructor(logger) {
-      this.logger = logger;
-      this.isRecording = false;
-      this.activeBtn = null;
-      this.audioContext = null;
-      this.mediaStream = null;
-      this.workletNode = null;
-      this.scriptProcessor = null;
-      this.sourceNode = null;
-      this.analyserNode = null;
-      this.muteGain = null;
-      this.visualizerBars = null;
-      this.animFrameId = null;
-      this.segmentChunks = [];
-      this.accumulatedSamples = 0;
-      this.hadVoiceInSegment = false;
-      this.lastVoiceTime = 0;
-      this.noiseFloor = 0.015;
-      this.checkIntervalId = null;
-      this.transcriptionQueue = [];
-      this.isProcessingQueue = false;
+    encodeGrpcFrame(flag, u8) {
+      const frame = new Uint8Array(5 + u8.length);
+      frame[0] = flag;
+      frame[1] = u8.length >>> 24 & 255;
+      frame[2] = u8.length >>> 16 & 255;
+      frame[3] = u8.length >>> 8 & 255;
+      frame[4] = u8.length & 255;
+      frame.set(u8, 5);
+      return frame;
     }
-    init() {
-      window.__SX_VOICE_RECORDER__ = this;
-      document.addEventListener("click", (e) => {
-        const btn = e.target.closest(
-          'button[data-tooltip-id*="record-tooltip"], button[data-tooltip-id*="input-send-button-record-tooltip"], button[aria-label*="Record voice" i], button[aria-label*="Stop recording" i], button.sx-voice-btn, button[aria-label*="ses" i], button[aria-label*="voice" i]'
-        );
-        if (btn) {
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-          this.toggleRecording(btn);
-        }
-      }, true);
-      this.logger.info("VoiceRecorder", "Live streaming voice recorder initialized with Google Speech API.");
+    frameGrpcJson(obj, flag = 0) {
+      return this.encodeGrpcFrame(flag, new TextEncoder().encode(JSON.stringify(obj)));
     }
-    async toggleRecording(btn) {
-      if (this.isRecording) {
-        await this.stopRecording(btn);
-      } else {
-        await this.startRecording(btn);
-      }
+    frameGrpcTrailer() {
+      return this.encodeGrpcFrame(128, new TextEncoder().encode("grpc-status: 0\r\n\r\n"));
     }
-    async startRecording(btn) {
-      this.isRecording = true;
-      this.activeBtn = btn;
-      this.segmentChunks = [];
-      this.accumulatedSamples = 0;
-      this.hadVoiceInSegment = false;
-      this.lastVoiceTime = 0;
-      this.noiseFloor = 0.015;
-      this.transcriptionQueue = [];
-      if (btn) {
-        if (!btn._origHtml) {
-          btn._origHtml = btn.innerHTML;
-        }
-        btn.classList.remove("bg-transparent", "hover:bg-secondary");
-        btn.classList.add("bg-red-500", "text-white");
-        btn.setAttribute("aria-label", "Stop recording");
-        btn.title = "Stop Recording";
-        btn.innerHTML = `
-                <div class="flex items-center justify-center gap-[2px] w-4 h-4 pointer-events-none" aria-hidden="true">
-                    <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 4px;"></div>
-                    <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 5px;"></div>
-                    <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 4px;"></div>
-                </div>
-            `;
-        this.visualizerBars = Array.from(btn.querySelectorAll(".sx-wave-bar"));
-      }
-      const editor = document.querySelector('div[contenteditable="true"]') || document.querySelector('[contenteditable="true"]') || document.querySelector("textarea.antigravity-prompt-input") || document.querySelector("textarea");
-      if (editor) editor.focus();
-      try {
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              channelCount: 1,
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true
+    makeGrpcWebUnaryOk() {
+      const f0 = this.frameGrpcJson({});
+      const f128 = this.frameGrpcTrailer();
+      const comb = new Uint8Array(f0.length + f128.length);
+      comb.set(f0, 0);
+      comb.set(f128, f0.length);
+      return comb;
+    }
+    handleStreamAudioTranscription(context, args) {
+      const self = this;
+      const sessionId = "sx_audio_" + Date.now();
+      let streamCtrl = null;
+      const session = {
+        sessionId,
+        phraseChunks: [],
+        accumulatedBytes: 0,
+        noiseFloor: 0.015,
+        hadVoice: false,
+        lastVoiceTime: 0,
+        lastInterimTime: 0,
+        checkInterval: null,
+        isFinished: false,
+        isTranscribing: false,
+        addChunk(pcmBytes) {
+          if (this.isFinished) return;
+          this.phraseChunks.push(pcmBytes);
+          this.accumulatedBytes += pcmBytes.length;
+          const sampleCount = Math.floor(pcmBytes.length / 2);
+          if (sampleCount > 0) {
+            const view = new DataView(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
+            let sumSq = 0;
+            for (let i = 0; i < sampleCount; i++) {
+              const sample = view.getInt16(i * 2, true) / 32768;
+              sumSq += sample * sample;
             }
-          });
-          this.mediaStream = stream;
-          const AudioCtx = window.AudioContext || window.webkitAudioContext;
-          if (AudioCtx) {
-            this.audioContext = new AudioCtx();
-            if (this.audioContext.state === "suspended") {
-              this.audioContext.resume().catch(() => {
-              });
+            const rms = Math.sqrt(sumSq / sampleCount);
+            if (rms < this.noiseFloor * 1.5) {
+              this.noiseFloor = this.noiseFloor * 0.96 + rms * 0.04;
             }
-            this.sourceNode = this.audioContext.createMediaStreamSource(stream);
-            let workletReady = false;
-            if (this.audioContext.audioWorklet) {
-              try {
-                const workletCode = `
-                                class SXStreamRecorderProcessor extends AudioWorkletProcessor {
-                                    process(inputs) {
-                                        const input = inputs[0];
-                                        if (input && input[0]) {
-                                            this.port.postMessage(input[0]);
-                                        }
-                                        return true;
-                                    }
-                                }
-                                registerProcessor('sx-stream-recorder-processor', SXStreamRecorderProcessor);
-                            `;
-                const blob = new Blob([workletCode], { type: "application/javascript" });
-                const url = URL.createObjectURL(blob);
-                await this.audioContext.audioWorklet.addModule(url);
-                URL.revokeObjectURL(url);
-                const workletNode = new AudioWorkletNode(this.audioContext, "sx-stream-recorder-processor");
-                workletNode.port.onmessage = (e) => {
-                  if (!this.isRecording) return;
-                  this.onAudioChunk(e.data);
-                };
-                this.sourceNode.connect(workletNode);
-                const workletMute = this.audioContext.createGain();
-                workletMute.gain.value = 0;
-                workletNode.connect(workletMute);
-                workletMute.connect(this.audioContext.destination);
-                this.workletNode = workletNode;
-                workletReady = true;
-              } catch (err) {
+            if (rms > Math.max(0.018, this.noiseFloor * 2)) {
+              this.hadVoice = true;
+              this.lastVoiceTime = performance.now();
+            }
+          }
+        },
+        async transcribe(isFinal = false) {
+          if (this.isTranscribing) return;
+          if (!this.phraseChunks.length || this.accumulatedBytes < 3200) return;
+          const chunks = isFinal ? this.phraseChunks : [...this.phraseChunks];
+          if (isFinal) {
+            this.phraseChunks = [];
+            this.accumulatedBytes = 0;
+            this.hadVoice = false;
+          }
+          this.isTranscribing = true;
+          const totalLen = chunks.reduce((acc, c) => acc + c.length, 0);
+          const merged = new Uint8Array(totalLen);
+          let off = 0;
+          for (const c of chunks) {
+            merged.set(c, off);
+            off += c.length;
+          }
+          const wavBlob = self.encodeWAV16(merged, 16e3);
+          try {
+            const lang = navigator.language || "tr-TR";
+            const resp = await self.origFetch(`http://localhost:15725/sx/transcribe-audio?lang=${encodeURIComponent(lang)}`, {
+              method: "POST",
+              headers: { "Content-Type": "audio/wav" },
+              body: wavBlob
+            });
+            const res = await resp.json();
+            if (res && res.ok && res.text) {
+              const text = res.text.trim();
+              if (text && streamCtrl && !this.isFinished) {
+                streamCtrl.enqueue(self.frameGrpcJson({
+                  transcription: {
+                    text,
+                    isFinal
+                  }
+                }));
               }
             }
-            if (!workletReady) {
-              this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
-              this.scriptProcessor.onaudioprocess = (e) => {
-                if (!this.isRecording) return;
-                const data = e.inputBuffer.getChannelData(0);
-                this.onAudioChunk(data);
-              };
-              this.sourceNode.connect(this.scriptProcessor);
-              this.muteGain = this.audioContext.createGain();
-              this.muteGain.gain.value = 0;
-              this.scriptProcessor.connect(this.muteGain);
-              this.muteGain.connect(this.audioContext.destination);
-            }
-            this.analyserNode = this.audioContext.createAnalyser();
-            this.analyserNode.fftSize = 64;
-            this.analyserNode.smoothingTimeConstant = 0.8;
-            this.analyserNode.minDecibels = -60;
-            this.analyserNode.maxDecibels = -25;
-            this.sourceNode.connect(this.analyserNode);
-            const freqData = new Uint8Array(this.analyserNode.frequencyBinCount);
-            let smoothedVol = 0;
-            let maxSeen = 0.25;
-            const updateVisualizer = () => {
-              if (!this.isRecording || !this.analyserNode) return;
-              this.analyserNode.getByteFrequencyData(freqData);
-              let sumSq = 0;
-              for (let i = 0; i < freqData.length; i++) sumSq += freqData[i] * freqData[i];
-              const rms = Math.sqrt(sumSq / freqData.length) / 255;
-              maxSeen = Math.max(0.25, maxSeen * 0.995, rms);
-              let normalized = Math.min(1, rms / maxSeen);
-              normalized *= normalized;
-              smoothedVol = normalized > smoothedVol ? smoothedVol + (normalized - smoothedVol) * 0.6 : smoothedVol + (normalized - smoothedVol) * 0.15;
-              const heights = [
-                Math.max(3, Math.min(14, 4 + smoothedVol * 8)),
-                Math.max(4, Math.min(16, 5 + smoothedVol * 12)),
-                Math.max(3, Math.min(14, 4 + smoothedVol * 8))
-              ];
-              if (this.visualizerBars) {
-                for (let i = 0; i < this.visualizerBars.length; i++) {
-                  const bar = this.visualizerBars[i];
-                  if (bar) bar.style.height = `${heights[i]}px`;
-                }
-              }
-              this.animFrameId = requestAnimationFrame(updateVisualizer);
-            };
-            this.animFrameId = requestAnimationFrame(updateVisualizer);
-            this.startStreamingLoop();
+          } catch (e) {
+            console.error("[SX StreamAudio] Transcription failed:", e);
+          } finally {
+            this.isTranscribing = false;
           }
-          this.logger.info("VoiceRecorder", "Live streaming microphone active with real-time Google Speech transcription.");
-        }
-      } catch (e) {
-        this.logger.error("VoiceRecorder", "Audio capture failed:", e);
-        this.resetButton(btn);
-        this.isRecording = false;
-      }
-    }
-    onAudioChunk(data) {
-      if (!this.isRecording) return;
-      const chunk = new Float32Array(data);
-      this.segmentChunks.push(chunk);
-      this.accumulatedSamples += chunk.length;
-      let sum = 0;
-      for (let i = 0; i < chunk.length; i++) {
-        sum += chunk[i] * chunk[i];
-      }
-      const rms = Math.sqrt(sum / chunk.length);
-      if (rms < this.noiseFloor * 1.5) {
-        this.noiseFloor = this.noiseFloor * 0.96 + rms * 0.04;
-      }
-      const isVoice = rms > Math.max(0.018, this.noiseFloor * 2);
-      if (isVoice) {
-        this.hadVoiceInSegment = true;
-        this.lastVoiceTime = performance.now();
-      }
-    }
-    startStreamingLoop() {
-      const sampleRate = this.audioContext ? this.audioContext.sampleRate : 48e3;
-      const minSpeechSamples = Math.floor(sampleRate * 0.35);
-      const maxBufferSamples = Math.floor(sampleRate * 2.6);
-      this.checkIntervalId = setInterval(() => {
-        if (!this.isRecording) return;
-        const now = performance.now();
-        if (this.hadVoiceInSegment) {
-          const isPause = now - this.lastVoiceTime >= 320 && this.accumulatedSamples >= minSpeechSamples;
-          const isMaxBuffer = this.accumulatedSamples >= maxBufferSamples;
-          if (isPause || isMaxBuffer) {
-            this.flushSegment();
+        },
+        async end() {
+          if (this.isFinished) return;
+          this.isFinished = true;
+          if (this.checkInterval) {
+            clearInterval(this.checkInterval);
+            this.checkInterval = null;
           }
-        }
-      }, 80);
-    }
-    flushSegment() {
-      if (!this.segmentChunks.length || this.accumulatedSamples < 1e3) return;
-      const chunks = this.segmentChunks;
-      this.segmentChunks = [];
-      this.accumulatedSamples = 0;
-      this.hadVoiceInSegment = false;
-      this.lastVoiceTime = 0;
-      let totalLen = 0;
-      for (let i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
-      const sampleRate = this.audioContext ? this.audioContext.sampleRate : 44100;
-      if (totalLen >= sampleRate * 0.2) {
-        const merged = new Float32Array(totalLen);
-        let off = 0;
-        for (let i = 0; i < chunks.length; i++) {
-          merged.set(chunks[i], off);
-          off += chunks[i].length;
-        }
-        const overlapCount = Math.floor(sampleRate * 0.12);
-        if (merged.length > overlapCount) {
-          const overlap = merged.slice(merged.length - overlapCount);
-          this.segmentChunks.push(overlap);
-          this.accumulatedSamples = overlap.length;
-        }
-        const resampled = this.resampleAudio(merged, sampleRate, 16e3);
-        const wavBlob = this.encodeWAV(resampled, 16e3);
-        this.enqueueTranscription(wavBlob);
-      }
-    }
-    enqueueTranscription(wavBlob) {
-      this.transcriptionQueue.push(wavBlob);
-      this.processQueue();
-    }
-    async processQueue() {
-      if (this.isProcessingQueue || !this.transcriptionQueue.length) return;
-      this.isProcessingQueue = true;
-      while (this.transcriptionQueue.length > 0) {
-        const wavBlob = this.transcriptionQueue.shift();
-        try {
-          const resp = await fetch("http://localhost:15725/sx/transcribe-audio?lang=tr-TR", {
-            method: "POST",
-            headers: { "Content-Type": "audio/wav" },
-            body: wavBlob
-          });
-          const res = await resp.json();
-          if (res && res.ok && res.text) {
-            const text = res.text.trim();
-            if (text) {
-              this.insertTextIntoPrompt(text + " ");
+          if (this.accumulatedBytes >= 3200) {
+            await this.transcribe(true);
+          }
+          if (streamCtrl) {
+            streamCtrl.enqueue(self.frameGrpcJson({ complete: {} }));
+            streamCtrl.enqueue(self.frameGrpcTrailer());
+            try {
+              streamCtrl.close();
+            } catch (e) {
             }
           }
-        } catch (e) {
-          this.logger.error("VoiceRecorder", "Live transcription request failed:", e);
-        }
-      }
-      this.isProcessingQueue = false;
-    }
-    async stopRecording(btn = null) {
-      this.isRecording = false;
-      const targetBtn = btn || this.activeBtn;
-      if (this.checkIntervalId) {
-        clearInterval(this.checkIntervalId);
-        this.checkIntervalId = null;
-      }
-      if (this.animFrameId) {
-        cancelAnimationFrame(this.animFrameId);
-        this.animFrameId = null;
-      }
-      this.visualizerBars = null;
-      this.flushSegment();
-      if (targetBtn && (this.isProcessingQueue || this.transcriptionQueue.length > 0)) {
-        targetBtn.innerHTML = `
-                <svg class="animate-spin w-3.5 h-3.5 text-white pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-            `;
-        let waitCount = 0;
-        while ((this.isProcessingQueue || this.transcriptionQueue.length > 0) && waitCount < 30) {
-          await new Promise((r) => setTimeout(r, 100));
-          waitCount++;
-        }
-      }
-      this.cleanupAudio();
-      if (targetBtn) {
-        this.resetButton(targetBtn);
-      }
-      this.activeBtn = null;
-    }
-    resetButton(btn) {
-      if (!btn) return;
-      btn.classList.remove("bg-red-500", "text-white");
-      btn.classList.add("bg-transparent", "hover:bg-secondary");
-      if (btn._origHtml) {
-        btn.innerHTML = btn._origHtml;
-      }
-      btn.setAttribute("aria-label", "Record voice memo");
-      btn.title = "Record Audio";
-    }
-    resampleAudio(samples, oldRate, newRate) {
-      if (oldRate === newRate) return samples;
-      const ratio = oldRate / newRate;
-      const newLength = Math.round(samples.length / ratio);
-      const result = new Float32Array(newLength);
-      for (let i = 0; i < newLength; i++) {
-        const originIndex = i * ratio;
-        const index = Math.floor(originIndex);
-        const frac = originIndex - index;
-        const next = index + 1 < samples.length ? samples[index + 1] : samples[index];
-        result[i] = samples[index] * (1 - frac) + next * frac;
-      }
-      return result;
-    }
-    encodeWAV(samples, sampleRate) {
-      const buffer = new ArrayBuffer(44 + samples.length * 2);
-      const view = new DataView(buffer);
-      const writeString = (v, off, str) => {
-        for (let i = 0; i < str.length; i++) {
-          v.setUint8(off + i, str.charCodeAt(i));
         }
       };
-      writeString(view, 0, "RIFF");
-      view.setUint32(4, 36 + samples.length * 2, true);
-      writeString(view, 8, "WAVE");
-      writeString(view, 12, "fmt ");
+      session.checkInterval = setInterval(() => {
+        if (session.isFinished) return;
+        const now = performance.now();
+        if (session.hadVoice) {
+          const silenceMs = now - session.lastVoiceTime;
+          if (silenceMs >= 300 && session.accumulatedBytes >= 4800) {
+            session.transcribe(true);
+          } else if (silenceMs < 300 && now - session.lastInterimTime >= 350 && session.accumulatedBytes >= 6400) {
+            session.lastInterimTime = now;
+            session.transcribe(false);
+          }
+        }
+      }, 60);
+      this.activeAudioSession = session;
+      const stream = new ReadableStream({
+        start(controller) {
+          streamCtrl = controller;
+          controller.enqueue(self.frameGrpcJson({
+            ready: { sessionId }
+          }));
+        },
+        cancel() {
+          session.end();
+        }
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/grpc-web+json"
+        }
+      });
+    }
+    async handleSendAudioChunk(context, args) {
+      try {
+        let bodyBytes = args[1]?.body;
+        if (bodyBytes) {
+          let jsonStr = "";
+          if (typeof bodyBytes === "string") {
+            jsonStr = bodyBytes;
+          } else if (bodyBytes instanceof Uint8Array || bodyBytes instanceof ArrayBuffer) {
+            const u8 = bodyBytes instanceof Uint8Array ? bodyBytes : new Uint8Array(bodyBytes);
+            if (u8.length > 5 && u8[0] === 0) {
+              const dataLen = u8[1] << 24 | u8[2] << 16 | u8[3] << 8 | u8[4];
+              jsonStr = new TextDecoder().decode(u8.slice(5, 5 + dataLen));
+            } else {
+              jsonStr = new TextDecoder().decode(u8);
+            }
+          }
+          if (jsonStr) {
+            const data = JSON.parse(jsonStr);
+            if (data.data && this.activeAudioSession) {
+              let pcmBytes;
+              if (typeof data.data === "string") {
+                const binary = atob(data.data);
+                pcmBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                  pcmBytes[i] = binary.charCodeAt(i);
+                }
+              } else if (Array.isArray(data.data)) {
+                pcmBytes = new Uint8Array(data.data);
+              }
+              if (pcmBytes) {
+                this.activeAudioSession.addChunk(pcmBytes);
+              }
+            }
+          }
+        }
+      } catch (e) {
+      }
+      return new Response(this.makeGrpcWebUnaryOk(), {
+        status: 200,
+        headers: { "Content-Type": "application/grpc-web+json" }
+      });
+    }
+    async handleEndAudioSession(context, args) {
+      if (this.activeAudioSession) {
+        await this.activeAudioSession.end();
+        this.activeAudioSession = null;
+      }
+      return new Response(this.makeGrpcWebUnaryOk(), {
+        status: 200,
+        headers: { "Content-Type": "application/grpc-web+json" }
+      });
+    }
+    encodeWAV16(pcmBytes, sampleRate = 16e3) {
+      const buffer = new ArrayBuffer(44 + pcmBytes.length);
+      const view = new DataView(buffer);
+      const writeStr = (off, s) => {
+        for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+      };
+      writeStr(0, "RIFF");
+      view.setUint32(4, 36 + pcmBytes.length, true);
+      writeStr(8, "WAVE");
+      writeStr(12, "fmt ");
       view.setUint32(16, 16, true);
       view.setUint16(20, 1, true);
       view.setUint16(22, 1, true);
@@ -5242,109 +4618,21 @@
       view.setUint32(28, sampleRate * 2, true);
       view.setUint16(32, 2, true);
       view.setUint16(34, 16, true);
-      writeString(view, 36, "data");
-      view.setUint32(40, samples.length * 2, true);
-      let offset3 = 44;
-      for (let i = 0; i < samples.length; i++, offset3 += 2) {
-        const s = Math.max(-1, Math.min(1, samples[i]));
-        view.setInt16(offset3, s < 0 ? s * 32768 : s * 32767, true);
-      }
-      return new Blob([view], { type: "audio/wav" });
+      writeStr(36, "data");
+      view.setUint32(40, pcmBytes.length, true);
+      new Uint8Array(buffer, 44).set(pcmBytes);
+      return new Blob([buffer], { type: "audio/wav" });
     }
-    cleanupAudio() {
-      if (this.sourceNode) {
-        try {
-          this.sourceNode.disconnect();
-        } catch (e) {
-        }
-        this.sourceNode = null;
-      }
-      if (this.analyserNode) {
-        try {
-          this.analyserNode.disconnect();
-        } catch (e) {
-        }
-        this.analyserNode = null;
-      }
-      if (this.workletNode) {
-        try {
-          this.workletNode.disconnect();
-        } catch (e) {
-        }
-        this.workletNode = null;
-      }
-      if (this.scriptProcessor) {
-        try {
-          this.scriptProcessor.disconnect();
-        } catch (e) {
-        }
-        this.scriptProcessor = null;
-      }
-      if (this.muteGain) {
-        try {
-          this.muteGain.disconnect();
-        } catch (e) {
-        }
-        this.muteGain = null;
-      }
-      if (this.mediaStream) {
-        try {
-          this.mediaStream.getTracks().forEach((t) => t.stop());
-        } catch (e) {
-        }
-        this.mediaStream = null;
-      }
-      if (this.audioContext) {
-        try {
-          this.audioContext.close();
-        } catch (e) {
-        }
-        this.audioContext = null;
-      }
+  };
+
+  // src/services/VoiceRecorder.js
+  var VoiceRecorder = class {
+    constructor(logger) {
+      this.logger = logger;
     }
-    insertTextIntoPrompt(text) {
-      try {
-        const editor = document.querySelector('div[contenteditable="true"]') || document.querySelector('[contenteditable="true"]') || document.querySelector("textarea.antigravity-prompt-input") || document.querySelector("textarea");
-        if (!editor) return;
-        editor.focus();
-        if (editor.isContentEditable) {
-          const sel = window.getSelection();
-          if (sel) {
-            const range = document.createRange();
-            range.selectNodeContents(editor);
-            range.collapse(false);
-            sel.removeAllRanges();
-            sel.addRange(range);
-          }
-          let inserted = false;
-          try {
-            const ev = new InputEvent("beforeinput", {
-              bubbles: true,
-              cancelable: true,
-              inputType: "insertText",
-              data: text
-            });
-            editor.dispatchEvent(ev);
-            inserted = editor.innerText && editor.innerText.includes(text.trim());
-          } catch (e) {
-          }
-          if (!inserted) {
-            try {
-              document.execCommand("insertText", false, text);
-            } catch (e) {
-            }
-          }
-        } else {
-          const start = editor.selectionStart || 0;
-          const end = editor.selectionEnd || 0;
-          const val = editor.value || "";
-          editor.value = val.substring(0, start) + text + val.substring(end);
-          editor.selectionStart = editor.selectionEnd = start + text.length;
-          editor.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-      } catch (e) {
-        this.logger.error("VoiceRecorder", "Error inserting recognized text", e);
-      }
+    init() {
+      window.__SX_VOICE_RECORDER__ = this;
+      this.logger.info("VoiceRecorder", "Native Antigravity voice transcription bridge active.");
     }
   };
 
@@ -6945,7 +6233,7 @@
         }
         return false;
       };
-      ["sx-effort-pill", "sx-context-btn", "sx-perf-btn", "sx-todo-btn"].forEach((id) => {
+      ["sx-effort-pill", "sx-context-btn", "sx-perf-btn"].forEach((id) => {
         const b = document.getElementById(id);
         if (b && isQuestionWidget(b)) {
           b.remove();
@@ -6971,7 +6259,7 @@
         }
       }
       if (isQuestionActive && (!promptInput || promptInput.offsetWidth === 0)) {
-        ["sx-effort-pill", "sx-context-btn", "sx-perf-btn", "sx-todo-btn"].forEach((id) => {
+        ["sx-effort-pill", "sx-context-btn", "sx-perf-btn"].forEach((id) => {
           const b = document.getElementById(id);
           if (b) b.remove();
         });
@@ -6980,7 +6268,6 @@
       if (actionContainer) {
         let ctxBtn = document.getElementById("sx-context-btn");
         let perfBtn = document.getElementById("sx-perf-btn");
-        let todoBtn = document.getElementById("sx-todo-btn");
         let effortBtn = document.getElementById("sx-effort-pill");
         const micWrapper = actionContainer.querySelector('div.flex.items-center:has(button[aria-label*="Record voice" i]), div.flex.items-center:has([data-tooltip-id*="record-tooltip"])') || actionContainer.querySelector('button[aria-label*="Record voice" i]');
         const sendBtn = actionContainer.querySelector('[data-testid="send-button"], [data-testid="stop-button"], button[aria-label*="send" i], button[aria-label*="stop" i], [data-tooltip-id*="send-tooltip"]');
@@ -7031,29 +6318,6 @@
             this.perf.togglePerfPopover(perfBtn);
           };
         }
-        if (!todoBtn) {
-          todoBtn = document.createElement("button");
-          todoBtn.id = "sx-todo-btn";
-          todoBtn.type = "button";
-          todoBtn.title = "Model Görev Takibi (To-Do & ETA) (T\u0131kla)";
-          todoBtn.style.cssText = `
-                    display: inline-flex !important; align-items: center !important; justify-content: center !important;
-                    width: 28px !important; height: 28px !important; border-radius: 50% !important; background: transparent !important;
-                    border: none !important; padding: 0 !important; cursor: pointer !important; user-select: none !important;
-                    position: relative !important;
-                `;
-          todoBtn.innerHTML = `
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#94a3b8;">
-                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
-                        <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
-                        <path d="m9 14 2 2 4-4"></path>
-                    </svg>
-                `;
-          todoBtn.onclick = (e) => {
-            e.stopPropagation();
-            this.perf.toggleTodoPopover(todoBtn);
-          };
-        }
         if (targetAnchor && targetAnchor.parentElement === actionContainer) {
           if (targetAnchor.previousElementSibling !== effortBtn) {
             actionContainer.insertBefore(effortBtn, targetAnchor);
@@ -7067,12 +6331,8 @@
         if (ctxBtn.previousElementSibling !== perfBtn) {
           actionContainer.insertBefore(perfBtn, ctxBtn);
         }
-        if (perfBtn.previousElementSibling !== todoBtn) {
-          actionContainer.insertBefore(todoBtn, perfBtn);
-        }
         this.quota.updateContextButtonUI();
         this.perf.updatePerfButtonUI();
-        this.perf.updateTodoButtonUI();
         this.injectEffortButton();
       }
       this.trySXModelSelectorPanelInject();
@@ -7189,11 +6449,7 @@
     }
     trySXModelSelectorPanelInject() {
       const modelPanel = document.querySelector('[data-testid="model-selector-panel"]');
-      if (!modelPanel) {
-        this.closeModelReasoningSubmenu();
-        return;
-      }
-      if (modelPanel.closest("[data-sx-usage-panel]")) return;
+      if (!modelPanel || modelPanel.closest("[data-sx-usage-panel]")) return;
       const sxModels = this.state.getModels();
       if (!sxModels || sxModels.length === 0) return;
       const providers = this.state.getProviders();
@@ -7520,7 +6776,6 @@
             });
           }
           item.addEventListener("click", () => {
-            this.closeModelReasoningSubmenu();
             const cKey = this.models.getActiveConversationKey();
             this.models.setActiveModelForConversation(m.id, cKey, true);
             scrollContainer.querySelectorAll(".sx-custom-model-item").forEach((el) => {
@@ -8939,22 +8194,6 @@
     window.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "r" || e.key === "F5") {
         window.location.reload();
-      }
-      const isCmdOrCtrl = e.ctrlKey || e.metaKey;
-      const keyLower = (e.key || "").toLowerCase();
-      const isKeyI = e.code === "KeyI" || keyLower === "i" || keyLower === "ı" || e.key === "I" || e.key === "İ";
-      if ((isCmdOrCtrl && e.shiftKey && isKeyI) || e.key === "F12" || e.code === "F12") {
-        try {
-          if (window.electronNative && typeof window.electronNative.toggleDevTools === "function") {
-            e.preventDefault();
-            e.stopPropagation();
-            window.electronNative.toggleDevTools();
-          } else if (window.electron && typeof window.electron.toggleDevTools === "function") {
-            e.preventDefault();
-            e.stopPropagation();
-            window.electron.toggleDevTools();
-          }
-        } catch(err) {}
       }
     }, true);
     logger.info("Core", "SX Core SDK initialized successfully.");
