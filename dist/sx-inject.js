@@ -4905,15 +4905,22 @@
       this.scriptProcessor = null;
       this.sourceNode = null;
       this.recordedChunks = [];
-      this.speechRecognizedText = "";
-      this.hasLiveSpeechText = false;
+      this.totalRecognized = "";
+      this.lastInterim = "";
     }
     init() {
-      // Do not hijack native Antigravity "Record voice" button - native Antigravity handles audio transcription natively.
       document.addEventListener("click", (e) => {
-        const btn = e.target.closest('button.sx-voice-btn');
+        const btn = e.target.closest(
+          'button[data-tooltip-id*="record-tooltip"], ' +
+          'button[data-tooltip-id*="input-send-button-record-tooltip"], ' +
+          'button[aria-label*="Record voice" i], ' +
+          'button.sx-voice-btn, ' +
+          'button[aria-label*="ses" i], ' +
+          'button[aria-label*="voice" i]'
+        );
         if (btn) {
           e.preventDefault();
+          e.stopPropagation();
           e.stopImmediatePropagation();
           this.toggleRecording(btn);
         }
@@ -4925,13 +4932,13 @@
         st.textContent = `
           @keyframes sx-mic-pulse {
             0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-            70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+            70% { box-shadow: 0 0 0 9px rgba(239, 68, 68, 0); }
             100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
           }
           button.sx-recording {
             background-color: #ef4444 !important;
             color: #ffffff !important;
-            animation: sx-mic-pulse 1.4s infinite !important;
+            animation: sx-mic-pulse 1.3s infinite !important;
           }
           button.sx-recording svg {
             color: #ffffff !important;
@@ -4940,7 +4947,7 @@
         `;
         (document.head || document.documentElement)?.appendChild(st);
       }
-      this.logger.info("VoiceRecorder", "Voice recorder initialized.");
+      this.logger.info("VoiceRecorder", "Voice recorder initialized with Google SpeechRecognition.");
     }
     async toggleRecording(btn) {
       if (this.isRecording) {
@@ -4952,14 +4959,14 @@
     async startRecording(btn) {
       this.isRecording = true;
       this.activeBtn = btn;
-      this.hasLiveSpeechText = false;
-      this.speechRecognizedText = "";
+      this.totalRecognized = "";
+      this.lastInterim = "";
       this.recordedChunks = [];
 
       if (btn) {
         btn.classList.add("sx-recording");
         btn.setAttribute("aria-label", "Stop recording");
-        btn.title = "Kayd\u0131 durdurmak i\xE7in t\u0131klay\u0131n";
+        btn.title = "Kayd\u0131 bitirmek i\xE7in tekrar t\u0131klay\u0131n";
       }
 
       const editor = document.querySelector('[contenteditable="true"]') ||
@@ -4967,7 +4974,7 @@
                      document.querySelector('textarea');
       if (editor) editor.focus();
 
-      // 1. Try Live SpeechRecognition (Google Web Speech in Chromium)
+      // 1. Google SpeechRecognition (Chromium Web Speech API)
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (SR) {
         try {
@@ -4976,24 +4983,26 @@
           this.recognition.interimResults = true;
           this.recognition.lang = navigator.language || "tr-TR";
 
-          let liveFinal = "";
           this.recognition.onresult = (event) => {
-            let finalChunk = "";
+            let interimStr = "";
             for (let i = event.resultIndex; i < event.results.length; ++i) {
+              const transcript = event.results[i][0].transcript;
               if (event.results[i].isFinal) {
-                finalChunk += event.results[i][0].transcript;
+                const trimmed = transcript.trim();
+                if (trimmed) {
+                  this.insertTextIntoPrompt(trimmed + " ");
+                  this.totalRecognized += trimmed + " ";
+                  this.lastInterim = "";
+                }
+              } else {
+                interimStr += transcript;
               }
             }
-            if (finalChunk && finalChunk !== liveFinal) {
-              liveFinal = finalChunk;
-              this.speechRecognizedText += finalChunk + " ";
-              this.hasLiveSpeechText = true;
-              this.insertTextIntoPrompt(finalChunk.trim() + " ");
-            }
+            this.lastInterim = interimStr.trim();
           };
 
           this.recognition.onerror = (e) => {
-            this.logger.warn("VoiceRecorder", "Live SpeechRecognition notice:", e.error);
+            this.logger.warn("VoiceRecorder", "SpeechRecognition event:", e.error);
           };
 
           this.recognition.onend = () => {
@@ -5003,12 +5012,13 @@
           };
 
           this.recognition.start();
+          this.logger.info("VoiceRecorder", "Live SpeechRecognition active.");
         } catch(e) {
-          this.logger.warn("VoiceRecorder", "Could not start live SpeechRecognition:", e);
+          this.logger.warn("VoiceRecorder", "SpeechRecognition start error:", e);
         }
       }
 
-      // 2. Parallel audio capture for Google Speech Recognition fallback
+      // 2. Parallel Web Audio capture for backup transcription
       try {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
           const stream = await navigator.mediaDevices.getUserMedia({
@@ -5048,6 +5058,12 @@
       }
       this.activeBtn = null;
 
+      if (this.lastInterim) {
+        this.insertTextIntoPrompt(this.lastInterim + " ");
+        this.totalRecognized += this.lastInterim + " ";
+        this.lastInterim = "";
+      }
+
       if (this.recognition) {
         try { this.recognition.stop(); } catch(e) {}
         this.recognition = null;
@@ -5057,7 +5073,7 @@
       const chunks = this.recordedChunks;
       this.cleanupAudio();
 
-      if (this.hasLiveSpeechText && this.speechRecognizedText.trim().length > 0) {
+      if (this.totalRecognized.trim().length > 0) {
         return;
       }
 
