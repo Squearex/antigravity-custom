@@ -493,6 +493,10 @@ function install(targetAppDir) {
         }
     }
 
+    // 7. Create antigravity-custom launcher
+    const appRootDir = path.dirname(resourcesDir);
+    createCustomLauncher(appRootDir, resourcesDir);
+
     console.log(`
 ${c.emerald}${c.bold}========================================================================${c.reset}
 ${c.green}${c.bold}🎉 TEBRİKLER! ANTIGRAVITY CUSTOM (SX) KURULUMU TAMAMLANDI! 🎉${c.reset}
@@ -504,8 +508,100 @@ ${c.cyan}Özellikler:${c.reset}
   • Otomatik Güncelleme Bildirimi ve Tek Tıkla Güncelleme Butonu
   • Windows ve Linux tam uyumluluk
 
-Antigravity'yi başlatıp hemen kullanmaya başlayabilirsiniz!
+${c.bold}Başlatma Seçenekleri:${c.reset}
+  • Komut Satırı: ${c.cyan}antigravity-custom${c.reset} (veya ${c.cyan}${path.join(appRootDir, IS_WIN ? 'antigravity-custom.cmd' : 'antigravity-custom')}${c.reset})
+  • Masaüstü / Uygulama Menüsü: ${c.cyan}Antigravity Custom (SX)${c.reset}
 `);
+}
+
+// Create dedicated antigravity-custom launcher & desktop entry
+function createCustomLauncher(appRootDir, resourcesDir) {
+    try {
+        if (IS_LINUX) {
+            const customLauncherPath = path.join(appRootDir, 'antigravity-custom');
+            const scriptContent = `#!/usr/bin/env bash
+DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+RESOURCES="$DIR/resources"
+
+# app.asar varsa devre dışı bırak (Electron doğrudan yamalı app klasörünü çalıştırsın)
+if [ -f "$RESOURCES/app.asar" ] && [ ! -f "$RESOURCES/app.asar.orig" ]; then
+    mv "$RESOURCES/app.asar" "$RESOURCES/app.asar.orig" 2>/dev/null || true
+fi
+
+# Antigravity Custom Başlat
+if [ -x "$DIR/antigravity" ]; then
+    exec "$DIR/antigravity" "$@"
+elif [ -x "$DIR/Antigravity" ]; then
+    exec "$DIR/Antigravity" "$@"
+else
+    exec antigravity "$@"
+fi
+`;
+            fs.writeFileSync(customLauncherPath, scriptContent.replace(/\r\n/g, '\n'), { encoding: 'utf8', mode: 0o755 });
+            try { fs.chmodSync(customLauncherPath, 0o755); } catch(e) {}
+            console.log(`${c.green}✓${c.reset} 'antigravity-custom' başlatıcı oluşturuldu: ${customLauncherPath}`);
+
+            // Symlink to ~/.local/bin/antigravity-custom
+            try {
+                const home = os.homedir();
+                const localBin = path.join(home, '.local', 'bin');
+                if (!fs.existsSync(localBin)) {
+                    fs.mkdirSync(localBin, { recursive: true });
+                }
+                const linkTarget = path.join(localBin, 'antigravity-custom');
+                try { fs.unlinkSync(linkTarget); } catch(e) {}
+                fs.symlinkSync(customLauncherPath, linkTarget);
+                console.log(`${c.green}✓${c.reset} Komut satırı kısayolu eklendi: ~/.local/bin/antigravity-custom`);
+            } catch(e) {}
+
+            // Desktop entry in ~/.local/share/applications/antigravity-custom.desktop
+            try {
+                const home = os.homedir();
+                const appsDir = path.join(home, '.local', 'share', 'applications');
+                if (!fs.existsSync(appsDir)) {
+                    fs.mkdirSync(appsDir, { recursive: true });
+                }
+                const desktopFile = path.join(appsDir, 'antigravity-custom.desktop');
+
+                let iconPath = 'antigravity';
+                const possibleIcons = [
+                    path.join(appRootDir, 'resources', 'app', 'assets', 'icon.png'),
+                    path.join(appRootDir, 'resources', 'icon.png'),
+                    path.join(appRootDir, 'icon.png')
+                ];
+                for (const ic of possibleIcons) {
+                    if (fs.existsSync(ic)) { iconPath = ic; break; }
+                }
+
+                const desktopContent = `[Desktop Entry]
+Name=Antigravity Custom (SX)
+Comment=Antigravity IDE with SX Custom AI Core
+Exec="${customLauncherPath}" %U
+Icon=${iconPath}
+Terminal=false
+Type=Application
+Categories=Development;IDE;
+StartupWMClass=Antigravity
+`;
+                fs.writeFileSync(desktopFile, desktopContent.replace(/\r\n/g, '\n'), 'utf8');
+                console.log(`${c.green}✓${c.reset} Masaüstü uygulaması eklendi: ~/.local/share/applications/antigravity-custom.desktop`);
+            } catch(e) {}
+
+        } else if (IS_WIN) {
+            const customCmdPath = path.join(appRootDir, 'antigravity-custom.cmd');
+            const cmdContent = `@echo off
+set APP_DIR=%~dp0
+if exist "%APP_DIR%resources\\app.asar" if not exist "%APP_DIR%resources\\app.asar.orig" (
+    ren "%APP_DIR%resources\\app.asar" "app.asar.orig" >nul 2>&1
+)
+start "" "%APP_DIR%Antigravity.exe" %*
+`;
+            fs.writeFileSync(customCmdPath, cmdContent, 'utf8');
+            console.log(`${c.green}✓${c.reset} 'antigravity-custom.cmd' başlatıcı oluşturuldu: ${customCmdPath}`);
+        }
+    } catch(e) {
+        console.log(`${c.yellow}⚠️ Uyarı:${c.reset} antigravity-custom başlatıcı oluşturulamadı:`, e.message);
+    }
 }
 
 // Perform Uninstall
@@ -541,6 +637,35 @@ function uninstall(targetAppDir) {
             try { fs.unlinkSync(p); } catch(e) {}
         }
     }
+
+    // Restore app.asar
+    const resourcesDir = path.dirname(targetAppDir);
+    const asarPath = path.join(resourcesDir, 'app.asar');
+    const asarOrig = path.join(resourcesDir, 'app.asar.orig');
+    if (fs.existsSync(asarOrig)) {
+        try {
+            if (fs.existsSync(asarPath)) fs.unlinkSync(asarPath);
+            fs.renameSync(asarOrig, asarPath);
+            console.log(`${c.green}✓${c.reset} app.asar orijinal durumuna geri getirildi.`);
+        } catch(e) {}
+    }
+
+    // Clean launcher
+    const appRootDir = path.dirname(resourcesDir);
+    try {
+        if (IS_LINUX) {
+            const customLauncher = path.join(appRootDir, 'antigravity-custom');
+            if (fs.existsSync(customLauncher)) fs.unlinkSync(customLauncher);
+            const home = os.homedir();
+            const linkTarget = path.join(home, '.local', 'bin', 'antigravity-custom');
+            if (fs.existsSync(linkTarget)) fs.unlinkSync(linkTarget);
+            const desktopFile = path.join(home, '.local', 'share', 'applications', 'antigravity-custom.desktop');
+            if (fs.existsSync(desktopFile)) fs.unlinkSync(desktopFile);
+        } else if (IS_WIN) {
+            const customCmd = path.join(appRootDir, 'antigravity-custom.cmd');
+            if (fs.existsSync(customCmd)) fs.unlinkSync(customCmd);
+        }
+    } catch(e) {}
 
     console.log(`${c.green}✓${c.reset} SX Core SDK dosyaları kaldırıldı. Antigravity orijinal haline döndü.\n`);
 }

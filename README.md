@@ -46,6 +46,15 @@ irm https://github.com/Squearex/antigravity-custom/releases/latest/download/anti
 
 ---
 
+## 🎯 Nasıl Başlatılır?
+
+Kurulum tamamlandıktan sonra SX Custom motorunun devreye girmesi için oluşturulan başlatıcıyı kullanın:
+
+* 🐧 **Linux:** Terminalde doğrudan `antigravity-custom` çalıştırın veya Uygulamalar menünüzdeki **Antigravity Custom (SX)** simgesine tıklayın.
+* 🪟 **Windows:** Antigravity dizinindeki `antigravity-custom.cmd` veya masaüstü kısayolu ile başlatın.
+
+---
+
 ## 🔄 Güncellemeler Nasıl Yapılır?
 
 GitHub Releases üzerinde yeni bir sürüm yayınlandığında:
