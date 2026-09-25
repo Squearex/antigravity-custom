@@ -4902,9 +4902,13 @@
       this.audioContext = null;
       this.mediaStream = null;
       this.scriptProcessor = null;
+      this.workletNode = null;
       this.sourceNode = null;
+      this.analyserNode = null;
       this.muteGain = null;
       this.recordedChunks = [];
+      this.visualizerBars = null;
+      this.animFrameId = null;
     }
     init() {
       window.__SX_VOICE_RECORDER__ = this;
@@ -4925,49 +4929,7 @@
         }
       }, true);
 
-      if (!document.getElementById("sx-voice-recorder-styles")) {
-        const st = document.createElement("style");
-        st.id = "sx-voice-recorder-styles";
-        st.textContent = `
-          @keyframes sx-mic-pulse {
-            0% {
-              box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
-              transform: scale(1);
-            }
-            50% {
-              box-shadow: 0 0 0 9px rgba(239, 68, 68, 0);
-              transform: scale(1.08);
-            }
-            100% {
-              box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
-              transform: scale(1);
-            }
-          }
-          button.sx-recording {
-            background-color: #ef4444 !important;
-            color: #ffffff !important;
-            animation: sx-mic-pulse 1.3s infinite !important;
-            border-radius: 9999px !important;
-          }
-          button.sx-recording svg {
-            color: #ffffff !important;
-            fill: #ffffff !important;
-          }
-          button.sx-transcribing {
-            background-color: #f59e0b !important;
-            color: #ffffff !important;
-            border-radius: 9999px !important;
-            opacity: 0.8 !important;
-            cursor: wait !important;
-          }
-          button.sx-transcribing svg {
-            color: #ffffff !important;
-            fill: #ffffff !important;
-          }
-        `;
-        (document.head || document.documentElement)?.appendChild(st);
-      }
-      this.logger.info("VoiceRecorder", "Voice recorder initialized with Web Audio & Google Speech API.");
+      this.logger.info("VoiceRecorder", "Voice recorder initialized with native waveform UX & Google Speech API.");
     }
     async toggleRecording(btn) {
       if (this.isRecording) {
@@ -4982,10 +4944,23 @@
       this.recordedChunks = [];
 
       if (btn) {
-        btn.classList.remove("sx-transcribing");
-        btn.classList.add("sx-recording");
+        if (!btn._origHtml) {
+          btn._origHtml = btn.innerHTML;
+        }
+        btn.classList.remove("bg-transparent", "hover:bg-secondary");
+        btn.classList.add("bg-red-500", "text-white");
         btn.setAttribute("aria-label", "Stop recording");
-        btn.title = "Kayd\u0131 bitirmek i\xE7in tekrar t\u0131klay\u0131n";
+        btn.title = "Stop Recording";
+
+        // Exact Antigravity cEa 3-bar waveform structure
+        btn.innerHTML = `
+          <div class="flex items-center justify-center gap-[2px] w-4 h-4 pointer-events-none" aria-hidden="true">
+            <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 4px;"></div>
+            <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 5px;"></div>
+            <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 4px;"></div>
+          </div>
+        `;
+        this.visualizerBars = Array.from(btn.querySelectorAll(".sx-wave-bar"));
       }
 
       const editor = document.querySelector('div[contenteditable="true"]') ||
@@ -5008,36 +4983,123 @@
           const AudioCtx = window.AudioContext || window.webkitAudioContext;
           if (AudioCtx) {
             this.audioContext = new AudioCtx();
+            if (this.audioContext.state === "suspended") {
+              this.audioContext.resume().catch(() => {});
+            }
             this.sourceNode = this.audioContext.createMediaStreamSource(stream);
-            this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
-            this.scriptProcessor.onaudioprocess = (e) => {
-              if (!this.isRecording) return;
-              const data = e.inputBuffer.getChannelData(0);
-              this.recordedChunks.push(new Float32Array(data));
-            };
-            this.sourceNode.connect(this.scriptProcessor);
 
-            this.muteGain = this.audioContext.createGain();
-            this.muteGain.gain.value = 0;
-            this.scriptProcessor.connect(this.muteGain);
-            this.muteGain.connect(this.audioContext.destination);
+            // 1. Audio Recording Pipeline (AudioWorklet with ScriptProcessor fallback)
+            let workletReady = false;
+            if (this.audioContext.audioWorklet) {
+              try {
+                const workletCode = `
+                  class SXRecorderProcessor extends AudioWorkletProcessor {
+                    process(inputs) {
+                      const input = inputs[0];
+                      if (input && input[0]) {
+                        this.port.postMessage(input[0]);
+                      }
+                      return true;
+                    }
+                  }
+                  registerProcessor('sx-recorder-processor', SXRecorderProcessor);
+                `;
+                const blob = new Blob([workletCode], { type: "application/javascript" });
+                const url = URL.createObjectURL(blob);
+                await this.audioContext.audioWorklet.addModule(url);
+                URL.revokeObjectURL(url);
+                const workletNode = new AudioWorkletNode(this.audioContext, "sx-recorder-processor");
+                workletNode.port.onmessage = (e) => {
+                  if (!this.isRecording) return;
+                  this.recordedChunks.push(new Float32Array(e.data));
+                };
+                this.sourceNode.connect(workletNode);
+                this.workletNode = workletNode;
+                workletReady = true;
+              } catch(err) {}
+            }
+
+            if (!workletReady) {
+              this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
+              this.scriptProcessor.onaudioprocess = (e) => {
+                if (!this.isRecording) return;
+                const data = e.inputBuffer.getChannelData(0);
+                this.recordedChunks.push(new Float32Array(data));
+              };
+              this.sourceNode.connect(this.scriptProcessor);
+              this.muteGain = this.audioContext.createGain();
+              this.muteGain.gain.value = 0;
+              this.scriptProcessor.connect(this.muteGain);
+              this.muteGain.connect(this.audioContext.destination);
+            }
+
+            // 2. Native Antigravity cEa 3-bar Audio Visualizer FFT
+            this.analyserNode = this.audioContext.createAnalyser();
+            this.analyserNode.fftSize = 64;
+            this.analyserNode.smoothingTimeConstant = 0.8;
+            this.analyserNode.minDecibels = -60;
+            this.analyserNode.maxDecibels = -25;
+            this.sourceNode.connect(this.analyserNode);
+
+            const freqData = new Uint8Array(this.analyserNode.frequencyBinCount);
+            let smoothedVol = 0;
+            let maxSeen = 0.25;
+
+            const updateVisualizer = () => {
+              if (!this.isRecording || !this.analyserNode) return;
+              this.analyserNode.getByteFrequencyData(freqData);
+              let sumSq = 0;
+              for (let i = 0; i < freqData.length; i++) sumSq += freqData[i] * freqData[i];
+              const rms = Math.sqrt(sumSq / freqData.length) / 255;
+              maxSeen = Math.max(0.25, maxSeen * 0.995, rms);
+              let normalized = Math.min(1, rms / maxSeen);
+              normalized *= normalized;
+              smoothedVol = normalized > smoothedVol
+                ? smoothedVol + (normalized - smoothedVol) * 0.6
+                : smoothedVol + (normalized - smoothedVol) * 0.15;
+
+              const heights = [
+                Math.max(3, Math.min(14, 4 + smoothedVol * 8)),
+                Math.max(4, Math.min(16, 5 + smoothedVol * 12)),
+                Math.max(3, Math.min(14, 4 + smoothedVol * 8))
+              ];
+              if (this.visualizerBars) {
+                for (let i = 0; i < this.visualizerBars.length; i++) {
+                  const bar = this.visualizerBars[i];
+                  if (bar) bar.style.height = `${heights[i]}px`;
+                }
+              }
+              this.animFrameId = requestAnimationFrame(updateVisualizer);
+            };
+            this.animFrameId = requestAnimationFrame(updateVisualizer);
           }
-          this.logger.info("VoiceRecorder", "Microphone capture active.");
+          this.logger.info("VoiceRecorder", "Microphone capture active with live waveform.");
         }
       } catch (e) {
         this.logger.error("VoiceRecorder", "Audio capture failed:", e);
-        if (btn) btn.classList.remove("sx-recording");
+        this.resetButton(btn);
         this.isRecording = false;
       }
     }
     async stopRecording(btn = null) {
       this.isRecording = false;
       const targetBtn = btn || this.activeBtn;
+
+      if (this.animFrameId) {
+        cancelAnimationFrame(this.animFrameId);
+        this.animFrameId = null;
+      }
+      this.visualizerBars = null;
+
       if (targetBtn) {
-        targetBtn.classList.remove("sx-recording");
-        targetBtn.classList.add("sx-transcribing");
-        targetBtn.setAttribute("aria-label", "Transcribing...");
-        targetBtn.title = "Ses \xE7\xF6z\xFCmleniyor...";
+        targetBtn.innerHTML = `
+          <svg class="animate-spin w-3.5 h-3.5 text-white pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        `;
+        targetBtn.setAttribute("aria-label", "Finalizing transcription...");
+        targetBtn.title = "Finalizing...";
       }
 
       const sampleRate = this.audioContext ? this.audioContext.sampleRate : 44100;
@@ -5077,11 +5139,19 @@
       }
 
       if (targetBtn) {
-        targetBtn.classList.remove("sx-transcribing");
-        targetBtn.setAttribute("aria-label", "Record voice memo");
-        targetBtn.title = "Ses kayd\u0131 ba\u015Flat";
+        this.resetButton(targetBtn);
       }
       this.activeBtn = null;
+    }
+    resetButton(btn) {
+      if (!btn) return;
+      btn.classList.remove("bg-red-500", "text-white");
+      btn.classList.add("bg-transparent", "hover:bg-secondary");
+      if (btn._origHtml) {
+        btn.innerHTML = btn._origHtml;
+      }
+      btn.setAttribute("aria-label", "Record voice memo");
+      btn.title = "Record Audio";
     }
     resampleAudio(samples, oldRate, newRate) {
       if (oldRate === newRate) return samples;
@@ -5130,6 +5200,14 @@
       if (this.sourceNode) {
         try { this.sourceNode.disconnect(); } catch (e) {}
         this.sourceNode = null;
+      }
+      if (this.analyserNode) {
+        try { this.analyserNode.disconnect(); } catch (e) {}
+        this.analyserNode = null;
+      }
+      if (this.workletNode) {
+        try { this.workletNode.disconnect(); } catch (e) {}
+        this.workletNode = null;
       }
       if (this.scriptProcessor) {
         try { this.scriptProcessor.disconnect(); } catch (e) {}
