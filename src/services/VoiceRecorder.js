@@ -21,14 +21,9 @@ export class VoiceRecorder {
     }
 
     init() {
+        // Do not hijack native Antigravity "Record voice" button - native Antigravity handles audio transcription natively.
         document.addEventListener('click', (e) => {
-            const btn = e.target.closest(
-                'button[aria-label*="Record voice" i], ' +
-                '[data-tooltip-id*="record-tooltip"], ' +
-                'button.sx-voice-btn, ' +
-                'button[aria-label*="ses" i], ' +
-                'button[aria-label*="voice" i]'
-            );
+            const btn = e.target.closest('button.sx-voice-btn');
             if (btn) {
                 e.preventDefault();
                 e.stopImmediatePropagation();

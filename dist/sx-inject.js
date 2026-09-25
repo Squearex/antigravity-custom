@@ -4889,14 +4889,6 @@
           this.logger.error("FetchInterceptor", "GetCascadeConfig hook error", e);
         }
       }
-      if (url.includes("StreamAudioTranscription") || url.includes("SendAudioChunk")) {
-        const emptyBytes = new TextEncoder().encode(JSON.stringify({}));
-        const frame0 = StreamAdapter.encodeFrame(0, emptyBytes);
-        return new Response(frame0, {
-          status: 200,
-          headers: { "content-type": "application/connect+json" }
-        });
-      }
       return resp;
     }
   };
@@ -4917,10 +4909,9 @@
       this.hasLiveSpeechText = false;
     }
     init() {
+      // Do not hijack native Antigravity "Record voice" button - native Antigravity handles audio transcription natively.
       document.addEventListener("click", (e) => {
-        const btn = e.target.closest(
-          'button[aria-label*="Record voice" i], [data-tooltip-id*="record-tooltip"], button.sx-voice-btn, button[aria-label*="ses" i], button[aria-label*="voice" i]'
-        );
+        const btn = e.target.closest('button.sx-voice-btn');
         if (btn) {
           e.preventDefault();
           e.stopImmediatePropagation();
