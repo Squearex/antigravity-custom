@@ -97,6 +97,30 @@ export class UIInjector {
             }
         }, true);
 
+        // Instant combobox watcher: inject presets on the microtask frame before paint
+        document.addEventListener('pointerdown', (e) => {
+            const combo = e.target.closest('button[role="combobox"]');
+            if (!combo) return;
+
+            document.body.classList.add('sx-theme-combobox-opening');
+
+            const fastObs = new MutationObserver(() => {
+                const lb = document.querySelector('[role="listbox"]');
+                if (lb) {
+                    this.trySXAppearanceSettingsInject(lb);
+                    if (lb.querySelector('.sx-custom-preset-option') || lb.getAttribute('data-sx-checked')) {
+                        fastObs.disconnect();
+                        document.body.classList.remove('sx-theme-combobox-opening');
+                    }
+                }
+            });
+            fastObs.observe(document.body, { childList: true, subtree: true });
+            setTimeout(() => {
+                fastObs.disconnect();
+                document.body.classList.remove('sx-theme-combobox-opening');
+            }, 600);
+        }, true);
+
         // Click listener for sidebar navigation, model selector, and settings dialogs
         document.addEventListener('click', (e) => {
             const navTarget = e.target.closest('a[href^="/c/"], a[href="/"], [data-testid="new-conversation-button"], [data-testid="conversation-row-sidebar"], button[aria-label*="New Conversation" i]');
@@ -193,7 +217,8 @@ export class UIInjector {
                                     this.trySXAppearanceSettingsInject();
                                 }
                                 if (n.matches?.('[role="listbox"]') || n.querySelector?.('[role="listbox"]') || n.closest?.('[role="listbox"]')) {
-                                    this.trySXAppearanceSettingsInject();
+                                    const lbNode = n.matches?.('[role="listbox"]') ? n : (n.querySelector?.('[role="listbox"]') || n.closest?.('[role="listbox"]'));
+                                    this.trySXAppearanceSettingsInject(lbNode);
                                 }
                             }
                         }
@@ -406,6 +431,11 @@ export class UIInjector {
         const style = document.createElement('style');
         style.id = 'sx-custom-styles';
         style.textContent = `
+            /* Seamless theme combobox popup without un-injected flash */
+            body.sx-theme-combobox-opening [role="listbox"]:not([data-sx-checked]) {
+                opacity: 0 !important;
+            }
+
             /* SX Update Pill */
             .sx-update-pill {
                 display: inline-flex !important; align-items: center !important; gap: 5.5px !important;
@@ -1807,7 +1837,7 @@ export class UIInjector {
         }
     }
 
-    trySXAppearanceSettingsInject() {
+    trySXAppearanceSettingsInject(targetListbox = null) {
         const dialog = document.querySelector('[role="dialog"]');
         if (dialog) {
             const nativeCombos = dialog.querySelectorAll('button[role="combobox"]');
@@ -1818,62 +1848,117 @@ export class UIInjector {
             // Clean up any previously injected quick-preset bar
             const existingPillBar = document.getElementById('sx-quick-presets-bar');
             if (existingPillBar) existingPillBar.remove();
+
+            // Sync combobox button label with active SX theme preset
+            const activePresetId = localStorage.getItem('sx_active_theme_preset') || this.theme.currentThemeId;
+            const activePreset = activePresetId && SX_THEME_PRESETS.find(p => p.id === activePresetId || p.name === activePresetId);
+            if (activePreset) {
+                const allHeadings = Array.from(dialog.querySelectorAll('*')).filter(el => el.children.length === 0);
+                const darkHeading = allHeadings.find(el => /Dark Theme|Karanlık Tema/i.test(el.textContent.trim()));
+                if (darkHeading) {
+                    const card = darkHeading.closest('.border') || darkHeading.parentElement?.parentElement;
+                    const comboBtn = card?.querySelector('button[role="combobox"] span');
+                    if (comboBtn && comboBtn.innerText !== activePreset.name) {
+                        comboBtn.innerText = activePreset.name;
+                    }
+                }
+            }
         }
 
         // 2. Hook native theme combobox listbox when opened (whether in dialog or portal on body)
-        const listbox = document.querySelector('[role="listbox"]');
-        if (listbox && !listbox.querySelector('.sx-custom-preset-option')) {
-            const allOpts = Array.from(listbox.querySelectorAll('[role="option"], [data-radix-collection-item]'));
-            const isThemeListbox = allOpts.some(o => {
-                const txt = o.innerText || o.textContent || '';
-                return /Dark|Light|Tokyo|Ocean|Matrix|Default|Tema/i.test(txt);
+        const listbox = targetListbox || document.querySelector('[role="listbox"]');
+        if (!listbox || listbox.querySelector('.sx-custom-preset-option')) return;
+
+        const allOpts = Array.from(listbox.querySelectorAll('[role="option"], [data-radix-collection-item]'));
+        if (allOpts.length === 0) return;
+
+        const optTexts = allOpts.map(o => (o.textContent || '').trim());
+
+        // Check if this is the Light Theme combobox: NEVER inject dark SX presets into it!
+        const isLightListbox = optTexts.some(t => t === 'Default Light' || t === 'One Light' || t === 'Solarized Light');
+        if (isLightListbox) {
+            listbox.setAttribute('data-sx-checked', 'light');
+            document.body.classList.remove('sx-theme-combobox-opening');
+            return;
+        }
+
+        // Check if this is the Dark Theme combobox
+        const isDarkListbox = optTexts.some(t => 
+            t === 'Default Dark' || t === 'Dracula' || t === 'Tokyo Night' || 
+            t === 'Vesper' || t === 'Monokai' || t === 'One Dark Pro' || t === 'Catppuccin' ||
+            t.startsWith('SX ')
+        );
+        if (!isDarkListbox) return;
+
+        listbox.setAttribute('data-sx-checked', 'dark');
+        document.body.classList.remove('sx-theme-combobox-opening');
+
+        const targetContainer = listbox.querySelector('[data-radix-select-viewport]') || listbox;
+        const sampleOpt = allOpts[0];
+        const activePresetId = localStorage.getItem('sx_active_theme_preset') || this.theme.currentThemeId;
+
+        // Batch options creation in DocumentFragment for 0ms delay and zero layout thrashing
+        const fragment = document.createDocumentFragment();
+
+        const sep = document.createElement('div');
+        sep.className = 'sx-preset-separator';
+        sep.style.cssText = 'padding:6px 12px 4px 12px;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:rgba(255,255,255,0.4);border-top:1px solid rgba(255,255,255,0.08);margin-top:4px;user-select:none;';
+        sep.textContent = 'SX Custom Themes';
+        fragment.appendChild(sep);
+
+        SX_THEME_PRESETS.forEach(p => {
+            const opt = document.createElement('div');
+            opt.setAttribute('role', 'option');
+            opt.setAttribute('tabindex', '-1');
+            const isSelected = activePresetId && (p.id === activePresetId || p.name === activePresetId);
+            if (isSelected) {
+                opt.setAttribute('data-state', 'checked');
+                opt.setAttribute('aria-selected', 'true');
+            } else {
+                opt.setAttribute('data-state', 'unchecked');
+            }
+
+            if (sampleOpt) {
+                opt.className = sampleOpt.className;
+            } else {
+                opt.style.cssText = 'padding:6px 12px;cursor:pointer;display:flex;align-items:center;font-size:13px;border-radius:6px;margin:1px 0;user-select:none;color:rgba(255,255,255,0.85);';
+            }
+            opt.classList.add('sx-custom-preset-option');
+
+            const dot = `<span style="width:8px;height:8px;border-radius:50%;background:${p.primary};margin-right:8px;display:inline-block;box-shadow:0 0 6px ${p.primary};flex-shrink:0;"></span>`;
+            const check = isSelected ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;color:${p.primary};flex-shrink:0;"><polyline points="20 6 9 17 4 12"></polyline></svg>` : '';
+
+            opt.innerHTML = `<span style="display:flex;align-items:center;width:100%;font-weight:inherit;color:inherit;">${dot}<span class="truncate" style="flex:1;">${p.name}</span>${check}</span>`;
+
+            opt.addEventListener('mouseenter', () => {
+                opt.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+                opt.style.color = '#ffffff';
+            });
+            opt.addEventListener('mouseleave', () => {
+                opt.style.backgroundColor = '';
+                opt.style.color = '';
             });
 
-            if (isThemeListbox) {
-                const targetContainer = listbox.querySelector('[data-radix-select-viewport]') || listbox;
-                const sampleOpt = allOpts[0];
+            opt.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                this.theme.applyPreset(p, true);
 
-                SX_THEME_PRESETS.forEach(p => {
-                    const opt = document.createElement('div');
-                    opt.setAttribute('role', 'option');
-                    opt.setAttribute('tabindex', '-1');
-                    if (sampleOpt) {
-                        opt.className = sampleOpt.className;
-                    } else {
-                        opt.style.cssText = 'padding:6px 12px;cursor:pointer;display:flex;align-items:center;font-size:13px;border-radius:6px;margin:1px 0;user-select:none;color:rgba(255,255,255,0.85);';
-                    }
-                    opt.classList.add('sx-custom-preset-option');
-                    opt.innerHTML = `<span class="truncate" style="font-weight:inherit;color:inherit;">${p.name}</span>`;
+                // Update open combobox label
+                const combo = document.querySelector('[role="dialog"] button[role="combobox"] span') ||
+                              document.querySelector('button[role="combobox"][data-state="open"] span');
+                if (combo) combo.innerText = p.name;
 
-                    opt.addEventListener('mouseenter', () => {
-                        opt.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
-                        opt.style.color = '#ffffff';
-                    });
-                    opt.addEventListener('mouseleave', () => {
-                        opt.style.backgroundColor = '';
-                        opt.style.color = '';
-                    });
+                // Dismiss listbox
+                const openCombo = document.querySelector('button[role="combobox"][data-state="open"]');
+                if (openCombo) openCombo.click();
+                else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+            });
 
-                    opt.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        this.theme.applyPreset(p, true);
+            fragment.appendChild(opt);
+        });
 
-                        // Update open combobox label
-                        const combo = document.querySelector('[role="dialog"] button[role="combobox"] span') ||
-                                      document.querySelector('button[role="combobox"][data-state="open"] span');
-                        if (combo) combo.innerText = p.name;
-
-                        // Dismiss listbox
-                        const openCombo = document.querySelector('button[role="combobox"][data-state="open"]');
-                        if (openCombo) openCombo.click();
-                        else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
-                    });
-
-                    targetContainer.appendChild(opt);
-                });
-            }
-        }
+        targetContainer.appendChild(fragment);
     }
 
     hookDOM() {

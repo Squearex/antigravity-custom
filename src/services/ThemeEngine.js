@@ -120,11 +120,35 @@ export class ThemeEngine {
             }
         });
 
+        this.bus.on('storage:theme-mode-changed', ({ val }) => {
+            if (val === 'light') {
+                this.deactivateSXEffects();
+            } else if (val === 'dark') {
+                const savedId = localStorage.getItem('sx_active_theme_preset');
+                const found = savedId && SX_THEME_PRESETS.find(p => p.id === savedId);
+                if (found) {
+                    this.applyPreset(found, false);
+                }
+            }
+        });
+
+        this.bus.on('storage:theme-preset-light-changed', () => {
+            this.deactivateSXEffects();
+        });
+
         // Apply saved preset on start. Prefer the SX marker: the app may reset
         // theme-preset-dark to a native default on boot, which must not wipe
         // the user's last SX theme.
         setTimeout(() => {
             try {
+                const isLight = document.documentElement.classList.contains('light') || 
+                                document.body?.classList.contains('light') ||
+                                (document.documentElement.getAttribute('data-theme') === 'light');
+                if (isLight) {
+                    this.deactivateSXEffects();
+                    return;
+                }
+
                 const savedId = localStorage.getItem('sx_active_theme_preset') || '';
                 const darkVal = localStorage.getItem('theme-preset-dark') || '';
                 const savedPreset = savedId && SX_THEME_PRESETS.find(p => p.id === savedId);
@@ -139,6 +163,30 @@ export class ThemeEngine {
                 }
             } catch(e) {}
         }, 150);
+
+        // Auto-detect mode switch (e.g. user toggles Light/Dark in Settings)
+        try {
+            const checkMode = () => {
+                const isLight = document.documentElement.classList.contains('light') || 
+                                document.body?.classList.contains('light') ||
+                                (document.documentElement.getAttribute('data-theme') === 'light');
+                const isDark = document.documentElement.classList.contains('dark') || 
+                               document.body?.classList.contains('dark') ||
+                               (document.documentElement.getAttribute('data-theme') === 'dark');
+                if (isLight && !isDark) {
+                    this.deactivateSXEffects();
+                }
+            };
+
+            const modeObs = new MutationObserver(checkMode);
+            if (document.documentElement) {
+                modeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+            }
+            if (document.body) {
+                modeObs.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+            }
+            checkMode();
+        } catch(e) {}
     }
 
     patchNativeThemeDict() {
@@ -220,14 +268,11 @@ export class ThemeEngine {
                     }
                 }
 
-                // 2. CSS variables
+                // 2. Clear any inline CSS variables so stylesheet rules take effect cleanly without leaking into light theme
                 const root = document.documentElement;
                 if (root && root.style) {
-                    root.style.setProperty('--background', preset.background);
-                    root.style.setProperty('--foreground', preset.foreground);
-                    root.style.setProperty('--primary', preset.primary);
-                    root.style.setProperty('--sidebar-background', preset.background);
-                    root.style.setProperty('--sx-accent-rgb', rgbStr);
+                    const rootProps = ['--background', '--foreground', '--primary', '--sidebar-background', '--sx-accent-rgb'];
+                    rootProps.forEach(p => root.style.removeProperty(p));
                 }
 
                 // 3. Syntax Highlighting CSS Variables
@@ -300,9 +345,18 @@ export class ThemeEngine {
             if (document.body) {
                 document.body.classList.remove('sx-theme-active');
                 document.body.removeAttribute('data-sx-preset');
+                const synProps = [
+                    '--syntax-comment', '--syntax-punctuation', '--syntax-property',
+                    '--syntax-tag', '--syntax-constant', '--syntax-number', '--syntax-string',
+                    '--syntax-attr-name', '--syntax-builtin', '--syntax-operator',
+                    '--syntax-variable', '--syntax-attr-value', '--syntax-keyword', '--syntax-function'
+                ];
+                synProps.forEach(p => document.body.style.removeProperty(p));
             }
             if (document.documentElement) {
                 document.documentElement.classList.remove('sx-theme-active');
+                const rootProps = ['--background', '--foreground', '--primary', '--sidebar-background', '--sx-accent-rgb'];
+                rootProps.forEach(p => document.documentElement.style.removeProperty(p));
             }
             const styleEl = document.getElementById('sx-theme-engine-styles');
             if (styleEl) styleEl.remove();
@@ -345,30 +399,35 @@ export class ThemeEngine {
 
     _getThemeCSS(preset, rgbStr) {
         return `
-            body.sx-theme-active, html.sx-theme-active {
+            html.dark.sx-theme-active, body.dark.sx-theme-active, html.dark body.sx-theme-active {
                 --background: ${preset.background} !important;
                 --foreground: ${preset.foreground} !important;
                 --primary: ${preset.primary} !important;
                 --sidebar-background: ${preset.background} !important;
                 --sx-accent-rgb: ${rgbStr} !important;
             }
-            body.sx-theme-active {
+            html.dark body.sx-theme-active, body.dark.sx-theme-active {
                 background-color: ${preset.background} !important;
                 color: ${preset.foreground} !important;
             }
-            body.sx-theme-active textarea {
+            html.dark.sx-theme-active textarea, body.dark.sx-theme-active textarea {
                 color: ${preset.foreground} !important;
                 caret-color: ${preset.primary} !important;
             }
-            body.sx-theme-active div[class*="bg-background"],
-            body.sx-theme-active main,
-            body.sx-theme-active nav,
-            body.sx-theme-active aside {
+            html.dark.sx-theme-active div[class*="bg-background"],
+            html.dark.sx-theme-active main,
+            html.dark.sx-theme-active nav,
+            html.dark.sx-theme-active aside,
+            body.dark.sx-theme-active div[class*="bg-background"],
+            body.dark.sx-theme-active main,
+            body.dark.sx-theme-active nav,
+            body.dark.sx-theme-active aside {
                 background-color: ${preset.background} !important;
             }
 
             /* SX Atmospheric Lighting Field (Expanded, Softer Luminous Glow) */
-            body.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full {
+            html.dark.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full,
+            body.dark.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full {
                 position: relative;
                 overflow: hidden;
                 background-color: var(--background) !important;
@@ -377,7 +436,8 @@ export class ThemeEngine {
                     radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px) !important;
                 background-size: 100% 100%, 28px 28px !important;
             }
-            body.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full::before {
+            html.dark.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full::before,
+            body.dark.sx-theme-active .relative.z-0.flex-1.flex.min-h-0.h-full::before {
                 content: '';
                 position: absolute;
                 top: 0;
@@ -391,25 +451,31 @@ export class ThemeEngine {
             }
 
             /* Transparent Sticky Chat Message Headers (Prevents dark block artifacts) */
-            body.sx-theme-active div.sticky.top-0 {
+            html.dark body.sx-theme-active div.sticky.top-0,
+            body.dark.sx-theme-active div.sticky.top-0 {
                 background: transparent !important;
             }
-            body.sx-theme-active div.sticky.top-0::after {
+            html.dark body.sx-theme-active div.sticky.top-0::after,
+            body.dark.sx-theme-active div.sticky.top-0::after {
                 display: none !important;
             }
 
             /* Message Actions Container (Eliminates dark box and dark shadow bleed) */
-            body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-shadow,
-            body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-shadow {
+            html.dark body.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-shadow,
+            html.dark body.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-shadow,
+            body.dark.sx-theme-active [class*="group/user-input-step"] .user-input-buttons-shadow,
+            body.dark.sx-theme-active [data-testid="user-input-step"] .user-input-buttons-shadow {
                 box-shadow: none !important;
             }
 
             /* Assistant Message Timestamp & Performance Metrics */
-            body.sx-theme-active .flex.w-full.items-start.gap-1 > .grow {
+            html.dark body.sx-theme-active .flex.w-full.items-start.gap-1 > .grow,
+            body.dark.sx-theme-active .flex.w-full.items-start.gap-1 > .grow {
                 opacity: 0.85 !important;
                 transition: opacity 0.15s ease;
             }
-            body.sx-theme-active .flex.w-full.items-start.gap-1:hover > .grow {
+            html.dark body.sx-theme-active .flex.w-full.items-start.gap-1:hover > .grow,
+            body.dark.sx-theme-active .flex.w-full.items-start.gap-1:hover > .grow {
                 opacity: 1 !important;
             }
             .sx-msg-perf-metrics {
@@ -425,40 +491,42 @@ export class ThemeEngine {
             }
 
             /* Floating Prompt Card Glassmorphism & Cyber Glow */
-            body.sx-theme-active .bg-card.rounded-\\[calc\\(theme\\(borderRadius\\.2xl\\)-1px\\)\\] {
+            html.dark body.sx-theme-active .bg-card.rounded-\\[calc\\(theme\\(borderRadius\\.2xl\\)-1px\\)\\],
+            body.dark.sx-theme-active .bg-card.rounded-\\[calc\\(theme\\(borderRadius\\.2xl\\)-1px\\)\\] {
                 background: rgba(6, 10, 16, 0.74) !important;
                 backdrop-filter: blur(20px) saturate(180%) !important;
                 border: 1px solid rgba(var(--sx-accent-rgb), 0.28) !important;
                 box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.65), 0 0 20px -2px rgba(var(--sx-accent-rgb), 0.18) !important;
                 transition: border-color 0.2s ease, box-shadow 0.2s ease;
             }
-            body.sx-theme-active .bg-card.rounded-\\[calc\\(theme\\(borderRadius\\.2xl\\)-1px\\)\\]:focus-within {
+            html.dark body.sx-theme-active .bg-card.rounded-\\[calc\\(theme\\(borderRadius\\.2xl\\)-1px\\)\\]:focus-within,
+            body.dark.sx-theme-active .bg-card.rounded-\\[calc\\(theme\\(borderRadius\\.2xl\\)-1px\\)\\]:focus-within {
                 border-color: var(--primary) !important;
                 box-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.75), 0 0 28px -2px rgba(var(--sx-accent-rgb), 0.35) !important;
             }
 
             /* Sleek Cyber Scrollbars */
-            body.sx-theme-active *::-webkit-scrollbar {
+            html.dark body.sx-theme-active *::-webkit-scrollbar,
+            body.dark.sx-theme-active *::-webkit-scrollbar {
                 width: 6px;
                 height: 6px;
             }
-            body.sx-theme-active *::-webkit-scrollbar-track {
+            html.dark body.sx-theme-active *::-webkit-scrollbar-track,
+            body.dark.sx-theme-active *::-webkit-scrollbar-track {
                 background: transparent;
             }
-            body.sx-theme-active *::-webkit-scrollbar-thumb {
+            html.dark body.sx-theme-active *::-webkit-scrollbar-thumb,
+            body.dark.sx-theme-active *::-webkit-scrollbar-thumb {
                 background: rgba(var(--sx-accent-rgb), 0.25);
                 border-radius: 9999px;
             }
-            body.sx-theme-active *::-webkit-scrollbar-thumb:hover {
+            html.dark body.sx-theme-active *::-webkit-scrollbar-thumb:hover,
+            body.dark.sx-theme-active *::-webkit-scrollbar-thumb:hover {
                 background: var(--primary);
                 box-shadow: 0 0 10px var(--primary);
             }
-            body.sx-theme-active ::-webkit-scrollbar-button,
-            body.sx-theme-active ::-webkit-scrollbar-button:single-button,
-            body.sx-theme-active ::-webkit-scrollbar-button:start:decrement,
-            body.sx-theme-active ::-webkit-scrollbar-button:end:increment,
-            body.sx-theme-active ::-webkit-scrollbar-button:vertical:start:decrement,
-            body.sx-theme-active ::-webkit-scrollbar-button:vertical:end:increment {
+            html.dark body.sx-theme-active ::-webkit-scrollbar-button,
+            body.dark.sx-theme-active ::-webkit-scrollbar-button {
                 display: block !important;
                 height: 0px !important;
                 width: 0px !important;
@@ -466,13 +534,16 @@ export class ThemeEngine {
                 border: none !important;
                 background: transparent !important;
             }
-            body.sx-theme-active ::-webkit-scrollbar-corner {
+            html.dark body.sx-theme-active ::-webkit-scrollbar-corner,
+            body.dark.sx-theme-active ::-webkit-scrollbar-corner {
                 background: transparent !important;
             }
 
             /* Developer Code Blocks Obsidian Glass (Only standalone markdown blocks, NOT terminal cards) */
-            body.sx-theme-active .prose pre,
-            body.sx-theme-active pre:not([class*="group/run-command"] pre):not(.group\\/run-command pre) {
+            html.dark body.sx-theme-active .prose pre,
+            html.dark body.sx-theme-active pre:not([class*="group/run-command"] pre):not(.group\\/run-command pre),
+            body.dark.sx-theme-active .prose pre,
+            body.dark.sx-theme-active pre:not([class*="group/run-command"] pre):not(.group\\/run-command pre) {
                 border: 1px solid rgba(var(--sx-accent-rgb), 0.20) !important;
                 background: rgba(3, 7, 12, 0.65) !important;
                 box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4) !important;
@@ -480,8 +551,10 @@ export class ThemeEngine {
             }
 
             /* Unified Run Command Terminal Card */
-            body.sx-theme-active [class*="group/run-command"],
-            body.sx-theme-active .group\\/run-command {
+            html.dark body.sx-theme-active [class*="group/run-command"],
+            html.dark body.sx-theme-active .group\\/run-command,
+            body.dark.sx-theme-active [class*="group/run-command"],
+            body.dark.sx-theme-active .group\\/run-command {
                 border: 1px solid rgba(255, 255, 255, 0.08) !important;
                 background: rgba(10, 13, 20, 0.88) !important;
                 backdrop-filter: blur(16px) !important;
@@ -493,15 +566,19 @@ export class ThemeEngine {
             }
 
             /* Command header */
-            body.sx-theme-active [class*="group/run-command"] > div:first-child,
-            body.sx-theme-active .group\\/run-command > div:first-child {
+            html.dark body.sx-theme-active [class*="group/run-command"] > div:first-child,
+            html.dark body.sx-theme-active .group\\/run-command > div:first-child,
+            body.dark.sx-theme-active [class*="group/run-command"] > div:first-child,
+            body.dark.sx-theme-active .group\\/run-command > div:first-child {
                 background: rgba(255, 255, 255, 0.02) !important;
                 padding: 2px 4px !important;
             }
 
             /* Reset inner pre inside command blocks */
-            body.sx-theme-active [class*="group/run-command"] pre,
-            body.sx-theme-active .group\\/run-command pre {
+            html.dark body.sx-theme-active [class*="group/run-command"] pre,
+            html.dark body.sx-theme-active .group\\/run-command pre,
+            body.dark.sx-theme-active [class*="group/run-command"] pre,
+            body.dark.sx-theme-active .group\\/run-command pre {
                 border: none !important;
                 background: transparent !important;
                 box-shadow: none !important;
@@ -513,20 +590,24 @@ export class ThemeEngine {
             }
 
             /* Clean divider line */
-            body.sx-theme-active [class*="group/run-command"] .border-t,
-            body.sx-theme-active .group\\/run-command .border-t {
+            html.dark body.sx-theme-active [class*="group/run-command"] .border-t,
+            html.dark body.sx-theme-active .group\\/run-command .border-t,
+            body.dark.sx-theme-active [class*="group/run-command"] .border-t,
+            body.dark.sx-theme-active .group\\/run-command .border-t {
                 border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
                 padding-top: 0 !important;
                 margin-top: 0 !important;
             }
 
             /* Primary Buttons Glow */
-            body.sx-theme-active button.bg-primary {
+            html.dark body.sx-theme-active button.bg-primary,
+            body.dark.sx-theme-active button.bg-primary {
                 box-shadow: 0 0 14px rgba(var(--sx-accent-rgb), 0.4) !important;
             }
 
             /* Active Sidebar Conversation */
-            body.sx-theme-active .bg-secondary:not(button):not(input) {
+            html.dark body.sx-theme-active .bg-secondary:not(button):not(input),
+            body.dark.sx-theme-active .bg-secondary:not(button):not(input) {
                 border-left: 2px solid var(--primary);
             }
 

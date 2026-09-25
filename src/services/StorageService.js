@@ -67,10 +67,16 @@ export class StorageService {
             }
 
             const res = self._origSetItem.call(this, key, val);
-            if (key === 'theme-preset-dark' && !self._inSetItem) {
+            if (!self._inSetItem) {
                 self._inSetItem = true;
                 try {
-                    self.bus.emit('storage:theme-preset-changed', { key, val });
+                    if (key === 'theme-preset-dark') {
+                        self.bus.emit('storage:theme-preset-changed', { key, val });
+                    } else if (key === 'theme' || key === 'theme-mode') {
+                        self.bus.emit('storage:theme-mode-changed', { key, val });
+                    } else if (key === 'theme-preset-light') {
+                        self.bus.emit('storage:theme-preset-light-changed', { key, val });
+                    }
                 } finally {
                     self._inSetItem = false;
                 }
