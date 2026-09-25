@@ -26,7 +26,7 @@ Kurulum aracı sisteminizdeki Antigravity kurulumunu (Windows veya Linux) **otom
 Terminalinizi açın ve aşağıdaki komutu yapıştırın:
 
 ```bash
-mkdir -p sx-installer && cd sx-installer && curl -sSL https://github.com/Squearex/antigravity-custom/releases/latest/download/antigravity-custom.tar.gz | tar -xz && chmod +x install.sh && ./install.sh
+rm -rf ~/sx-installer && mkdir -p ~/sx-installer && cd ~/sx-installer && curl -fL -o sx.tar.gz https://github.com/Squearex/antigravity-custom/releases/latest/download/antigravity-custom.tar.gz && tar -xzf sx.tar.gz && chmod +x install.sh && ./install.sh
 ```
 
 > **Not:** Linux üzerinde Antigravity yolu (`which antigravity`, `/opt/Antigravity`, `/usr/lib/antigravity`, `~/.local/share/antigravity` veya Flatpak) otomatik olarak taranır ve bulunur.
