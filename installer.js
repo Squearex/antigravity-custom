@@ -480,6 +480,19 @@ function install(targetAppDir) {
         } catch(e) {}
     }
 
+    // 6. Disable sibling app.asar so Electron executes the patched app directory!
+    const resourcesDir = path.dirname(targetAppDir);
+    const asarPath = path.join(resourcesDir, 'app.asar');
+    const asarOrig = path.join(resourcesDir, 'app.asar.orig');
+    if (fs.existsSync(asarPath)) {
+        try {
+            fs.renameSync(asarPath, asarOrig);
+            console.log(`${c.green}✓${c.reset} app.asar devre dışı bırakıldı (app.asar.orig) - Electron doğrudan yamalı 'app' klasörünü çalıştıracak.`);
+        } catch(e) {
+            console.log(`${c.yellow}⚠️ Uyarı:${c.reset} app.asar yeniden adlandırılamadı:`, e.message);
+        }
+    }
+
     console.log(`
 ${c.emerald}${c.bold}========================================================================${c.reset}
 ${c.green}${c.bold}🎉 TEBRİKLER! ANTIGRAVITY CUSTOM (SX) KURULUMU TAMAMLANDI! 🎉${c.reset}
