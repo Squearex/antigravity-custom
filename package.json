@@ -1,7 +1,7 @@
 {
-  "name": "antigravity-sx",
-  "productName": "Antigravity Pro",
-  "version": "2.15.1",
+  "name": "antigravity",
+  "productName": "Antigravity",
+  "version": "2.17.0",
   "description": "Antigravity - Agentic Desktop Application",
   "homepage": "https://antigravity.google",
   "author": {
@@ -9,22 +9,14 @@
     "email": "antigravity-support@google.com"
   },
   "main": "dist/main.js",
-  "scripts": {
-    "build:inject": "esbuild src/index.js --bundle --outfile=dist/sx-inject.js --platform=browser --target=es2022 --jsx=automatic --jsx-import-source=preact",
-    "watch:inject": "esbuild src/index.js --bundle --outfile=dist/sx-inject.js --platform=browser --target=es2022 --jsx=automatic --jsx-import-source=preact --watch"
-  },
   "dependencies": {
     "@bufbuild/protobuf": "^2.13.0",
     "@connectrpc/connect": "^2.1.2",
     "@connectrpc/connect-node": "^2.1.2",
-    "@floating-ui/dom": "^1.8.0",
     "chrome-devtools-mcp": "^1.1.0",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.8.9",
-    "preact": "^10.29.8",
+    "js-yaml": "^4.3.2",
     "shell-env": "^4.0.3"
-  },
-  "devDependencies": {
-    "esbuild": "^0.28.2"
   }
 }

@@ -371,6 +371,21 @@
         return null;
       }
     }
+    async fetchConversationTasks(convId) {
+      try {
+        const res = await this.get(`/get-conversation-tasks?convId=${encodeURIComponent(convId)}`);
+        return res && res.ok ? res : null;
+      } catch (e) {
+        return null;
+      }
+    }
+    async updateConversationTask(convId, taskIndex, completed) {
+      try {
+        return await this.post("/update-conversation-tasks", { convId, taskIndex, completed });
+      } catch (e) {
+        return null;
+      }
+    }
     proxyFetch(targetUrl, method = "GET", headers = {}, body) {
       return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
@@ -3421,6 +3436,8 @@
       this._latestLivePerf = null;
       this._observer = null;
       this._perfHistory = {};
+      this._perfCascade = {};
+      this._todoPollTimer = null;
     }
     init() {
       document.addEventListener("click", (e) => {
@@ -3429,6 +3446,10 @@
           perfPop.remove();
           const pBtn = document.getElementById("sx-perf-btn");
           if (pBtn) pBtn.classList.remove("sx-active");
+        }
+        const todoPop = document.getElementById("sx-todo-popover");
+        if (todoPop && !todoPop.contains(e.target) && !e.target.closest("#sx-todo-btn")) {
+          this.closeTodoPopover();
         }
       });
       this.setupMessageFootersObserver();
@@ -3675,8 +3696,12 @@
         if (raw?.history && Array.isArray(raw.history)) {
           this._perfHistory[cleanConvId] = raw.history;
         }
+        if (raw?.cascade) {
+          this._perfCascade[cleanConvId] = raw.cascade;
+        }
+        this.updateTodoButtonUI();
         if (stats && (stats.ttftMs || stats.tps || stats.completionTokens)) {
-          const measured = { ...stats, measured: true };
+          const measured = { ...stats, measured: true, cascade: raw?.cascade || null };
           this._perfStatsCache[cleanConvId] = measured;
           this.updatePerfButtonUI();
           return measured;
@@ -3755,25 +3780,73 @@
             footerEl.appendChild(badge);
           }
           badge.setAttribute("data-measured", "true");
-          const tooltipTitle = [
-            `Model: ${stats.modelName || "Active Model"}`,
-            `\u0130nferans H\u0131z\u0131: ${tpsStr} Token/Saniye`,
-            `\u0130lk Yan\u0131t (TTFT): ${stats.ttftMs || 0}ms`,
-            `\xDCretilen: ${stats.completionTokens || 0} token${stats.thinkingTokens ? ` (${stats.thinkingTokens} d\xFC\u015F\xFCnce)` : ""}`,
-            stats.promptTokens ? `\u0130stem (Prompt): ~${stats.promptTokens} token` : "",
-            durStr ? `Toplam S\xFCre: ${durStr}` : "",
-            stats.toolCalls ? `Ara\xE7 \xC7a\u011Fr\u0131s\u0131: ${stats.toolCalls}` : "",
-            stats.stopReason ? `Biti\u015F: ${stats.stopReason}` : ""
-          ].filter(Boolean).join("\n");
-          badge.title = tooltipTitle;
-          badge.innerHTML = `
-                    <span style="color: ${speedColor}; font-weight: 700;">\u26A1 ${tpsStr} TPS</span>
-                    <span style="color: rgba(255,255,255,0.25); font-size: 9px;">\u2022</span>
-                    <span style="color: #38bdf8; font-weight: 600;">\u23F1\uFE0F ${ttftStr}</span>
-                    <span style="color: rgba(255,255,255,0.25); font-size: 9px;">\u2022</span>
-                    <span style="color: rgba(255,255,255,0.85);">\u{1F4CA} ${tokDisp}${splitStr}</span>
-                    ${durStr ? `<span style="color: rgba(255,255,255,0.25); font-size: 9px;">\u2022</span><span style="color: rgba(255,255,255,0.6);">\u23F3 ${durStr}</span>` : ""}
-                `;
+          const cascade = (isLast && this._perfCascade[cleanConvId] && this._perfCascade[cleanConvId].isCascade) ? this._perfCascade[cleanConvId] : null;
+          let cascadeDurationStr = "";
+          if (cascade) {
+            const cMs = cascade.totalDurationMs || 0;
+            const cSec = Math.round(cMs / 1000);
+            if (cSec >= 3600) {
+              const h = Math.floor(cSec / 3600);
+              const m = Math.floor((cSec % 3600) / 60);
+              cascadeDurationStr = `${h}sa ${m}dk`;
+            } else if (cSec >= 60) {
+              const m = Math.floor(cSec / 60);
+              const s = cSec % 60;
+              cascadeDurationStr = s > 0 ? `${m}dk ${s}s` : `${m}dk`;
+            } else {
+              cascadeDurationStr = `${cSec}s`;
+            }
+          }
+
+          let tooltipParts = [];
+          if (cascade) {
+            tooltipParts = [
+              `Model: ${stats.modelName || "Active Model"}`,
+              `=== Çok Adımlı Agent Süreci ===`,
+              `Toplam Adım: ${cascade.totalTurns}`,
+              `Toplam Üretilen: ~${cascade.totalTokens} token`,
+              `Toplam Süre: ${cascadeDurationStr}`,
+              `Ortalama Hız: ${cascade.avgTps} Token/Saniye`,
+              `Toplam Araç Çağrısı: ${cascade.totalTools}`,
+              `--------------------------------`,
+              `Son Adım Hızı: ${tpsStr} TPS`,
+              `Son Adım TTFT: ${stats.ttftMs || 0}ms`,
+              `Son Adım Token: ${stats.completionTokens || 0}`
+            ];
+          } else {
+            tooltipParts = [
+              `Model: ${stats.modelName || "Active Model"}`,
+              `İnferans Hızı: ${tpsStr} Token/Saniye`,
+              `İlk Yanıt (TTFT): ${stats.ttftMs || 0}ms`,
+              `Üretilen: ${stats.completionTokens || 0} token${stats.thinkingTokens ? ` (${stats.thinkingTokens} düşünce)` : ""}`,
+              stats.promptTokens ? `İstem (Prompt): ~${stats.promptTokens} token` : "",
+              durStr ? `Toplam Süre: ${durStr}` : "",
+              stats.toolCalls ? `Araç Çağrısı: ${stats.toolCalls}` : "",
+              stats.stopReason ? `Bitiş: ${stats.stopReason}` : ""
+            ];
+          }
+          badge.title = tooltipParts.filter(Boolean).join("\n");
+
+          if (cascade) {
+            const displayTps = cascade.avgTps > 0 ? cascade.avgTps : tpsStr;
+            const tokSummary = cascade.totalTokens >= 1000 ? `~${(cascade.totalTokens / 1000).toFixed(1)}k tok` : `~${cascade.totalTokens} tok`;
+            badge.innerHTML = `
+              <span style="color: ${speedColor}; font-weight: 700;">⚡ ${displayTps} TPS (ort)</span>
+              <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
+              <span style="color: #38bdf8; font-weight: 600;">⏱️ ${cascadeDurationStr}</span>
+              <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
+              <span style="color: rgba(255,255,255,0.85);">📊 ${tokSummary} (${cascade.totalTurns} adım)</span>
+            `;
+          } else {
+            badge.innerHTML = `
+              <span style="color: ${speedColor}; font-weight: 700;">⚡ ${tpsStr} TPS</span>
+              <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
+              <span style="color: #38bdf8; font-weight: 600;">⏱️ ${ttftStr}</span>
+              <span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span>
+              <span style="color: rgba(255,255,255,0.85);">📊 ${tokDisp}${splitStr}</span>
+              ${durStr ? `<span style="color: rgba(255,255,255,0.25); font-size: 9px;">•</span><span style="color: rgba(255,255,255,0.6);">⏳ ${durStr}</span>` : ""}
+            `;
+          }
         });
       } catch (e) {
       }
@@ -3967,6 +4040,330 @@
         perfBtn.title = `Model Performans\u0131: ${stats.tps || 0} TPS, TTFT ${stats.ttftMs}ms (T\u0131kla)${liveSuffix}`;
       } else {
         perfBtn.title = `Model Performans\u0131 (TTFT, TPS) (T\u0131kla)${liveSuffix}`;
+      }
+    }
+    closeTodoPopover() {
+      const todoPop = document.getElementById("sx-todo-popover");
+      if (todoPop) todoPop.remove();
+      const tBtn = document.getElementById("sx-todo-btn");
+      if (tBtn) tBtn.classList.remove("sx-active");
+      if (this._todoPollTimer) {
+        clearInterval(this._todoPollTimer);
+        this._todoPollTimer = null;
+      }
+    }
+    toggleTodoPopover(anchorEl) {
+      const otherPerf = document.getElementById("sx-perf-popover");
+      if (otherPerf) otherPerf.remove();
+      const otherCtx = document.getElementById("sx-context-popover");
+      if (otherCtx) otherCtx.remove();
+      const otherEffort = document.getElementById("sx-effort-slider-popover");
+      if (otherEffort) otherEffort.remove();
+      const infoModal = document.getElementById("sx-effort-info-modal");
+      if (infoModal) infoModal.remove();
+
+      let pop = document.getElementById("sx-todo-popover");
+      if (pop) {
+        this.closeTodoPopover();
+        return;
+      }
+      document.querySelectorAll(".sx-active").forEach((el) => {
+        if (el !== anchorEl) el.classList.remove("sx-active");
+      });
+      if (anchorEl) anchorEl.classList.add("sx-active");
+
+      const convKey = this.models.getActiveConversationKey();
+      const cleanConvId = (convKey || "").replace(/^conv_/, "");
+
+      pop = document.createElement("div");
+      pop.id = "sx-todo-popover";
+      pop.style.cssText = `
+        position: fixed !important;
+        width: 350px !important;
+        max-width: calc(100vw - 32px) !important;
+        background: #0f172a !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.65), 0 0 1px 1px rgba(255, 255, 255, 0.08) !important;
+        border-radius: 14px !important;
+        padding: 14px 16px !important;
+        z-index: 100002 !important;
+        color: #e2e8f0 !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
+        box-sizing: border-box !important;
+        line-height: 1.4 !important;
+      `;
+
+      pop.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" id="sx-todo-popover-header">
+          <div style="display:flex;align-items:center;gap:7px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+              <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+              <path d="m9 14 2 2 4-4"></path>
+            </svg>
+            <span style="font-size:13px;color:#f8fafc;font-weight:600;letter-spacing:0.2px;">Model Görevleri & Süreç</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span id="sx-todo-status-badge" style="font-size:11px;color:#38bdf8;font-weight:600;background:rgba(56,189,248,0.12);padding:1.5px 7px;border-radius:10px;border:1px solid rgba(56,189,248,0.25);">Yükleniyor</span>
+            <button id="sx-todo-close-btn" style="background:transparent;border:none;color:#94a3b8;cursor:pointer;padding:2px 4px;font-size:14px;line-height:1;border-radius:4px;" title="Kapat">✕</button>
+          </div>
+        </div>
+
+        <div style="width:100%;height:1px;background:rgba(255,255,255,0.08);margin:11px 0 12px 0;"></div>
+
+        <div id="sx-todo-stats-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px;">
+          <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:7px 8px;text-align:center;">
+            <div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px;">⏱️ Geçen Süre</div>
+            <div id="sx-todo-elapsed" style="font-size:12.5px;color:#f8fafc;font-family:ui-monospace,monospace;font-weight:700;">--:--</div>
+          </div>
+          <div style="background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.18);border-radius:8px;padding:7px 8px;text-align:center;">
+            <div style="font-size:10.5px;color:#38bdf8;margin-bottom:3px;">⏳ Kalan (ETA)</div>
+            <div id="sx-todo-eta" style="font-size:12.5px;color:#38bdf8;font-family:ui-monospace,monospace;font-weight:700;">--</div>
+          </div>
+          <div style="background:rgba(16,185,129,0.05);border:1px solid rgba(16,185,129,0.18);border-radius:8px;padding:7px 8px;text-align:center;">
+            <div style="font-size:10.5px;color:#10b981;margin-bottom:3px;">🎯 İlerleme</div>
+            <div id="sx-todo-progress-txt" style="font-size:12.5px;color:#10b981;font-family:ui-monospace,monospace;font-weight:700;">--</div>
+          </div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <div style="width:100%;height:6px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden;">
+            <div id="sx-todo-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg, #38bdf8, #10b981);transition:width 0.4s ease;border-radius:4px;"></div>
+          </div>
+        </div>
+
+        <div id="sx-todo-tasks-scroll" style="max-height:210px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding-right:2px;">
+          <div style="font-size:12px;color:#64748b;text-align:center;padding:12px 0;">Görevler kontrol ediliyor...</div>
+        </div>
+
+        <div id="sx-todo-tools-tray" style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);font-size:11px;color:#94a3b8;display:none;">
+          <span style="color:#64748b;">Son Eylemler:</span> <span id="sx-todo-tools-list" style="color:#cbd5e1;font-family:ui-monospace,monospace;"></span>
+        </div>
+      `;
+
+      document.body.appendChild(pop);
+      attachPopoverAboveChat(anchorEl, pop, { placement: "top-start", gap: 10 });
+
+      pop.querySelector("#sx-todo-close-btn").onclick = (e) => {
+        e.stopPropagation();
+        this.closeTodoPopover();
+      };
+
+      const renderTasks = (data) => {
+        if (!pop.isConnected) return;
+        const statusBadge = pop.querySelector("#sx-todo-status-badge");
+        const elapsedEl = pop.querySelector("#sx-todo-elapsed");
+        const etaEl = pop.querySelector("#sx-todo-eta");
+        const progTxt = pop.querySelector("#sx-todo-progress-txt");
+        const progBar = pop.querySelector("#sx-todo-progress-bar");
+        const listEl = pop.querySelector("#sx-todo-tasks-scroll");
+        const toolsTray = pop.querySelector("#sx-todo-tools-tray");
+        const toolsList = pop.querySelector("#sx-todo-tools-list");
+
+        if (!data || (!data.tasks?.length && !data.recentTools?.length)) {
+          // Check DOM for checklist items in assistant messages
+          const domTasks = [];
+          document.querySelectorAll('.prose, [data-testid="message-content"], .message-content').forEach(p => {
+            const lines = (p.innerText || '').split('\n');
+            lines.forEach(l => {
+              const m = l.match(/^[-*]\s*\[([ xX/])\]\s*(.*)$/);
+              if (m) {
+                const mark = m[1].toLowerCase();
+                domTasks.push({
+                  status: mark === 'x' ? 'completed' : (mark === '/' ? 'in_progress' : 'pending'),
+                  text: m[2].trim()
+                });
+              }
+            });
+          });
+
+          if (domTasks.length > 0) {
+            const comp = domTasks.filter(t => t.status === 'completed').length;
+            const pct = Math.round((comp / domTasks.length) * 100);
+            data = {
+              ok: true,
+              tasks: domTasks,
+              total: domTasks.length,
+              completed: comp,
+              inProgress: domTasks.filter(t => t.status === 'in_progress').length,
+              pending: domTasks.filter(t => t.status === 'pending').length,
+              percent: pct,
+              elapsedFormatted: "Sohbet İçi",
+              etaFormatted: comp === domTasks.length ? "Tamamlandı" : `~${(domTasks.length - comp) * 30} sn`,
+              isRunning: false
+            };
+          }
+        }
+
+        if (!data || (!data.tasks?.length && !data.recentTools?.length)) {
+          if (statusBadge) {
+            statusBadge.innerText = "Boşta";
+            statusBadge.style.color = "#94a3b8";
+            statusBadge.style.background = "rgba(148,163,184,0.1)";
+            statusBadge.style.borderColor = "rgba(148,163,184,0.2)";
+          }
+          if (listEl) {
+            listEl.innerHTML = `
+              <div style="font-size:12px;color:#94a3b8;text-align:center;padding:16px 8px;line-height:1.5;">
+                <div style="font-size:18px;margin-bottom:6px;">📋</div>
+                Bu sohbette henüz aktif görev listesi bulunmuyor.<br>
+                <span style="font-size:11px;color:#64748b;">Model bir plan veya kontrol listesi oluşturduğunda adımlar ve kalan süre burada otomatik takip edilir.</span>
+              </div>
+            `;
+          }
+          return;
+        }
+
+        const isRunning = Boolean(data.isRunning);
+        if (statusBadge) {
+          if (isRunning) {
+            statusBadge.innerText = "● Çalışıyor";
+            statusBadge.style.color = "#10b981";
+            statusBadge.style.background = "rgba(16,185,129,0.12)";
+            statusBadge.style.borderColor = "rgba(16,185,129,0.25)";
+          } else if (data.completed === data.total && data.total > 0) {
+            statusBadge.innerText = "✓ Bitti";
+            statusBadge.style.color = "#10b981";
+            statusBadge.style.background = "rgba(16,185,129,0.12)";
+            statusBadge.style.borderColor = "rgba(16,185,129,0.25)";
+          } else {
+            statusBadge.innerText = "Bekliyor";
+            statusBadge.style.color = "#38bdf8";
+            statusBadge.style.background = "rgba(56,189,248,0.12)";
+            statusBadge.style.borderColor = "rgba(56,189,248,0.25)";
+          }
+        }
+
+        if (elapsedEl) elapsedEl.innerText = data.elapsedFormatted || "00:00";
+        if (etaEl) etaEl.innerText = data.etaFormatted || "--";
+        if (progTxt) progTxt.innerText = `${data.completed || 0}/${data.total || 0} (%${data.percent || 0})`;
+        if (progBar) progBar.style.width = `${data.percent || 0}%`;
+
+        // Render checklist
+        if (listEl && data.tasks && data.tasks.length > 0) {
+          const esc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          listEl.innerHTML = data.tasks.map((task, idx) => {
+            const isDone = task.status === 'completed';
+            const isProg = task.status === 'in_progress';
+            let iconHtml = `<span style="display:inline-flex;width:14px;height:14px;border-radius:3px;border:1.5px solid #64748b;align-items:center;justify-content:center;"></span>`;
+            let itemBg = "rgba(255,255,255,0.02)";
+            let textColor = "#cbd5e1";
+            let textDecor = "none";
+
+            if (isDone) {
+              iconHtml = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+              itemBg = "rgba(16,185,129,0.04)";
+              textColor = "#6ee7b7";
+              textDecor = "line-through";
+            } else if (isProg) {
+              iconHtml = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#38bdf8;box-shadow:0 0 8px #38bdf8;"></span>`;
+              itemBg = "rgba(56,189,248,0.08)";
+              textColor = "#f8fafc";
+            }
+
+            return `
+              <div data-task-idx="${task.index != null ? task.index : idx}" class="sx-task-row" style="display:flex;align-items:flex-start;gap:8px;padding:6px 9px;border-radius:7px;background:${itemBg};cursor:pointer;border:1px solid ${isProg ? 'rgba(56,189,248,0.25)' : 'rgba(255,255,255,0.04)'};transition:background 0.15s ease;">
+                <div style="flex-shrink:0;margin-top:2px;">${iconHtml}</div>
+                <div style="flex-grow:1;font-size:12px;color:${textColor};text-decoration:${textDecor};line-height:1.35;word-break:break-word;">
+                  ${esc(task.text)}
+                  ${isProg ? `<span style="font-size:10px;color:#38bdf8;font-weight:700;margin-left:5px;background:rgba(56,189,248,0.15);padding:1px 4px;border-radius:3px;">İşleniyor</span>` : ''}
+                </div>
+              </div>
+            `;
+          }).join('');
+
+          listEl.querySelectorAll('.sx-task-row').forEach(row => {
+            row.onclick = async (e) => {
+              const idx = parseInt(row.getAttribute('data-task-idx'), 10);
+              if (isNaN(idx)) return;
+              const currentTask = data.tasks.find(t => t.index === idx || data.tasks.indexOf(t) === idx);
+              const willBeCompleted = currentTask?.status !== 'completed';
+              await this.network.updateConversationTask(cleanConvId, idx, willBeCompleted);
+              const fresh = await this.network.fetchConversationTasks(cleanConvId);
+              if (fresh) renderTasks(fresh);
+            };
+          });
+        }
+
+        if (data.recentTools && data.recentTools.length > 0 && toolsTray && toolsList) {
+          toolsTray.style.display = "block";
+          const toolNames = data.recentTools.map(t => t.name).filter(Boolean);
+          toolsList.innerText = toolNames.slice(-4).join(" → ");
+        }
+      };
+
+      this.network.fetchConversationTasks(cleanConvId).then(data => {
+        if (pop.isConnected) renderTasks(data);
+      });
+
+      this._todoPollTimer = setInterval(async () => {
+        if (!pop.isConnected) {
+          clearInterval(this._todoPollTimer);
+          this._todoPollTimer = null;
+          return;
+        }
+        const fresh = await this.network.fetchConversationTasks(cleanConvId);
+        if (pop.isConnected && fresh) {
+          renderTasks(fresh);
+          this.updateTodoButtonUI(fresh);
+        }
+      }, 1500);
+    }
+    updateTodoButtonUI(taskData = null) {
+      const todoBtn = document.getElementById("sx-todo-btn");
+      if (!todoBtn) return;
+      const convKey = this.models.getActiveConversationKey();
+      const cleanConvId = (convKey || "").replace(/^conv_/, "");
+      
+      const updateBadge = (data) => {
+        if (!todoBtn) return;
+        if (data && data.total > 0) {
+          const isDone = data.completed === data.total;
+          const statusTxt = isDone ? "✓" : `${data.completed}/${data.total}`;
+          todoBtn.title = `Model Görevleri: ${data.completed}/${data.total} Tamamlandı (${data.etaFormatted || ''}) (Tıkla)`;
+          let badge = todoBtn.querySelector(".sx-todo-btn-badge");
+          if (!badge) {
+            badge = document.createElement("span");
+            badge.className = "sx-todo-btn-badge";
+            badge.style.cssText = `
+              position: absolute !important;
+              top: -3px !important;
+              right: -3px !important;
+              font-size: 9px !important;
+              font-weight: 700 !important;
+              line-height: 1 !important;
+              padding: 2px 4px !important;
+              border-radius: 6px !important;
+              pointer-events: none !important;
+            `;
+            todoBtn.appendChild(badge);
+          }
+          if (isDone) {
+            badge.style.background = "#10b981";
+            badge.style.color = "#ffffff";
+          } else if (data.isRunning) {
+            badge.style.background = "#38bdf8";
+            badge.style.color = "#0f172a";
+          } else {
+            badge.style.background = "rgba(148,163,184,0.3)";
+            badge.style.color = "#f8fafc";
+          }
+          badge.innerText = statusTxt;
+        } else {
+          const badge = todoBtn.querySelector(".sx-todo-btn-badge");
+          if (badge) badge.remove();
+          todoBtn.title = "Model Görev Takibi (To-Do & ETA) (Tıkla)";
+        }
+      };
+
+      if (taskData) {
+        updateBadge(taskData);
+      } else if (cleanConvId && cleanConvId !== "new") {
+        this.network.fetchConversationTasks(cleanConvId).then(d => {
+          if (d) updateBadge(d);
+        });
       }
     }
   };
@@ -4404,8 +4801,9 @@
       this.originalContent = "";
     }
     init() {
+      // Do not hijack native Antigravity "Record voice" button - native Antigravity handles audio transcription natively.
       document.addEventListener("click", (e) => {
-        const btn = e.target.closest('button[aria-label*="Record voice" i], [data-tooltip-id*="record-tooltip"], button.sx-voice-btn');
+        const btn = e.target.closest('button.sx-voice-btn');
         if (btn) {
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -6129,7 +6527,7 @@
         }
         return false;
       };
-      ["sx-effort-pill", "sx-context-btn", "sx-perf-btn"].forEach((id) => {
+      ["sx-effort-pill", "sx-context-btn", "sx-perf-btn", "sx-todo-btn"].forEach((id) => {
         const b = document.getElementById(id);
         if (b && isQuestionWidget(b)) {
           b.remove();
@@ -6155,7 +6553,7 @@
         }
       }
       if (isQuestionActive && (!promptInput || promptInput.offsetWidth === 0)) {
-        ["sx-effort-pill", "sx-context-btn", "sx-perf-btn"].forEach((id) => {
+        ["sx-effort-pill", "sx-context-btn", "sx-perf-btn", "sx-todo-btn"].forEach((id) => {
           const b = document.getElementById(id);
           if (b) b.remove();
         });
@@ -6164,6 +6562,7 @@
       if (actionContainer) {
         let ctxBtn = document.getElementById("sx-context-btn");
         let perfBtn = document.getElementById("sx-perf-btn");
+        let todoBtn = document.getElementById("sx-todo-btn");
         let effortBtn = document.getElementById("sx-effort-pill");
         const micWrapper = actionContainer.querySelector('div.flex.items-center:has(button[aria-label*="Record voice" i]), div.flex.items-center:has([data-tooltip-id*="record-tooltip"])') || actionContainer.querySelector('button[aria-label*="Record voice" i]');
         const sendBtn = actionContainer.querySelector('[data-testid="send-button"], [data-testid="stop-button"], button[aria-label*="send" i], button[aria-label*="stop" i], [data-tooltip-id*="send-tooltip"]');
@@ -6214,6 +6613,29 @@
             this.perf.togglePerfPopover(perfBtn);
           };
         }
+        if (!todoBtn) {
+          todoBtn = document.createElement("button");
+          todoBtn.id = "sx-todo-btn";
+          todoBtn.type = "button";
+          todoBtn.title = "Model Görev Takibi (To-Do & ETA) (T\u0131kla)";
+          todoBtn.style.cssText = `
+                    display: inline-flex !important; align-items: center !important; justify-content: center !important;
+                    width: 28px !important; height: 28px !important; border-radius: 50% !important; background: transparent !important;
+                    border: none !important; padding: 0 !important; cursor: pointer !important; user-select: none !important;
+                    position: relative !important;
+                `;
+          todoBtn.innerHTML = `
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#94a3b8;">
+                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                        <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                        <path d="m9 14 2 2 4-4"></path>
+                    </svg>
+                `;
+          todoBtn.onclick = (e) => {
+            e.stopPropagation();
+            this.perf.toggleTodoPopover(todoBtn);
+          };
+        }
         if (targetAnchor && targetAnchor.parentElement === actionContainer) {
           if (targetAnchor.previousElementSibling !== effortBtn) {
             actionContainer.insertBefore(effortBtn, targetAnchor);
@@ -6227,8 +6649,12 @@
         if (ctxBtn.previousElementSibling !== perfBtn) {
           actionContainer.insertBefore(perfBtn, ctxBtn);
         }
+        if (perfBtn.previousElementSibling !== todoBtn) {
+          actionContainer.insertBefore(todoBtn, perfBtn);
+        }
         this.quota.updateContextButtonUI();
         this.perf.updatePerfButtonUI();
+        this.perf.updateTodoButtonUI();
         this.injectEffortButton();
       }
       this.trySXModelSelectorPanelInject();
@@ -6345,7 +6771,11 @@
     }
     trySXModelSelectorPanelInject() {
       const modelPanel = document.querySelector('[data-testid="model-selector-panel"]');
-      if (!modelPanel || modelPanel.closest("[data-sx-usage-panel]")) return;
+      if (!modelPanel) {
+        this.closeModelReasoningSubmenu();
+        return;
+      }
+      if (modelPanel.closest("[data-sx-usage-panel]")) return;
       const sxModels = this.state.getModels();
       if (!sxModels || sxModels.length === 0) return;
       const providers = this.state.getProviders();
@@ -6672,6 +7102,7 @@
             });
           }
           item.addEventListener("click", () => {
+            this.closeModelReasoningSubmenu();
             const cKey = this.models.getActiveConversationKey();
             this.models.setActiveModelForConversation(m.id, cKey, true);
             scrollContainer.querySelectorAll(".sx-custom-model-item").forEach((el) => {

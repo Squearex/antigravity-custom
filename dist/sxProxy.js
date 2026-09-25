@@ -148,6 +148,58 @@ const MODIFYING_TOOLS = new Set([
 const loopGuardCalls = {}; // convKey -> [{ key, ts }] (capped)
 const loopGuardPending = {}; // convKey -> { name, args, count, type }
 const loopGuardReadOnlyCounts = {}; // convKey -> number
+
+// Multi-turn agent cascade & task progress tracking
+const convSessions = {}; // convKey -> { startTs, lastTs, totalTokens, totalTurns, tools: [], active: boolean }
+const convMemoryTasks = {}; // convKey -> [{ index, status, text }]
+
+function trackCascadeTurnStart(convKey) {
+    if (!convKey || convKey === 'conv_new') return;
+    const now = Date.now();
+    let s = convSessions[convKey];
+    if (!s || (now - s.lastTs > 180000)) {
+        s = convSessions[convKey] = {
+            startTs: now,
+            lastTs: now,
+            totalTokens: 0,
+            totalTurns: 0,
+            tools: [],
+            active: true
+        };
+    } else {
+        s.lastTs = now;
+        s.active = true;
+    }
+    s.totalTurns++;
+    capMapSize(convSessions, 60);
+}
+
+function trackCascadeTurnEnd(convKey, tokens) {
+    if (!convKey || !convSessions[convKey]) return;
+    const s = convSessions[convKey];
+    s.lastTs = Date.now();
+    s.totalTokens += (Number(tokens) || 0);
+    s.active = false;
+}
+
+function getBrainTaskFilePath(cleanConvId) {
+    if (!cleanConvId || cleanConvId === 'new') return null;
+    try {
+        const homedir = require('os').homedir();
+        const candidateDirs = [
+            path.join(homedir, '.gemini-custom', 'antigravity', 'brain', cleanConvId),
+            path.join(homedir, '.gemini', 'antigravity', 'brain', cleanConvId),
+            path.join(homedir, '.gemini-custom', 'brain', cleanConvId),
+            path.join(homedir, '.gemini', 'brain', cleanConvId)
+        ];
+        for (const d of candidateDirs) {
+            const tf = path.join(d, 'task.md');
+            if (fs.existsSync(tf)) return tf;
+        }
+    } catch(e) {}
+    return null;
+}
+
 function toolCallKey(name, argsStr) {
     const a = String(argsStr || '');
     return String(name || '') + '|' + (a.length > 500 ? a.slice(0, 500) : a);
@@ -156,6 +208,18 @@ function recordToolCall(convKey, name, argsStr) {
     if (!convKey || !name) return null;
     try {
         const toolNameStr = String(name);
+        if (convSessions[convKey]) {
+            const s = convSessions[convKey];
+            if (!s.tools) s.tools = [];
+            s.tools.push({
+                name: toolNameStr,
+                args: String(argsStr || '').slice(0, 150),
+                ts: Date.now()
+            });
+            if (s.tools.length > 50) s.tools.shift();
+            s.lastTs = Date.now();
+            s.active = true;
+        }
         if (MODIFYING_TOOLS.has(toolNameStr)) {
             loopGuardReadOnlyCounts[convKey] = 0;
         } else if (READ_ONLY_TOOLS.has(toolNameStr)) {
@@ -578,6 +642,7 @@ function recordMsgPerf(convKey, entry, promptEstTokens) {
         capMapSize(convPerfStats, 60, 'last');
         saveConvPerfToDisk();
         saveConvPerfHistoryToDisk();
+        trackCascadeTurnEnd(convKey, e.completionTokens || e.outputTokens || 0);
     } catch(err) {}
     return entry;
 }
@@ -1762,6 +1827,150 @@ function startInternalProxy() {
                 return;
             }
 
+            // GET /sx/get-conversation-tasks?convId=...
+            if (url.startsWith('/sx/get-conversation-tasks') && req.method === 'GET') {
+                try {
+                    const u = new URL('http://localhost' + url);
+                    const convId = u.searchParams.get('convId') || '';
+                    const cleanConvId = (convId || '').replace(/^conv_/, '');
+                    const convKey = 'conv_' + cleanConvId;
+
+                    let tasks = [];
+                    let hasFile = false;
+                    const taskPath = getBrainTaskFilePath(cleanConvId);
+
+                    if (taskPath && fs.existsSync(taskPath)) {
+                        hasFile = true;
+                        try {
+                            const raw = fs.readFileSync(taskPath, 'utf8');
+                            const lines = raw.split('\n');
+                            for (let i = 0; i < lines.length; i++) {
+                                const m = lines[i].match(/^[-*]\s*\[([ xX/])\]\s*(.*)$/);
+                                if (m) {
+                                    const mark = m[1].toLowerCase();
+                                    tasks.push({
+                                        index: i,
+                                        status: mark === 'x' ? 'completed' : (mark === '/' ? 'in_progress' : 'pending'),
+                                        text: m[2].trim()
+                                    });
+                                }
+                            }
+                        } catch(e) {}
+                    }
+
+                    if (tasks.length === 0 && convMemoryTasks[cleanConvId] && convMemoryTasks[cleanConvId].length > 0) {
+                        tasks = convMemoryTasks[cleanConvId];
+                    }
+
+                    const session = convSessions[convKey] || null;
+                    const completed = tasks.filter(t => t.status === 'completed').length;
+                    const inProgress = tasks.filter(t => t.status === 'in_progress').length;
+                    const pending = tasks.filter(t => t.status === 'pending').length;
+                    const total = tasks.length;
+                    const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+                    const elapsedSec = session ? Math.max(0, Math.round((Date.now() - session.startTs) / 1000)) : 0;
+                    let etaSeconds = 0;
+                    if (total > 0) {
+                        if (completed === total) {
+                            etaSeconds = 0;
+                        } else if (completed > 0) {
+                            const secPerTask = Math.max(8, elapsedSec / completed);
+                            etaSeconds = Math.round((pending + (inProgress * 0.5)) * secPerTask);
+                        } else {
+                            etaSeconds = Math.round((pending + (inProgress * 0.5)) * 30);
+                        }
+                    } else if (session && session.active) {
+                        etaSeconds = Math.max(10, 60 - Math.min(50, elapsedSec));
+                    }
+
+                    let etaFormatted = 'Hesaplanıyor...';
+                    if (total > 0 && completed === total) {
+                        etaFormatted = 'Tamamlandı';
+                    } else if (etaSeconds > 0) {
+                        if (etaSeconds < 60) {
+                            etaFormatted = `~${etaSeconds} sn`;
+                        } else if (etaSeconds < 3600) {
+                            const m = Math.floor(etaSeconds / 60);
+                            const s = etaSeconds % 60;
+                            etaFormatted = s > 0 ? `~${m} dk ${s} sn` : `~${m} dk`;
+                        } else {
+                            const h = Math.floor(etaSeconds / 3600);
+                            const m = Math.floor((etaSeconds % 3600) / 60);
+                            etaFormatted = `~${h} sa ${m} dk`;
+                        }
+                    }
+
+                    let elapsedFormatted = '00:00';
+                    if (elapsedSec > 0) {
+                        if (elapsedSec < 3600) {
+                            const m = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+                            const s = String(elapsedSec % 60).padStart(2, '0');
+                            elapsedFormatted = `${m}:${s}`;
+                        } else {
+                            const h = Math.floor(elapsedSec / 3600);
+                            const m = String(Math.floor((elapsedSec % 3600) / 60)).padStart(2, '0');
+                            const s = String(elapsedSec % 60).padStart(2, '0');
+                            elapsedFormatted = `${h}:${m}:${s}`;
+                        }
+                    }
+
+                    const tools = session?.tools ? session.tools.slice(-8) : [];
+                    const isRunning = Boolean(session && session.active);
+
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({
+                        ok: true,
+                        convId: cleanConvId,
+                        hasFile,
+                        tasks,
+                        total,
+                        completed,
+                        inProgress,
+                        pending,
+                        percent,
+                        elapsedSec,
+                        elapsedFormatted,
+                        etaSeconds,
+                        etaFormatted,
+                        isRunning,
+                        recentTools: tools
+                    }));
+                } catch(e) {
+                    res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
+                return;
+            }
+
+            // POST /sx/update-conversation-tasks
+            // body: { convId, taskIndex, completed }
+            if (url === '/sx/update-conversation-tasks' && req.method === 'POST') {
+                let raw = '';
+                req.on('data', chunk => raw += chunk);
+                req.on('end', () => {
+                    try {
+                        const { convId, taskIndex, completed } = JSON.parse(raw);
+                        const cleanConvId = (convId || '').replace(/^conv_/, '');
+                        const taskPath = getBrainTaskFilePath(cleanConvId);
+                        if (taskPath && fs.existsSync(taskPath) && typeof taskIndex === 'number') {
+                            const lines = fs.readFileSync(taskPath, 'utf8').split('\n');
+                            if (taskIndex >= 0 && taskIndex < lines.length) {
+                                const newMark = completed ? '[x]' : '[ ]';
+                                lines[taskIndex] = lines[taskIndex].replace(/\[[ xX/]\]/, newMark);
+                                fs.writeFileSync(taskPath, lines.join('\n'), 'utf8');
+                            }
+                        }
+                        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ ok: true }));
+                    } catch(e) {
+                        res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ error: e.message }));
+                    }
+                });
+                return;
+            }
+
             // GET /sx/get-chat-perf-stats?convId=...
             if (url.startsWith('/sx/get-chat-perf-stats') && req.method === 'GET') {
                 try {
@@ -1772,11 +1981,28 @@ function startInternalProxy() {
 
                     let stats = (cleanConvId && cleanConvId !== 'new') ? (convPerfStats[convKey] || null) : null;
                     const history = (cleanConvId && cleanConvId !== 'new' && convPerfHistory[convKey]) ? convPerfHistory[convKey].slice(-30) : [];
+
+                    const session = convSessions[convKey] || null;
+                    let cascade = null;
+                    if (session && session.totalTurns > 1) {
+                        const totalDurationMs = Math.max(1, session.lastTs - session.startTs);
+                        cascade = {
+                            totalTurns: session.totalTurns,
+                            totalTokens: session.totalTokens,
+                            totalDurationMs,
+                            avgTps: session.totalTokens > 0 ? Number((session.totalTokens / (totalDurationMs / 1000)).toFixed(1)) : 0,
+                            totalTools: (session.tools || []).length,
+                            isCascade: true,
+                            active: Boolean(session.active)
+                        };
+                    }
+
                     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                     res.end(JSON.stringify({
                         ok: true,
                         convId: cleanConvId,
                         history,
+                        cascade,
                         stats: stats || {
                             ttftMs: null,
                             totalMs: null,
@@ -2466,6 +2692,7 @@ function startInternalProxy() {
                             const anthropicTools = convertGeminiToolsToAnthropic(rawTools);
                             const apiUrl = (provider.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '') + '/v1/messages';
                             const anthStartTime = Date.now();
+                            if (reqConvKey) trackCascadeTurnStart(reqConvKey);
                             // Per-message detail accumulators (normal vs thinking split, tools, real usage)
                             let anthTextChars = 0, anthThinkChars = 0;
                             const anthMsgTools = [];
@@ -2669,28 +2896,39 @@ function startInternalProxy() {
                             try {
                                 const sp = (reqConvKey && streamProgress[reqConvKey]) || null;
                                 const genChars = sp ? (sp.chars || 0) : 0;
-                                const firstTs = (sp && sp.firstTs) || anthStartTime;
-                                const totalMsA = Date.now() - anthStartTime;
-                                const ttftMsA = Math.max(0, firstTs - anthStartTime);
-                                const compToksA = Math.max(1, Math.round(genChars / 3.5));
-                                const genMsA = Math.max(1, totalMsA - ttftMsA);
+                                const totalMsA = Math.max(10, Date.now() - anthStartTime);
+                                const firstTs = (sp && sp.firstTs) ? sp.firstTs : anthStartTime;
+                                let ttftMsA = Math.max(10, firstTs - anthStartTime);
+                                if (ttftMsA > totalMsA) ttftMsA = totalMsA;
+                                let genMsA = Math.max(0, totalMsA - ttftMsA);
                                 const normalToksA = sxEstToks(anthTextChars);
                                 const thinkToksA = sxEstToks(anthThinkChars);
+                                const compToksA = (anthUsageOut > 0) ? anthUsageOut : Math.max(1, (normalToksA + thinkToksA) > 0 ? (normalToksA + thinkToksA) : Math.round(genChars / 3.5));
+                                const effectiveGenSecA = (genMsA >= 150) ? (genMsA / 1000) : (totalMsA >= 200 ? (totalMsA / 1000) : 0.25);
+                                let tpsA = 0;
+                                if (compToksA > 0) {
+                                    tpsA = Number((compToksA / effectiveGenSecA).toFixed(1));
+                                    if (tpsA > 250 && effectiveGenSecA < 0.6) {
+                                        tpsA = Number((compToksA / Math.max(0.6, totalMsA / 1000)).toFixed(1));
+                                    }
+                                }
                                 const perfDataA = {
-                                    ttftMs: ttftMsA, totalMs: totalMsA, generationMs: genMsA,
+                                    ttftMs: ttftMsA,
+                                    totalMs: totalMsA,
+                                    generationMs: genMsA,
                                     completionTokens: compToksA,
                                     normalTokens: normalToksA,
                                     thinkingTokens: thinkToksA,
-                                    promptTokens: (anthUsageIn > 0 ? anthUsageIn : Math.round(genChars / 3.5)), // prefer real usage
-                                    outputTokens: (anthUsageOut > 0 ? anthUsageOut : compToksA),
+                                    promptTokens: (anthUsageIn > 0 ? anthUsageIn : Math.round(genChars / 3.5)),
+                                    outputTokens: compToksA,
                                     toolCalls: anthMsgTools.length,
                                     toolCallNames: anthMsgTools,
                                     stopReason: anthStopReason || '',
-                                    tps: Number((compToksA / (genMsA / 1000)).toFixed(1)),
+                                    tps: tpsA,
                                     modelName: customModel?.name || customModel?.modelId || 'Custom Model',
                                     timestamp: new Date().toISOString()
                                 };
-                            if (reqConvKey) recordMsgPerf(reqConvKey, perfDataA, 0); // already saved above
+                                if (reqConvKey) recordMsgPerf(reqConvKey, perfDataA, 0);
                             } catch(e) {}
                         } else {
                             // OpenAI protocol (OpenRouter, OpenAI, Kilo, Kira, etc.)
@@ -2832,6 +3070,7 @@ function startInternalProxy() {
                             }
 
                             const requestStartTime = Date.now();
+                            if (reqConvKey) trackCascadeTurnStart(reqConvKey);
                             let firstTokenTime = null;
                             let totalGeneratedChars = 0;
 
@@ -3149,19 +3388,33 @@ function startInternalProxy() {
                             }
 
                             // Record performance metrics for this conversation
-                            const totalRequestMs = Date.now() - requestStartTime;
-                            const ttftMs = firstTokenTime ? (firstTokenTime - requestStartTime) : totalRequestMs;
-                            const estimatedCompTokens = Math.max(1, Math.round(totalGeneratedChars / 3.5));
-                            const generationMs = Math.max(1, totalRequestMs - ttftMs);
-                            const tps = Number(((estimatedCompTokens / (generationMs / 1000))).toFixed(1));
+                            const totalRequestMs = Math.max(10, Date.now() - requestStartTime);
+                            const realNormalToks = sxEstToks(openNormalChars);
+                            const realThinkToks = sxEstToks(openThinkChars);
+                            const estimatedCompTokens = (openUsageComplete > 0) ? openUsageComplete : (realNormalToks + realThinkToks);
+
+                            let ttftMs = firstTokenTime ? Math.max(10, firstTokenTime - requestStartTime) : totalRequestMs;
+                            if (ttftMs > totalRequestMs) ttftMs = totalRequestMs;
+
+                            let generationMs = Math.max(0, totalRequestMs - ttftMs);
+                            // Avoid division-by-near-zero explosion (e.g. 1ms generating 1000 TPS)
+                            const effectiveGenSec = (generationMs >= 150) ? (generationMs / 1000) : (totalRequestMs >= 200 ? (totalRequestMs / 1000) : 0.25);
+
+                            let tps = 0;
+                            if (estimatedCompTokens > 0) {
+                                tps = Number((estimatedCompTokens / effectiveGenSec).toFixed(1));
+                                if (tps > 250 && effectiveGenSec < 0.6) {
+                                    tps = Number((estimatedCompTokens / Math.max(0.6, totalRequestMs / 1000)).toFixed(1));
+                                }
+                            }
 
                             const perfData = {
                                 ttftMs,
                                 totalMs: totalRequestMs,
                                 generationMs,
                                 completionTokens: estimatedCompTokens,
-                                normalTokens: sxEstToks(openNormalChars),
-                                thinkingTokens: sxEstToks(openThinkChars),
+                                normalTokens: realNormalToks,
+                                thinkingTokens: realThinkToks,
                                 promptTokens: (openUsagePrompt > 0 ? openUsagePrompt : Math.round(finalMsgChars / 3.5) + Math.round(finalToolsChars / 3.5)),
                                 outputTokens: (openUsageComplete > 0 ? openUsageComplete : estimatedCompTokens),
                                 toolCalls: openMsgTools.length,

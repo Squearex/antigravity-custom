@@ -54,14 +54,19 @@ const menu_1 = require("./menu");
 const customScheme_1 = require("./customScheme");
 const settingsService_1 = require("./services/settingsService");
 const ideInstall_1 = require("./ideInstall");
-const path_1 = __importDefault(require("path"));
-// Allow Antigravity Custom to run side-by-side with official Antigravity
-const gotTheLock = true;
+const provisionSplash_1 = require("./provisionSplash");
+const path = __importStar(require("path"));
+const wsl_1 = require("./wsl");
 
+// ANTIGRAVITY CUSTOM HOOK
 const { startInternalProxy, inMemoryConfig } = require("./sxProxy");
-
-electron_1.app.name = 'Antigravity Pro';
-electron_1.app.setPath('userData', path_1.default.join(electron_1.app.getPath('appData'), 'Antigravity-Custom'));
+startInternalProxy();
+electron_1.app.setPath('userData', path.join(electron_1.app.getPath('appData'), 'Antigravity-Custom'));
+const gotTheLock = electron_1.app.requestSingleInstanceLock();
+if (!gotTheLock) {
+    electron_1.app.quit();
+    process.exit(0);
+}
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -81,6 +86,30 @@ let hostBridgeServer;
 const HEADLESS = process.env.ELECTRON_OZONE_PLATFORM_HINT === 'headless';
 // When set, skip LS startup and load this URL directly (for dev iteration).
 const DEV_URL = process.env.DEV_URL;
+// WSL distro to provision and launch the LS in (Windows only, '' = local).
+// Precedence: --wsl-distro switch (empty value forces local) >
+// ANTIGRAVITY_WSL_DISTRO env var > distro persisted from the last session.
+function resolveStartupWslDistro() {
+    if (process.platform !== 'win32') {
+        return '';
+    }
+    if (electron_1.app.commandLine.hasSwitch('wsl-distro')) {
+        return electron_1.app.commandLine.getSwitchValue('wsl-distro');
+    }
+    return (process.env.ANTIGRAVITY_WSL_DISTRO ||
+        (0, wsl_1.readPersistedWslDistro)(path.join(electron_1.app.getPath('userData'), wsl_1.WSL_STATE_FILE)));
+}
+let WSL_DISTRO = resolveStartupWslDistro();
+/** True if `distro` is currently registered in WSL (false on wsl.exe errors). */
+async function wslDistroExists(distro) {
+    try {
+        return (await (0, wsl_1.listWslDistros)()).some((d) => d.name === distro);
+    }
+    catch (err) {
+        console.error('[WSL] Failed to list distros:', err);
+        return false;
+    }
+}
 if (HEADLESS) {
     electron_1.app.commandLine.appendSwitch('ozone-platform', 'headless');
     electron_1.app.commandLine.appendSwitch('headless');
@@ -144,11 +173,6 @@ electron_1.app
     // Initialize electron-log and override console
     main_1.default.initialize();
     Object.assign(console, main_1.default.functions);
-    try {
-        await startInternalProxy();
-    } catch(e) {
-        console.error('[SX Proxy Startup Error]', e);
-    }
     const storagePath = (0, paths_1.getAppStoragePath)();
     storageManager = new storage_1.StorageManager(storagePath, settingsService_1.DEFAULTS);
     settingsService = new settingsService_1.SettingsService(storageManager);
@@ -160,14 +184,9 @@ electron_1.app
     }
     // Register IPC handlers
     (0, ipcHandlers_1.registerIpcHandlers)(storageManager);
-    electron_1.ipcMain.handle('deep-link:get-stored', () => {
-        const link = pendingDeepLink;
-        pendingDeepLink = null; // Clear after read
-        return link;
-    });
     electron_1.ipcMain.on('sx:get-inject-script', (event) => {
         try {
-            const p = path_1.default.join(__dirname, 'sx-inject.js');
+            const p = path.join(__dirname, 'sx-inject.js');
             event.returnValue = fs.readFileSync(p, 'utf8');
         } catch(e) {
             console.error('[SX IPC Error]', e);
@@ -176,7 +195,7 @@ electron_1.app
     });
     electron_1.ipcMain.on('sx:get-saved-config', (event) => {
         try {
-            const cfgPath = path_1.default.join(electron_1.app.getPath('userData'), 'sx_custom_models.json');
+            const cfgPath = path.join(electron_1.app.getPath('userData'), 'sx_custom_models.json');
             if (fs.existsSync(cfgPath)) {
                 event.returnValue = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
                 return;
@@ -185,6 +204,22 @@ electron_1.app
             console.error('[SX Get Config Error]', e);
         }
         event.returnValue = inMemoryConfig || { providers: [], models: [] };
+    });
+    electron_1.ipcMain.on('sx:save-config', (event, newConfig) => {
+        try {
+            const cfgPath = path.join(electron_1.app.getPath('userData'), 'sx_custom_models.json');
+            fs.writeFileSync(cfgPath, JSON.stringify(newConfig, null, 2), 'utf8');
+            event.returnValue = true;
+        } catch(e) {
+            console.error('[SX Save Config Error]', e);
+            event.returnValue = false;
+        }
+    });
+
+    electron_1.ipcMain.handle('deep-link:get-stored', () => {
+        const link = pendingDeepLink;
+        pendingDeepLink = null; // Clear after read
+        return link;
     });
     // Handle requests coming from custom schemes
     (0, customScheme_1.registerCustomSchemeHandlers)();
@@ -205,7 +240,7 @@ electron_1.app
         hasStartedMainApplication = true;
         return;
     }
-    if (!fs.existsSync(languageServer_1.LS_BINARY)) {
+    if (!WSL_DISTRO && !fs.existsSync(languageServer_1.LS_BINARY)) {
         const msg = `language_server binary not found at:\n${languageServer_1.LS_BINARY}\n\nPlease build set a valid location.`;
         if (HEADLESS) {
             console.error('ERROR:', msg);
@@ -215,6 +250,54 @@ electron_1.app
         }
         electron_1.app.quit();
         return;
+    }
+    // In WSL mode, make sure the matching server version is installed in the
+    // distro before launching.
+    let wslOptions;
+    if (WSL_DISTRO && !(await wslDistroExists(WSL_DISTRO))) {
+        // The distro was removed since the last session (e.g. `wsl
+        // --unregister`). Open locally instead of failing provisioning.
+        console.warn(`[WSL] Distro "${WSL_DISTRO}" is not installed; opening locally instead.`);
+        (0, wsl_1.persistWslDistro)(path.join(electron_1.app.getPath('userData'), wsl_1.WSL_STATE_FILE), '');
+        if (!HEADLESS) {
+            void electron_1.dialog.showMessageBox({
+                type: 'warning',
+                title: 'WSL distro not found',
+                message: `The WSL distro "${WSL_DISTRO}" is no longer installed.`,
+                detail: 'Antigravity opened on Windows instead.',
+            });
+        }
+        WSL_DISTRO = '';
+    }
+    if (WSL_DISTRO) {
+        (0, wsl_1.setActiveWslDistro)(WSL_DISTRO);
+        // Created lazily on the first status update, so it only appears when
+        // provisioning actually has work to do (first launch per version).
+        let splash;
+        try {
+            const binaryPath = await (0, wsl_1.ensureServerInstalled)(WSL_DISTRO, electron_1.app.getVersion(), electron_1.app.getName().toLowerCase().includes('insiders'), (status) => {
+                if (!HEADLESS) {
+                    splash ?? (splash = (0, provisionSplash_1.createProvisionSplash)(WSL_DISTRO));
+                    splash.setStatus(status);
+                }
+            });
+            wslOptions = { distro: WSL_DISTRO, binaryPath };
+        }
+        catch (err) {
+            const msg = `Failed to install the server into WSL distro "${WSL_DISTRO}":\n${err.message}`;
+            (0, wsl_1.persistWslDistro)(path.join(electron_1.app.getPath('userData'), wsl_1.WSL_STATE_FILE), '');
+            if (HEADLESS) {
+                console.error('ERROR:', msg);
+            }
+            else {
+                await electron_1.dialog.showErrorBox('WSL setup failed', msg);
+            }
+            electron_1.app.quit();
+            return;
+        }
+        finally {
+            splash?.close();
+        }
     }
     const csrf = crypto.randomUUID();
     console.log(`Starting app (v${electron_1.app.getVersion()}) with dynamic port…`);
@@ -236,9 +319,9 @@ electron_1.app
     let handle;
     const targetPort = Number(process.env.JETSKI_LS_PORT) || constants_1.DYNAMIC_PORT;
     try {
-        await startInternalProxy();
         handle = await (0, languageServer_1.startAndMonitorLanguageServer)(targetPort, csrf, {
             headless: HEADLESS,
+            wsl: wslOptions,
             hostBridgeUrl: hostBridgeServer?.url,
             hostBridgeToken: hostBridgeServer?.token,
             onPortChanged: (newPort) => {
@@ -321,6 +404,17 @@ electron_1.app
                 },
             },
         ]);
+        // The app menu bar isn't reachable on Windows (hidden title bar), so
+        // the tray menu also gets the "Connect to WSL" entry.
+        void (0, menu_1.wslConnectMenuTemplate)().then((wslItem) => {
+            if (wslItem) {
+                (0, tray_1.insertTrayMenuItem)(2, wslItem);
+                const reopen = (0, menu_1.wslReopenLocallyTemplate)();
+                if (reopen) {
+                    (0, tray_1.insertTrayMenuItem)(3, reopen);
+                }
+            }
+        });
     }
     // Start checking for app updates.
     (0, updater_1.initAutoUpdater)(HEADLESS, settingsService);
@@ -335,7 +429,6 @@ electron_1.app
  * On all other platforms, shut down the LS and quit.
  */
 electron_1.app.on('window-all-closed', async () => {
-    console.log('[Quit Debug] window-all-closed fired!');
     if (isQuitting) {
         return;
     }
@@ -343,9 +436,8 @@ electron_1.app.on('window-all-closed', async () => {
         return;
     }
     const runInBackground = await settingsService.getSetting(settingsService_1.SettingKey.RUN_IN_BACKGROUND);
-    console.log('[Quit Debug] runInBackground is:', runInBackground);
     if (!runInBackground) {
-        console.log('[Quit Debug] calling app.quit() from window-all-closed');
+        // Triggers 'before-quit' to run graceful cleanup without confirmation.
         electron_1.app.quit();
     }
     else {
@@ -365,8 +457,12 @@ async function closeHostBridgeServer() {
     }
     hostBridgeServer = undefined;
 }
+/**
+ * Fired just before the app quits (e.g. Cmd+Q on macOS, or after
+ * window-all-closed on non-macOS). Ensures the LS is terminated even if
+ * window-all-closed didn't handle it (e.g. on macOS quit via menu).
+ */
 electron_1.app.on('before-quit', async (event) => {
-    console.log('[Quit Debug] before-quit fired! isQuitting:', isQuitting);
     if (isQuitting) {
         return;
     }

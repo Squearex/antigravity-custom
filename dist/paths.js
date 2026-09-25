@@ -4,7 +4,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IDE_BACKUP_DATA_DIR = exports.IDE_NEW_DATA_DIR = exports.IDE_OLD_DATA_DIR = void 0;
-exports.getGeminiDir = getGeminiDir;
 exports.getAppDataDirName = getAppDataDirName;
 exports.getAppDataDir = getAppDataDir;
 exports.getSettingsPbPath = getSettingsPbPath;
@@ -15,17 +14,14 @@ const electron_1 = require("electron");
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 const constants_1 = require("./constants");
-function getGeminiDir() {
-    return path_1.default.join(os_1.default.homedir(), '.gemini-custom');
-}
 function getAppDataDirName() {
     return 'antigravity-custom';
 }
 function getAppDataDir() {
-    return path_1.default.join(getGeminiDir(), getAppDataDirName());
+    return path_1.default.join(os_1.default.homedir(), '.gemini-custom', 'antigravity-custom');
 }
 function getSettingsPbPath() {
-    return path_1.default.join(getGeminiDir(), 'config', 'config.json');
+    return path_1.default.join(os_1.default.homedir(), '.gemini-custom', 'config', 'config.json');
 }
 /**
  * Returns the path to the persistent app storage file.
