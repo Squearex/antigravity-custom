@@ -4906,9 +4906,17 @@
       this.sourceNode = null;
       this.analyserNode = null;
       this.muteGain = null;
-      this.recordedChunks = [];
       this.visualizerBars = null;
       this.animFrameId = null;
+
+      // Streaming VAD state
+      this.segmentChunks = [];
+      this.hasSpeech = false;
+      this.speechStartTime = 0;
+      this.lastSpeechTime = 0;
+      this.noiseFloor = 0.015;
+      this.transcriptionQueue = [];
+      this.isProcessingQueue = false;
     }
     init() {
       window.__SX_VOICE_RECORDER__ = this;
@@ -4929,7 +4937,7 @@
         }
       }, true);
 
-      this.logger.info("VoiceRecorder", "Voice recorder initialized with native waveform UX & Google Speech API.");
+      this.logger.info("VoiceRecorder", "Live streaming voice recorder initialized.");
     }
     async toggleRecording(btn) {
       if (this.isRecording) {
@@ -4941,7 +4949,12 @@
     async startRecording(btn) {
       this.isRecording = true;
       this.activeBtn = btn;
-      this.recordedChunks = [];
+      this.segmentChunks = [];
+      this.transcriptionQueue = [];
+      this.hasSpeech = false;
+      this.speechStartTime = 0;
+      this.lastSpeechTime = 0;
+      this.noiseFloor = 0.015;
 
       if (btn) {
         if (!btn._origHtml) {
@@ -4952,7 +4965,7 @@
         btn.setAttribute("aria-label", "Stop recording");
         btn.title = "Stop Recording";
 
-        // Exact Antigravity cEa 3-bar waveform structure
+        // Native Antigravity 3-bar waveform structure
         btn.innerHTML = `
           <div class="flex items-center justify-center gap-[2px] w-4 h-4 pointer-events-none" aria-hidden="true">
             <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 4px;"></div>
@@ -4993,7 +5006,7 @@
             if (this.audioContext.audioWorklet) {
               try {
                 const workletCode = `
-                  class SXRecorderProcessor extends AudioWorkletProcessor {
+                  class SXStreamRecorderProcessor extends AudioWorkletProcessor {
                     process(inputs) {
                       const input = inputs[0];
                       if (input && input[0]) {
@@ -5002,16 +5015,16 @@
                       return true;
                     }
                   }
-                  registerProcessor('sx-recorder-processor', SXRecorderProcessor);
+                  registerProcessor('sx-stream-recorder-processor', SXStreamRecorderProcessor);
                 `;
                 const blob = new Blob([workletCode], { type: "application/javascript" });
                 const url = URL.createObjectURL(blob);
                 await this.audioContext.audioWorklet.addModule(url);
                 URL.revokeObjectURL(url);
-                const workletNode = new AudioWorkletNode(this.audioContext, "sx-recorder-processor");
+                const workletNode = new AudioWorkletNode(this.audioContext, "sx-stream-recorder-processor");
                 workletNode.port.onmessage = (e) => {
                   if (!this.isRecording) return;
-                  this.recordedChunks.push(new Float32Array(e.data));
+                  this.onAudioChunk(e.data);
                 };
                 this.sourceNode.connect(workletNode);
                 this.workletNode = workletNode;
@@ -5024,7 +5037,7 @@
               this.scriptProcessor.onaudioprocess = (e) => {
                 if (!this.isRecording) return;
                 const data = e.inputBuffer.getChannelData(0);
-                this.recordedChunks.push(new Float32Array(data));
+                this.onAudioChunk(data);
               };
               this.sourceNode.connect(this.scriptProcessor);
               this.muteGain = this.audioContext.createGain();
@@ -5033,7 +5046,7 @@
               this.muteGain.connect(this.audioContext.destination);
             }
 
-            // 2. Native Antigravity cEa 3-bar Audio Visualizer FFT
+            // 2. Native Antigravity cEa 3-bar Audio Visualizer FFT + VAD
             this.analyserNode = this.audioContext.createAnalyser();
             this.analyserNode.fftSize = 64;
             this.analyserNode.smoothingTimeConstant = 0.8;
@@ -5069,17 +5082,109 @@
                   if (bar) bar.style.height = `${heights[i]}px`;
                 }
               }
+
+              // VAD check on every frame
+              this.checkVoiceActivity(rms);
+
               this.animFrameId = requestAnimationFrame(updateVisualizer);
             };
             this.animFrameId = requestAnimationFrame(updateVisualizer);
           }
-          this.logger.info("VoiceRecorder", "Microphone capture active with live waveform.");
+          this.logger.info("VoiceRecorder", "Live streaming microphone active with real-time transcription.");
         }
       } catch (e) {
         this.logger.error("VoiceRecorder", "Audio capture failed:", e);
         this.resetButton(btn);
         this.isRecording = false;
       }
+    }
+    onAudioChunk(data) {
+      if (!this.isRecording) return;
+      this.segmentChunks.push(new Float32Array(data));
+    }
+    checkVoiceActivity(rms) {
+      const now = performance.now();
+      const threshold = Math.max(0.025, this.noiseFloor * 2.2);
+
+      if (rms > threshold) {
+        if (!this.hasSpeech) {
+          this.hasSpeech = true;
+          this.speechStartTime = now;
+        }
+        this.lastSpeechTime = now;
+      } else {
+        this.noiseFloor = this.noiseFloor * 0.98 + rms * 0.02;
+
+        if (this.hasSpeech) {
+          const pauseDuration = now - this.lastSpeechTime;
+          const speechDuration = this.lastSpeechTime - this.speechStartTime;
+
+          // Natural pause (~480ms after >= 320ms speech) triggers live transcription
+          if (pauseDuration >= 480 && speechDuration >= 320) {
+            this.flushSegment();
+          }
+        }
+      }
+
+      // Long continuous speech (> 3800ms) without pause is sliced automatically
+      if (this.hasSpeech && (now - this.speechStartTime >= 3800)) {
+        this.flushSegment();
+        this.hasSpeech = true;
+        this.speechStartTime = now;
+        this.lastSpeechTime = now;
+      }
+    }
+    flushSegment() {
+      if (!this.segmentChunks.length) return;
+      const chunks = this.segmentChunks;
+      this.segmentChunks = [];
+      this.hasSpeech = false;
+
+      let totalLen = 0;
+      for (let i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
+
+      const sampleRate = this.audioContext ? this.audioContext.sampleRate : 44100;
+      if (totalLen >= sampleRate * 0.25) {
+        const merged = new Float32Array(totalLen);
+        let off = 0;
+        for (let i = 0; i < chunks.length; i++) {
+          merged.set(chunks[i], off);
+          off += chunks[i].length;
+        }
+        const resampled = this.resampleAudio(merged, sampleRate, 16000);
+        const wavBlob = this.encodeWAV(resampled, 16000);
+        this.enqueueTranscription(wavBlob);
+      }
+    }
+    enqueueTranscription(wavBlob) {
+      this.transcriptionQueue.push(wavBlob);
+      this.processQueue();
+    }
+    async processQueue() {
+      if (this.isProcessingQueue || !this.transcriptionQueue.length) return;
+      this.isProcessingQueue = true;
+
+      while (this.transcriptionQueue.length > 0) {
+        const wavBlob = this.transcriptionQueue.shift();
+        try {
+          const resp = await fetch("http://localhost:15725/sx/transcribe-audio?lang=tr-TR", {
+            method: "POST",
+            headers: { "Content-Type": "audio/wav" },
+            body: wavBlob
+          });
+          const res = await resp.json();
+          if (res && res.ok && res.text) {
+            const text = res.text.trim();
+            if (text) {
+              this.insertTextIntoPrompt(text + " ");
+            }
+          }
+        } catch (e) {
+          this.logger.error("VoiceRecorder", "Live transcription request failed:", e);
+        }
+      }
+
+      this.isProcessingQueue = false;
     }
     async stopRecording(btn = null) {
       this.isRecording = false;
@@ -5091,52 +5196,25 @@
       }
       this.visualizerBars = null;
 
-      if (targetBtn) {
+      // Flush any remaining audio in the buffer
+      this.flushSegment();
+
+      // If background transcription queue is still finishing, show brief spinner
+      if (targetBtn && (this.isProcessingQueue || this.transcriptionQueue.length > 0)) {
         targetBtn.innerHTML = `
           <svg class="animate-spin w-3.5 h-3.5 text-white pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
         `;
-        targetBtn.setAttribute("aria-label", "Finalizing transcription...");
-        targetBtn.title = "Finalizing...";
-      }
-
-      const sampleRate = this.audioContext ? this.audioContext.sampleRate : 44100;
-      const chunks = [...this.recordedChunks];
-      this.cleanupAudio();
-
-      if (chunks && chunks.length > 0) {
-        try {
-          let totalLen = 0;
-          for (let i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
-          if (totalLen > 3000) {
-            const merged = new Float32Array(totalLen);
-            let off = 0;
-            for (let i = 0; i < chunks.length; i++) {
-              merged.set(chunks[i], off);
-              off += chunks[i].length;
-            }
-            const resampled = this.resampleAudio(merged, sampleRate, 16000);
-            const wavBlob = this.encodeWAV(resampled, 16000);
-
-            const resp = await fetch("http://localhost:15725/sx/transcribe-audio?lang=tr-TR", {
-              method: "POST",
-              headers: { "Content-Type": "audio/wav" },
-              body: wavBlob
-            });
-            const res = await resp.json();
-            if (res && res.ok && res.text) {
-              const recognized = res.text.trim();
-              if (recognized) {
-                this.insertTextIntoPrompt(recognized + " ");
-              }
-            }
-          }
-        } catch (e) {
-          this.logger.error("VoiceRecorder", "Backend transcription error", e);
+        let waitCount = 0;
+        while ((this.isProcessingQueue || this.transcriptionQueue.length > 0) && waitCount < 30) {
+          await new Promise(r => setTimeout(r, 100));
+          waitCount++;
         }
       }
+
+      this.cleanupAudio();
 
       if (targetBtn) {
         this.resetButton(targetBtn);
