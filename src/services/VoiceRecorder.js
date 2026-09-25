@@ -1,27 +1,26 @@
 /**
  * SX Core SDK - VoiceRecorder
- * Real-time voice recording via Web Audio API, encoded to standard 16kHz mono WAV,
- * and transcribed via SX Proxy's Python SpeechRecognition service.
- * Inserts transcribed text directly into the chat prompt editor.
+ * Real-time Speech-to-Text directly in the chat prompt editor.
+ * Uses live Google SpeechRecognition API when available, with automatic
+ * Google Speech API audio transcription fallback via local SX Proxy.
+ * Visually pulses the microphone red while recording.
  */
 export class VoiceRecorder {
     constructor(logger) {
         this.logger = logger;
         this.isRecording = false;
-        this.isTranscribing = false;
         this.activeBtn = null;
+        this.recognition = null;
         this.audioContext = null;
         this.mediaStream = null;
         this.scriptProcessor = null;
         this.sourceNode = null;
         this.recordedChunks = [];
-        this.recordStartTime = 0;
-        this.statusIndicator = null;
-        this._hideTimeout = null;
+        this.speechRecognizedText = '';
+        this.hasLiveSpeechText = false;
     }
 
     init() {
-        // Global capturing listener on voice recording buttons
         document.addEventListener('click', (e) => {
             const btn = e.target.closest(
                 'button[aria-label*="Record voice" i], ' +
@@ -37,14 +36,13 @@ export class VoiceRecorder {
             }
         }, true);
 
-        // Inject pulsing recording & spinner styles
         if (!document.getElementById('sx-voice-recorder-styles')) {
             const st = document.createElement('style');
             st.id = 'sx-voice-recorder-styles';
             st.textContent = `
                 @keyframes sx-mic-pulse {
                     0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-                    70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+                    70% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
                     100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
                 }
                 button.sx-recording {
@@ -56,172 +54,161 @@ export class VoiceRecorder {
                     color: #ffffff !important;
                     fill: #ffffff !important;
                 }
-                button.sx-transcribing {
-                    background-color: #f59e0b !important;
-                    color: #ffffff !important;
-                    opacity: 0.85 !important;
-                    pointer-events: none !important;
-                }
-                #sx-voice-status-pill {
-                    position: fixed;
-                    bottom: 80px;
-                    left: 50%;
-                    transform: translateX(-50%);
-                    background: rgba(15, 23, 42, 0.95);
-                    border: 1px solid rgba(239, 68, 68, 0.4);
-                    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-                    color: #f8fafc;
-                    font-size: 12px;
-                    font-weight: 500;
-                    padding: 6px 16px;
-                    border-radius: 20px;
-                    z-index: 100005;
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    backdrop-filter: blur(12px);
-                    pointer-events: none;
-                    transition: all 0.25s ease;
-                }
             `;
             (document.head || document.documentElement)?.appendChild(st);
         }
 
-        this.logger.info('VoiceRecorder', 'Native AudioContext VoiceRecorder initialized.');
+        this.logger.info('VoiceRecorder', 'Voice recorder initialized.');
     }
 
     async toggleRecording(btn) {
-        if (this.isTranscribing) return;
         if (this.isRecording) {
-            await this.stopRecordingAndTranscribe();
+            await this.stopRecording(btn);
         } else {
             await this.startRecording(btn);
         }
     }
 
     async startRecording(btn) {
+        this.isRecording = true;
+        this.activeBtn = btn;
+        this.hasLiveSpeechText = false;
+        this.speechRecognizedText = '';
+        this.recordedChunks = [];
+
+        if (btn) {
+            btn.classList.add('sx-recording');
+            btn.setAttribute('aria-label', 'Stop recording');
+            btn.title = 'Kaydı durdurmak için tıklayın';
+        }
+
+        const editor = document.querySelector('[contenteditable="true"]') ||
+                       document.querySelector('textarea.antigravity-prompt-input') ||
+                       document.querySelector('textarea');
+        if (editor) editor.focus();
+
+        // 1. Try Live SpeechRecognition (Google Web Speech in Chromium)
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SR) {
+            try {
+                this.recognition = new SR();
+                this.recognition.continuous = true;
+                this.recognition.interimResults = true;
+                this.recognition.lang = navigator.language || 'tr-TR';
+
+                let liveFinal = '';
+                this.recognition.onresult = (event) => {
+                    let finalChunk = '';
+                    for (let i = event.resultIndex; i < event.results.length; ++i) {
+                        if (event.results[i].isFinal) {
+                            finalChunk += event.results[i][0].transcript;
+                        }
+                    }
+                    if (finalChunk && finalChunk !== liveFinal) {
+                        liveFinal = finalChunk;
+                        this.speechRecognizedText += finalChunk + ' ';
+                        this.hasLiveSpeechText = true;
+                        this.insertTextIntoPrompt(finalChunk.trim() + ' ');
+                    }
+                };
+
+                this.recognition.onerror = (e) => {
+                    this.logger.warn('VoiceRecorder', 'Live SpeechRecognition notice:', e.error);
+                };
+
+                this.recognition.onend = () => {
+                    if (this.isRecording && this.recognition) {
+                        try { this.recognition.start(); } catch(err) {}
+                    }
+                };
+
+                this.recognition.start();
+            } catch(e) {
+                this.logger.warn('VoiceRecorder', 'Could not start live SpeechRecognition:', e);
+            }
+        }
+
+        // 2. Parallel audio capture for Google Speech Recognition fallback
         try {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                alert('Mikrofon erişimi bu ortamda desteklenmiyor.');
-                return;
-            }
-
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    channelCount: 1,
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                this.mediaStream = stream;
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (AudioCtx) {
+                    this.audioContext = new AudioCtx();
+                    this.sourceNode = this.audioContext.createMediaStreamSource(stream);
+                    this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
+                    this.scriptProcessor.onaudioprocess = (e) => {
+                        if (!this.isRecording) return;
+                        const data = e.inputBuffer.getChannelData(0);
+                        this.recordedChunks.push(new Float32Array(data));
+                    };
+                    this.sourceNode.connect(this.scriptProcessor);
+                    this.scriptProcessor.connect(this.audioContext.destination);
                 }
-            });
-
-            this.mediaStream = stream;
-            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-            this.audioContext = new AudioContextClass();
-
-            this.sourceNode = this.audioContext.createMediaStreamSource(stream);
-            this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
-            this.recordedChunks = [];
-            this.recordStartTime = Date.now();
-
-            this.scriptProcessor.onaudioprocess = (e) => {
-                if (!this.isRecording) return;
-                const channelData = e.inputBuffer.getChannelData(0);
-                this.recordedChunks.push(new Float32Array(channelData));
-            };
-
-            this.sourceNode.connect(this.scriptProcessor);
-            this.scriptProcessor.connect(this.audioContext.destination);
-
-            this.isRecording = true;
-            this.activeBtn = btn;
-            if (btn) {
-                btn.classList.add('sx-recording');
-                btn.setAttribute('aria-label', 'Stop recording');
-                btn.title = 'Kaydı bitirmek için tekrar tıklayın';
             }
-
-            this.showStatusPill('🔴 Dinleniyor... Bitirmek için mikrofona tekrar tıklayın');
-            this.logger.info('VoiceRecorder', 'AudioContext recording started');
-        } catch (err) {
-            this.logger.error('VoiceRecorder', 'Failed to access microphone', err);
-            this.hideStatusPill();
-            alert('Mikrofon erişim hatası: ' + (err.message || err));
-            this.cleanupAudio();
+        } catch(e) {
+            this.logger.warn('VoiceRecorder', 'Audio capture notice:', e);
         }
     }
 
-    async stopRecordingAndTranscribe() {
+    async stopRecording(btn = null) {
         this.isRecording = false;
-        const btn = this.activeBtn;
-        if (btn) {
-            btn.classList.remove('sx-recording');
-            btn.classList.add('sx-transcribing');
-            btn.title = 'Metne dönüştürülüyor...';
+        const targetBtn = btn || this.activeBtn;
+        if (targetBtn) {
+            targetBtn.classList.remove('sx-recording');
+            targetBtn.setAttribute('aria-label', 'Record voice memo');
+            targetBtn.title = 'Ses kaydı başlat';
         }
+        this.activeBtn = null;
 
-        const duration = (Date.now() - this.recordStartTime) / 1000;
-        this.showStatusPill('⏳ Metne dönüştürülüyor...');
-        this.isTranscribing = true;
+        if (this.recognition) {
+            try { this.recognition.stop(); } catch(e) {}
+            this.recognition = null;
+        }
 
         const sampleRate = this.audioContext ? this.audioContext.sampleRate : 44100;
         const chunks = this.recordedChunks;
-
         this.cleanupAudio();
 
-        if (chunks.length === 0 || duration < 0.3) {
-            this.hideStatusPill();
-            if (btn) {
-                btn.classList.remove('sx-transcribing');
-                btn.title = 'Ses kaydı başlat';
-            }
-            this.isTranscribing = false;
+        if (this.hasLiveSpeechText && this.speechRecognizedText.trim().length > 0) {
             return;
         }
 
-        try {
-            let totalLength = 0;
-            for (let i = 0; i < chunks.length; i++) {
-                totalLength += chunks[i].length;
-            }
-            const merged = new Float32Array(totalLength);
-            let offset = 0;
-            for (let i = 0; i < chunks.length; i++) {
-                merged.set(chunks[i], offset);
-                offset += chunks[i].length;
-            }
+        if (chunks && chunks.length > 0) {
+            try {
+                let totalLen = 0;
+                for (let i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
+                if (totalLen > 1000) {
+                    const merged = new Float32Array(totalLen);
+                    let off = 0;
+                    for (let i = 0; i < chunks.length; i++) {
+                        merged.set(chunks[i], off);
+                        off += chunks[i].length;
+                    }
+                    const resampled = this.resampleAudio(merged, sampleRate, 16000);
+                    const wavBlob = this.encodeWAV(resampled, 16000);
 
-            const targetSampleRate = 16000;
-            const resampled = this.resampleAudio(merged, sampleRate, targetSampleRate);
-            const wavBlob = this.encodeWAV(resampled, targetSampleRate);
-
-            const resp = await fetch('http://localhost:15725/sx/transcribe-audio?lang=tr-TR', {
-                method: 'POST',
-                headers: { 'Content-Type': 'audio/wav' },
-                body: wavBlob
-            });
-
-            const data = await resp.json();
-            if (data && data.ok && data.text) {
-                const recognized = data.text.trim();
-                this.insertTextIntoPrompt(recognized + ' ');
-                this.showStatusPill(`✓ "${recognized}" eklendi`, 2500);
-            } else if (data && data.text === '') {
-                this.showStatusPill('⚠️ Ses algılanamadı', 2500);
-            } else {
-                this.showStatusPill('⚠️ ' + (data.error || 'Dönüştürme başarısız'), 2500);
+                    const resp = await fetch('http://localhost:15725/sx/transcribe-audio?lang=tr-TR', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'audio/wav' },
+                        body: wavBlob
+                    });
+                    const res = await resp.json();
+                    if (res && res.ok && res.text) {
+                        this.insertTextIntoPrompt(res.text.trim() + ' ');
+                    }
+                }
+            } catch(e) {
+                this.logger.error('VoiceRecorder', 'Backend transcription error', e);
             }
-        } catch (err) {
-            this.logger.error('VoiceRecorder', 'Transcription error', err);
-            this.showStatusPill('⚠️ Sunucu bağlantı hatası', 2500);
-        } finally {
-            this.isTranscribing = false;
-            if (btn) {
-                btn.classList.remove('sx-transcribing');
-                btn.setAttribute('aria-label', 'Record voice memo');
-                btn.title = 'Ses kaydı başlat';
-            }
-            this.activeBtn = null;
         }
     }
 
@@ -243,13 +230,11 @@ export class VoiceRecorder {
     encodeWAV(samples, sampleRate) {
         const buffer = new ArrayBuffer(44 + samples.length * 2);
         const view = new DataView(buffer);
-
         const writeString = (v, off, str) => {
             for (let i = 0; i < str.length; i++) {
                 v.setUint8(off + i, str.charCodeAt(i));
             }
         };
-
         writeString(view, 0, 'RIFF');
         view.setUint32(4, 36 + samples.length * 2, true);
         writeString(view, 8, 'WAVE');
@@ -267,59 +252,29 @@ export class VoiceRecorder {
         let offset = 44;
         for (let i = 0; i < samples.length; i++, offset += 2) {
             const s = Math.max(-1, Math.min(1, samples[i]));
-            view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            view.setInt16(offset, s < 0 ? s * 32768 : s * 32767, true);
         }
-
         return new Blob([view], { type: 'audio/wav' });
     }
 
     cleanupAudio() {
         if (this.sourceNode) {
-            try { this.sourceNode.disconnect(); } catch(e) {}
+            try { this.sourceNode.disconnect(); } catch (e) {}
             this.sourceNode = null;
         }
         if (this.scriptProcessor) {
-            try { this.scriptProcessor.disconnect(); } catch(e) {}
+            try { this.scriptProcessor.disconnect(); } catch (e) {}
             this.scriptProcessor = null;
         }
         if (this.mediaStream) {
             try {
-                this.mediaStream.getTracks().forEach(t => t.stop());
-            } catch(e) {}
+                this.mediaStream.getTracks().forEach((t) => t.stop());
+            } catch (e) {}
             this.mediaStream = null;
         }
         if (this.audioContext) {
-            try { this.audioContext.close(); } catch(e) {}
+            try { this.audioContext.close(); } catch (e) {}
             this.audioContext = null;
-        }
-    }
-
-    showStatusPill(text, autoHideMs = 0) {
-        if (!this.statusIndicator) {
-            this.statusIndicator = document.createElement('div');
-            this.statusIndicator.id = 'sx-voice-status-pill';
-            document.body.appendChild(this.statusIndicator);
-        }
-        this.statusIndicator.textContent = text;
-        this.statusIndicator.style.display = 'flex';
-        this.statusIndicator.style.opacity = '1';
-
-        if (this._hideTimeout) clearTimeout(this._hideTimeout);
-        if (autoHideMs > 0) {
-            this._hideTimeout = setTimeout(() => {
-                this.hideStatusPill();
-            }, autoHideMs);
-        }
-    }
-
-    hideStatusPill() {
-        if (this.statusIndicator) {
-            this.statusIndicator.style.opacity = '0';
-            setTimeout(() => {
-                if (this.statusIndicator && this.statusIndicator.style.opacity === '0') {
-                    this.statusIndicator.style.display = 'none';
-                }
-            }, 300);
         }
     }
 
