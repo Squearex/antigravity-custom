@@ -4128,13 +4128,27 @@
           </div>
         </div>
 
-        <div style="margin-bottom:12px;">
+        <div style="margin-bottom:10px;">
           <div style="width:100%;height:6px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden;">
             <div id="sx-todo-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg, #38bdf8, #10b981);transition:width 0.4s ease;border-radius:4px;"></div>
           </div>
         </div>
 
-        <div id="sx-todo-tasks-scroll" style="max-height:210px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding-right:2px;">
+        <div id="sx-todo-live-radar" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:7px 10px;margin-bottom:10px;display:flex;align-items:center;gap:8px;">
+          <span id="sx-todo-radar-pulse" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 6px #10b981;flex-shrink:0;"></span>
+          <div style="flex-grow:1;font-size:11.5px;color:#f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" id="sx-todo-radar-action">Hazır</div>
+          <span id="sx-todo-radar-time" style="font-size:10px;color:#94a3b8;font-family:ui-monospace,monospace;flex-shrink:0;"></span>
+        </div>
+
+        <div id="sx-todo-phases" style="display:flex;align-items:center;justify-content:space-between;gap:3px;margin-bottom:10px;padding:3px;background:rgba(0,0,0,0.25);border-radius:7px;border:1px solid rgba(255,255,255,0.05);">
+          <div id="sx-phase-1" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:3px 2px;border-radius:5px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">🔍 Keşif</div>
+          <div style="color:rgba(255,255,255,0.15);font-size:9px;">›</div>
+          <div id="sx-phase-2" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:3px 2px;border-radius:5px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">🛠️ Kodlama</div>
+          <div style="color:rgba(255,255,255,0.15);font-size:9px;">›</div>
+          <div id="sx-phase-3" class="sx-phase-pill" style="flex:1;text-align:center;font-size:10.5px;padding:3px 2px;border-radius:5px;color:#94a3b8;background:transparent;transition:all 0.2s ease;">🧪 Test</div>
+        </div>
+
+        <div id="sx-todo-tasks-scroll" style="max-height:200px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;padding-right:2px;">
           <div style="font-size:12px;color:#64748b;text-align:center;padding:12px 0;">Görevler kontrol ediliyor...</div>
         </div>
 
@@ -4161,6 +4175,9 @@
         const listEl = pop.querySelector("#sx-todo-tasks-scroll");
         const toolsTray = pop.querySelector("#sx-todo-tools-tray");
         const toolsList = pop.querySelector("#sx-todo-tools-list");
+        const radarAction = pop.querySelector("#sx-todo-radar-action");
+        const radarTime = pop.querySelector("#sx-todo-radar-time");
+        const radarPulse = pop.querySelector("#sx-todo-radar-pulse");
 
         if (!data || (!data.tasks?.length && !data.recentTools?.length)) {
           // Check DOM for checklist items in assistant messages
@@ -4204,6 +4221,11 @@
             statusBadge.style.background = "rgba(148,163,184,0.1)";
             statusBadge.style.borderColor = "rgba(148,163,184,0.2)";
           }
+          if (radarAction) radarAction.innerText = "Bekleniyor";
+          if (radarPulse) {
+            radarPulse.style.background = "#64748b";
+            radarPulse.style.boxShadow = "none";
+          }
           if (listEl) {
             listEl.innerHTML = `
               <div style="font-size:12px;color:#94a3b8;text-align:center;padding:16px 8px;line-height:1.5;">
@@ -4236,9 +4258,41 @@
           }
         }
 
+        if (radarAction) radarAction.innerText = data.currentAction || (isRunning ? "💭 Düşünce & Yanıt üretiliyor..." : "✓ Hazır / Bekleniyor");
+        if (radarTime) radarTime.innerText = data.currentActionElapsedSec > 0 ? `${data.currentActionElapsedSec}s` : "";
+        if (radarPulse) {
+          radarPulse.style.background = isRunning ? "#10b981" : "#64748b";
+          radarPulse.style.boxShadow = isRunning ? "0 0 6px #10b981" : "none";
+        }
+
+        // Update Phase pills
+        const pIdx = data.phase?.index || 1;
+        const p1 = pop.querySelector("#sx-phase-1");
+        const p2 = pop.querySelector("#sx-phase-2");
+        const p3 = pop.querySelector("#sx-phase-3");
+        if (p1 && p2 && p3) {
+          [p1, p2, p3].forEach((p, idx) => {
+            const step = idx + 1;
+            if (step < pIdx) {
+              p.style.color = "#10b981";
+              p.style.background = "rgba(16,185,129,0.1)";
+              p.style.fontWeight = "600";
+            } else if (step === pIdx) {
+              p.style.color = "#38bdf8";
+              p.style.background = "rgba(56,189,248,0.18)";
+              p.style.fontWeight = "700";
+            } else {
+              p.style.color = "#64748b";
+              p.style.background = "transparent";
+              p.style.fontWeight = "400";
+            }
+          });
+        }
+
         if (elapsedEl) elapsedEl.innerText = data.elapsedFormatted || "00:00";
         if (etaEl) etaEl.innerText = data.etaFormatted || "--";
-        if (progTxt) progTxt.innerText = `${data.completed || 0}/${data.total || 0} (%${data.percent || 0})`;
+        const pctLabel = data.hasWeights ? ` (%${data.percent} Ağırlıklı)` : (data.declaredProgress != null ? ` (%${data.percent} Model)` : ` (%${data.percent})`);
+        if (progTxt) progTxt.innerText = `${data.completed || 0}/${data.total || 0}${pctLabel}`;
         if (progBar) progBar.style.width = `${data.percent || 0}%`;
 
         // Render checklist
@@ -4268,6 +4322,8 @@
                 <div style="flex-shrink:0;margin-top:2px;">${iconHtml}</div>
                 <div style="flex-grow:1;font-size:12px;color:${textColor};text-decoration:${textDecor};line-height:1.35;word-break:break-word;">
                   ${esc(task.text)}
+                  ${task.weight > 0 ? `<span style="font-size:10px;color:#38bdf8;font-weight:700;margin-left:5px;background:rgba(56,189,248,0.15);padding:1px 4px;border-radius:3px;">%${task.weight}</span>` : ''}
+                  ${task.estMins > 0 ? `<span style="font-size:10px;color:#fb923c;font-weight:700;margin-left:5px;background:rgba(251,146,60,0.15);padding:1px 4px;border-radius:3px;">~${task.estMins}dk</span>` : ''}
                   ${isProg ? `<span style="font-size:10px;color:#38bdf8;font-weight:700;margin-left:5px;background:rgba(56,189,248,0.15);padding:1px 4px;border-radius:3px;">İşleniyor</span>` : ''}
                 </div>
               </div>

@@ -164,11 +164,15 @@ function trackCascadeTurnStart(convKey) {
             totalTokens: 0,
             totalTurns: 0,
             tools: [],
-            active: true
+            active: true,
+            currentAction: '💭 Düşünce & Yanıt üretiliyor...',
+            currentActionTs: now
         };
     } else {
         s.lastTs = now;
         s.active = true;
+        s.currentAction = '💭 Düşünce & Yanıt üretiliyor...';
+        s.currentActionTs = now;
     }
     s.totalTurns++;
     capMapSize(convSessions, 60);
@@ -180,6 +184,8 @@ function trackCascadeTurnEnd(convKey, tokens) {
     s.lastTs = Date.now();
     s.totalTokens += (Number(tokens) || 0);
     s.active = false;
+    s.currentAction = '✓ Bekleniyor / Hazır';
+    s.currentActionTs = Date.now();
 }
 
 function getBrainTaskFilePath(cleanConvId) {
@@ -200,6 +206,35 @@ function getBrainTaskFilePath(cleanConvId) {
     return null;
 }
 
+function formatToolActionSummary(name, argsStr) {
+    try {
+        const n = String(name || '');
+        let a = {};
+        if (typeof argsStr === 'object' && argsStr !== null) {
+            a = argsStr;
+        } else if (typeof argsStr === 'string' && argsStr.trim()) {
+            try { a = JSON.parse(argsStr); } catch(e) {}
+        }
+        const targetPath = a.TargetFile || a.AbsolutePath || a.file_path || a.path || '';
+        const shortFile = targetPath ? path.basename(targetPath) : '';
+        const cmd = a.CommandLine || a.command || '';
+        const shortCmd = cmd ? (cmd.length > 35 ? cmd.slice(0, 32) + '...' : cmd) : '';
+        const q = a.query || a.Prompt || '';
+        const shortQ = q ? (q.length > 30 ? q.slice(0, 28) + '...' : q) : '';
+
+        if (n === 'view_file' || n === 'read_file') return `🔍 Dosya taranıyor: ${shortFile || 'kod'}`;
+        if (n === 'replace_file_content') return `✏️ Kod düzenleniyor: ${shortFile || 'dosya'}`;
+        if (n === 'write_to_file' || n === 'write_file') return `📝 Dosya oluşturuluyor: ${shortFile || 'dosya'}`;
+        if (n === 'run_command' || n === 'privileged-command') return `⚡ Komut çalıştırılıyor: ${shortCmd || 'terminal'}`;
+        if (n === 'search_web') return `🌐 Web araştırılıyor: ${shortQ || 'arama'}`;
+        if (n === 'read_url_content') return `📄 Web sayfası okunuyor: ${shortFile || 'url'}`;
+        if (n === 'grep_search' || n === 'find_by_name' || n === 'list_dir') return `📁 Dizin & sembol taranıyor...`;
+        return `🛠️ ${n}${shortFile ? `: ${shortFile}` : ''}`;
+    } catch(e) {
+        return `🛠️ ${name}`;
+    }
+}
+
 function toolCallKey(name, argsStr) {
     const a = String(argsStr || '');
     return String(name || '') + '|' + (a.length > 500 ? a.slice(0, 500) : a);
@@ -211,12 +246,16 @@ function recordToolCall(convKey, name, argsStr) {
         if (convSessions[convKey]) {
             const s = convSessions[convKey];
             if (!s.tools) s.tools = [];
+            const actionText = formatToolActionSummary(toolNameStr, argsStr);
             s.tools.push({
                 name: toolNameStr,
+                action: actionText,
                 args: String(argsStr || '').slice(0, 150),
                 ts: Date.now()
             });
             if (s.tools.length > 50) s.tools.shift();
+            s.currentAction = actionText;
+            s.currentActionTs = Date.now();
             s.lastTs = Date.now();
             s.active = true;
         }
@@ -1838,21 +1877,64 @@ function startInternalProxy() {
                     let tasks = [];
                     let hasFile = false;
                     const taskPath = getBrainTaskFilePath(cleanConvId);
+                    let declaredProgress = null;
+                    let declaredEta = null;
+                    let hasWeights = false;
+                    let totalWeight = 0;
+                    let completedWeight = 0;
 
                     if (taskPath && fs.existsSync(taskPath)) {
                         hasFile = true;
                         try {
                             const raw = fs.readFileSync(taskPath, 'utf8');
+                            
+                            // Check for model declared progress: e.g. [İlerleme: %75], [Progress: 75%]
+                            const declM = raw.match(/(?:\[|\b)(?:ilerleme|progress)\s*[:=]\s*%?\s*(\d{1,3})%?/i);
+                            if (declM && declM[1]) {
+                                declaredProgress = Math.min(100, Math.max(0, parseInt(declM[1], 10)));
+                            }
+                            const declEtaM = raw.match(/(?:\[|\b)(?:kalan|eta)\s*[:=]\s*~?\s*([^\]\n]+)\]?/i);
+                            if (declEtaM && declEtaM[1]) {
+                                declaredEta = declEtaM[1].trim();
+                            }
+
                             const lines = raw.split('\n');
                             for (let i = 0; i < lines.length; i++) {
                                 const m = lines[i].match(/^[-*]\s*\[([ xX/])\]\s*(.*)$/);
                                 if (m) {
                                     const mark = m[1].toLowerCase();
+                                    const text = m[2].trim();
+                                    
+                                    // Check weight in text: (%25), (25%), [%25]
+                                    let weight = 0;
+                                    const wM = text.match(/(?:\(|\[)\s*(?:%\s*(\d+)|(\d+)\s*%)\s*(?:\)|\])/);
+                                    if (wM) {
+                                        weight = parseInt(wM[1] || wM[2], 10) || 0;
+                                        hasWeights = true;
+                                    }
+                                    // Check estimated minutes: [~10 dk], [10m], (~5 min)
+                                    let estMins = 0;
+                                    const emM = text.match(/(?:\(|\[)\s*~?\s*(\d+)\s*(?:dk|m|min|dakika)\s*(?:\)|\])/i);
+                                    if (emM) {
+                                        estMins = parseInt(emM[1], 10) || 0;
+                                    }
+
+                                    const status = mark === 'x' ? 'completed' : (mark === '/' ? 'in_progress' : 'pending');
                                     tasks.push({
                                         index: i,
-                                        status: mark === 'x' ? 'completed' : (mark === '/' ? 'in_progress' : 'pending'),
-                                        text: m[2].trim()
+                                        status,
+                                        weight,
+                                        estMins,
+                                        text
                                     });
+
+                                    const wVal = weight > 0 ? weight : 10;
+                                    totalWeight += wVal;
+                                    if (status === 'completed') {
+                                        completedWeight += wVal;
+                                    } else if (status === 'in_progress') {
+                                        completedWeight += (wVal * 0.5);
+                                    }
                                 }
                             }
                         } catch(e) {}
@@ -1867,7 +1949,15 @@ function startInternalProxy() {
                     const inProgress = tasks.filter(t => t.status === 'in_progress').length;
                     const pending = tasks.filter(t => t.status === 'pending').length;
                     const total = tasks.length;
-                    const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+                    
+                    let percent = 0;
+                    if (declaredProgress != null) {
+                        percent = declaredProgress;
+                    } else if (hasWeights && totalWeight > 0) {
+                        percent = Math.min(100, Math.round((completedWeight / totalWeight) * 100));
+                    } else if (total > 0) {
+                        percent = Math.round((completed / total) * 100);
+                    }
 
                     const elapsedSec = session ? Math.max(0, Math.round((Date.now() - session.startTs) / 1000)) : 0;
                     let etaSeconds = 0;
@@ -1885,7 +1975,9 @@ function startInternalProxy() {
                     }
 
                     let etaFormatted = 'Hesaplanıyor...';
-                    if (total > 0 && completed === total) {
+                    if (declaredEta) {
+                        etaFormatted = declaredEta;
+                    } else if (total > 0 && completed === total) {
                         etaFormatted = 'Tamamlandı';
                     } else if (etaSeconds > 0) {
                         if (etaSeconds < 60) {
@@ -1918,17 +2010,47 @@ function startInternalProxy() {
                     const tools = session?.tools ? session.tools.slice(-8) : [];
                     const isRunning = Boolean(session && session.active);
 
+                    // Determine current active phase
+                    let phaseIndex = 1;
+                    let phaseName = '1. Keşif & Analiz';
+                    const recentToolNames = (session?.tools || []).map(t => t.name);
+                    const hasModifyingTools = recentToolNames.some(t => MODIFYING_TOOLS.has(t));
+                    const hasTests = recentToolNames.some(t => t === 'run_command' || t === 'privileged-command');
+
+                    if (completed === total && total > 0) {
+                        phaseIndex = 3;
+                        phaseName = '3. Test & Doğrulama (Tamamlandı)';
+                    } else if (hasTests || percent >= 75) {
+                        phaseIndex = 3;
+                        phaseName = '3. Test & Doğrulama';
+                    } else if (hasModifyingTools || percent >= 20) {
+                        phaseIndex = 2;
+                        phaseName = '2. Kodlama & Uygulama';
+                    }
+
+                    const currentAction = session?.currentAction || (isRunning ? '💭 Düşünce & Yanıt üretiliyor...' : '✓ Hazır / Bekleniyor');
+                    const currentActionElapsedSec = session?.currentActionTs ? Math.max(0, Math.round((Date.now() - session.currentActionTs) / 1000)) : 0;
+
                     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                     res.end(JSON.stringify({
                         ok: true,
                         convId: cleanConvId,
                         hasFile,
+                        hasWeights,
+                        declaredProgress,
+                        declaredEta,
                         tasks,
                         total,
                         completed,
                         inProgress,
                         pending,
                         percent,
+                        phase: {
+                            index: phaseIndex,
+                            name: phaseName
+                        },
+                        currentAction,
+                        currentActionElapsedSec,
                         elapsedSec,
                         elapsedFormatted,
                         etaSeconds,
