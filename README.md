@@ -1,20 +1,20 @@
 # ⚡ Antigravity Custom (SX Core SDK)
 
-Antigravity için geliştirilmiş gelişmiş yapay zeka sağlayıcı motoru, canlı Türkçe/İngilizce sesli dikte sistemi ve performans takip modülü.
+Antigravity için geliştirilmiş yapay zeka model ve sağlayıcı yönetim motoru, ultra-akıcı canlı Türkçe/İngilizce sesli dikte sistemi ve performans takip modülü.
 
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-emerald)
-![Version](https://img.shields.io/badge/Version-v2.2.0-blue)
-![License](https://img.shields.io/badge/Protection-Obfuscated%20Bytecode-purple)
+[![GitHub Release](https://img.shields.io/github/v/release/Squearex/antigravity-custom?color=emerald&label=Release)](https://github.com/Squearex/antigravity-custom/releases/latest)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue)
+![License](https://img.shields.io/badge/Runtime-Protected%20Bytecode-purple)
 
 ---
 
 ## 🌟 Temel Özellikler
 
-- 🎙️ **Canlı ve Akıcı Sesli Dikte**: Google Speech API ile entegre, konuşma anında silik önizleme (ghost-text) ile anlık yazıya döküm. Butona tıklandığı anda dinlemeye başlar ve duraksamaları anlık yakalar.
+- 🎙️ **Canlı ve Akıcı Sesli Dikte**: Google Speech API ile entegre, konuşma anında silik önizleme (ghost-text) ile anlık yazıya döküm. Butona tıklandığı anda gecikmesiz başlar ve duraksamaları anlık yakalar.
 - 🧠 **Evrensel Model & Sağlayıcı Hub'ı**: OpenRouter, DeepSeek, Claude 3.5, OpenAI GPT-4o, Ollama, Groq ve 19+ sağlayıcıyı Antigravity içerisinden doğrudan kullanabilme.
-- ⚡ **Arayüz İçi Tek Tıkla Güncelleme**: GitHub üzerinde yeni bir sürüm çıktığında arayüzde beliren canlı hap butonu (`SX Güncelle`) ile tek tıkla güncelleme ve yeniden başlatma.
+- ⚡ **Arayüz İçi Tek Tıkla Güncelleme**: GitHub üzerinde yeni bir release yayınlandığında arayüzde beliren canlı hap butonu (`⚡ SX Güncelle`) ile tek tıkla güncelleme ve yeniden başlatma.
 - 📊 **Gerçek Zamanlı Metrikler**: TTFT (Time To First Token), TPS (Tokens Per Second) ve Context Window doluluk yüzdesi takibi.
-- 🛡️ **Tam Koruma ve Gizleme (Obfuscated Runtime)**: Kaynak kodlar tersine mühendisliğe karşı tamamen şifrelenmiş, Python motoru makineye özel `.pyc` bytecode formatında çalışır.
+- 🛡️ **Tam Koruma ve Gizleme (Obfuscated Runtime)**: Çalışma ortamı tersine mühendisliğe karşı tamamen şifrelenmiş, Python motoru yerel `.pyc` bytecode formatında çalışır.
 
 ---
 
@@ -26,7 +26,7 @@ Kurulum aracı sisteminizdeki Antigravity kurulumunu (Windows veya Linux) **otom
 Terminalinizi açın ve aşağıdaki komutu yapıştırın:
 
 ```bash
-git clone https://github.com/Squearex/antigravity-custom.git && cd antigravity-custom && chmod +x install.sh && ./install.sh
+mkdir -p sx-installer && cd sx-installer && curl -sSL https://github.com/Squearex/antigravity-custom/releases/latest/download/antigravity-custom-v2.2.0.tar.gz | tar -xz && chmod +x install.sh && ./install.sh
 ```
 
 > **Not:** Linux üzerinde Antigravity yolu (`which antigravity`, `/opt/Antigravity`, `/usr/lib/antigravity`, `~/.local/share/antigravity` veya Flatpak) otomatik olarak taranır ve bulunur.
@@ -35,34 +35,32 @@ git clone https://github.com/Squearex/antigravity-custom.git && cd antigravity-c
 
 ### 🪟 Windows (Tek Tıkla Kurulum)
 
-1. Projeyi indirin veya klonlayın:
-   ```powershell
-   git clone https://github.com/Squearex/antigravity-custom.git
-   cd antigravity-custom
-   ```
-2. Klasör içindeki **`install.bat`** dosyasına çift tıklayın (veya PowerShell'de `node installer.js` çalıştırın).
+1. [**En Son Sürümü İndir (Releases)**](https://github.com/Squearex/antigravity-custom/releases/latest) bağlantısından **`antigravity-custom-v2.2.0.zip`** dosyasını indirin.
+2. Zip arşivini bir klasöre çıkartın.
+3. Klasör içindeki **`install.bat`** dosyasına çift tıklayın.
+
+*Veya PowerShell ile tek satırda kurmak için:*
+```powershell
+irm https://github.com/Squearex/antigravity-custom/releases/latest/download/antigravity-custom-v2.2.0.zip -OutFile sx.zip; Expand-Archive sx.zip -DestinationPath sx -Force; cd sx; .\install.bat
+```
 
 ---
 
 ## 🔄 Güncellemeler Nasıl Yapılır?
 
-GitHub reposuna yeni bir sürüm veya commit geldiğinde:
-1. Antigravity arayüzündeki işlem çubuğunda yeşil **`⚡ SX Güncelle`** butonu otomatik olarak yanıp söner.
-2. Butona tıkladığınızda açılan pencerede değişiklikleri görüp **"🚀 Şimdi Güncelle ve Yeniden Başlat"** butonuna basarak tek tıkla güncelleyebilirsiniz.
-3. Veya terminalden reponun bulunduğu dizinde `git pull origin main && node installer.js` çalıştırabilirsiniz.
+GitHub Releases üzerinde yeni bir sürüm yayınlandığında:
+1. Antigravity arayüzündeki işlem çubuğunda yeşil **`⚡ SX Güncelle`** butonu otomatik olarak görünür.
+2. Butona tıkladığınızda açılan pencerede yenilikleri inceleyip **"🚀 Şimdi Güncelle ve Yeniden Başlat"** butonuna basarak tek tıkla güncelleyebilirsiniz.
 
 ---
 
-## 🗑️ Kaldırma (Uninstall / Geri Döndürme)
+## 🗑️ Kaldırma (Uninstall / Orijinale Dönüş)
 
-Antigravity'yi hiçbir veri kaybetmeden orijinal haline döndürmek için:
+Antigravity'yi hiçbir veri kaybetmeden orijinal haline döndürmek için indirilen klasörde:
 
-* **Linux:**
-  ```bash
-  ./uninstall.sh
-  ```
-* **Windows:**
-  **`uninstall.bat`** dosyasına çift tıklayın (veya `node installer.js --uninstall`).
+* **Linux:** `./uninstall.sh`
+* **Windows:** `uninstall.bat`
+* **Veya Komut Satırı:** `node installer.js --uninstall`
 
 ---
 
@@ -70,14 +68,4 @@ Antigravity'yi hiçbir veri kaybetmeden orijinal haline döndürmek için:
 
 ```bash
 node installer.js --status
-```
-
----
-
-## 🛠️ Geliştiriciler İçin (Build & Obfuscation)
-
-Kaynak kodları düzenledikten sonra tüm paketleri esbuild + javascript-obfuscator + bytecode derleme sürecinden geçirip dağıtıma hazır hale getirmek için:
-
-```bash
-npm run build
 ```
