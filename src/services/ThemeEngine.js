@@ -2,6 +2,8 @@
  * SX Core SDK - ThemeEngine
  * Dedicated theme engine managing SX custom presets, Jetbox provider sync, and CSS injection.
  */
+import { NATIVE_DARK_THEMES, NATIVE_LIGHT_THEMES } from './StorageService.js';
+
 export const SX_THEME_PRESETS = [
     {
         id: 'sx-matrix',
@@ -190,7 +192,11 @@ export class ThemeEngine {
                 this.patchNativeThemeDict();
 
                 this.storage.silentSetItem('sx_active_theme_preset', preset.id);
-                this.storage.silentSetItem('theme-preset-dark', preset.name);
+                if (NATIVE_DARK_THEMES.has(preset.name)) {
+                    this.storage.silentSetItem('theme-preset-dark', preset.name);
+                } else {
+                    this.storage.silentSetItem('theme-preset-dark', 'Default Dark');
+                }
 
                 const rgbStr = this._hexToRgbStr(preset.primary);
 

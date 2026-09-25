@@ -235,6 +235,7 @@ function getPreloadHook() {
 // ANTIGRAVITY CUSTOM - DIRECT MODE INJECTION
 // ============================================================================
 try {
+    try { electron_1.ipcRenderer.setMaxListeners(50); } catch(e) {}
     const scriptContent = electron_1.ipcRenderer.sendSync('sx:get-inject-script');
     let savedConfig = { providers: [], models: [] };
     try {
