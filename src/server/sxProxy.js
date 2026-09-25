@@ -1431,10 +1431,58 @@ function parseTranscriptFile(filePath) {
     }
 }
 
+function installShortcutGuards() {
+    try {
+        const electron = require('electron');
+        const app = electron.app;
+        const BrowserWindow = electron.BrowserWindow;
+        if (!app) return;
+
+        const blockShortcuts = (win) => {
+            if (!win || !win.webContents) return;
+            win.webContents.on('before-input-event', (event, input) => {
+                const key = (input.key || '').toLowerCase();
+                const isCtrl = input.control || input.meta;
+                // Block F12
+                if (input.key === 'F12') {
+                    event.preventDefault();
+                    return;
+                }
+                // Block Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+Shift+C (including Turkish 'ı'/'İ')
+                if (isCtrl && input.shift && (key === 'i' || key === 'ı' || key === 'j' || key === 'c')) {
+                    event.preventDefault();
+                    return;
+                }
+                // Block Ctrl+R, Ctrl+Shift+R, F5
+                if (input.key === 'F5' || (isCtrl && key === 'r')) {
+                    event.preventDefault();
+                    return;
+                }
+                // Block Ctrl+U
+                if (isCtrl && key === 'u') {
+                    event.preventDefault();
+                    return;
+                }
+            });
+
+            // Immediately close devtools if opened
+            win.webContents.on('devtools-opened', () => {
+                try { win.webContents.closeDevTools(); } catch(e) {}
+            });
+        };
+
+        if (BrowserWindow && BrowserWindow.getAllWindows) {
+            BrowserWindow.getAllWindows().forEach(blockShortcuts);
+        }
+        app.on('browser-window-created', (e, win) => blockShortcuts(win));
+    } catch(e) {}
+}
+
 let internalProxyServer = null;
 
 function startInternalProxy() {
     loadConfigFromDisk();
+    installShortcutGuards();
 
     if (internalProxyServer && internalProxyServer.listening) {
         return Promise.resolve();

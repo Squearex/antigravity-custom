@@ -54,6 +54,49 @@ export class UIInjector {
             setTimeout(() => this.checkUrlChange(), 20);
         });
 
+        // Guard shortcuts: F12, Ctrl+Shift+I/J/C, Ctrl+R, F5, Ctrl+U
+        window.addEventListener('keydown', (e) => {
+            const key = (e.key || '').toLowerCase();
+            const isCtrl = e.ctrlKey || e.metaKey;
+
+            // F12 (DevTools)
+            if (e.key === 'F12' || e.keyCode === 123) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+
+            // Ctrl+Shift+I / J / C (including Turkish 'ı' / 'İ')
+            if (isCtrl && e.shiftKey && (key === 'i' || key === 'ı' || key === 'j' || key === 'c' || e.keyCode === 73 || e.keyCode === 74 || e.keyCode === 67)) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+
+            // Ctrl+R, Ctrl+Shift+R, F5 (Reload prevention)
+            if (e.key === 'F5' || e.keyCode === 116 || (isCtrl && (key === 'r' || e.keyCode === 82))) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+
+            // Ctrl+U (View Source)
+            if (isCtrl && (key === 'u' || e.keyCode === 85)) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+        }, true);
+
+        // Disable right-click inspect element outside inputs
+        window.addEventListener('contextmenu', (e) => {
+            const isEditable = e.target.closest('input, textarea, [contenteditable="true"]');
+            if (!isEditable) {
+                e.preventDefault();
+                return false;
+            }
+        }, true);
+
         // Click listener for sidebar navigation, model selector, and settings dialogs
         document.addEventListener('click', (e) => {
             const navTarget = e.target.closest('a[href^="/c/"], a[href="/"], [data-testid="new-conversation-button"], [data-testid="conversation-row-sidebar"], button[aria-label*="New Conversation" i]');
