@@ -21,4 +21,19 @@ if ! command -v node &> /dev/null; then
 fi
 
 chmod +x installer.js 2>/dev/null || true
-node installer.js "$@"
+
+# If not running as root, run installer and re-elevate if permission is needed
+if [ "$EUID" -ne 0 ]; then
+    set +e
+    node installer.js "$@"
+    EXIT_CODE=$?
+    set -e
+    if [ $EXIT_CODE -eq 13 ]; then
+        echo "🔒 Yönetici yetkisi (sudo) gerekiyor. Şifrenizi girin:"
+        sudo node installer.js "$@"
+    elif [ $EXIT_CODE -ne 0 ]; then
+        exit $EXIT_CODE
+    fi
+else
+    node installer.js "$@"
+fi

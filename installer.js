@@ -64,21 +64,40 @@ function getStandardAppPaths() {
     } else if (IS_LINUX) {
         try {
             const whichOut = execSync('which antigravity 2>/dev/null || which Antigravity 2>/dev/null', { timeout: 2000, encoding: 'utf8' }).trim();
-            if (whichOut) {
+            if (whichOut && fs.existsSync(whichOut)) {
                 const realBin = fs.realpathSync(whichOut);
                 const binDir = path.dirname(realBin);
-                candidates.push(path.join(binDir, 'resources', 'app'));
+                candidates.push(
+                    path.join(binDir, 'resources', 'app'),
+                    path.join(binDir, 'resources')
+                );
+                try {
+                    const text = fs.readFileSync(realBin, 'utf8');
+                    const matches = text.match(/(?:\/opt\/[^\s"']+|\/[^\s"']+\/antigravity)/gi);
+                    if (matches) {
+                        for (const m of matches) {
+                            candidates.push(
+                                path.join(path.dirname(m), 'resources', 'app'),
+                                path.join(path.dirname(m), 'resources')
+                            );
+                        }
+                    }
+                } catch(e) {}
             }
         } catch(e) {}
 
         candidates.push(
             '/opt/Antigravity/resources/app',
             '/opt/antigravity/resources/app',
+            '/opt/google/antigravity/resources/app',
             '/usr/lib/antigravity/resources/app',
             '/usr/lib/Antigravity/resources/app',
             '/usr/share/antigravity/resources/app',
+            path.join(homedir, '.antigravity', 'resources', 'app'),
             path.join(homedir, '.local', 'share', 'antigravity', 'resources', 'app'),
             path.join(homedir, '.local', 'share', 'Antigravity', 'resources', 'app'),
+            path.join(homedir, 'Applications', 'Antigravity', 'resources', 'app'),
+            path.join(homedir, 'Applications', 'antigravity', 'resources', 'app'),
             '/var/lib/flatpak/app/google.antigravity/current/active/files/share/antigravity/resources/app'
         );
     } else if (IS_DARWIN) {
@@ -91,16 +110,59 @@ function getStandardAppPaths() {
     return candidates;
 }
 
-// Find existing Antigravity installation
+// Pure Node.js zero-dependency ASAR extractor (for clean Linux & package installations)
+function extractAsar(asarPath, outputDir) {
+    const fd = fs.openSync(asarPath, 'r');
+    const headerBuf = Buffer.alloc(16);
+    fs.readSync(fd, headerBuf, 0, 16, 0);
+    const headerSize = headerBuf.readUInt32LE(4);
+    const jsonSize = headerBuf.readUInt32LE(12);
+    const jsonBuf = Buffer.alloc(jsonSize);
+    fs.readSync(fd, jsonBuf, 0, jsonSize, 16);
+    const header = JSON.parse(jsonBuf.toString('utf8'));
+    const baseOffset = 8 + headerSize;
+
+    function walkTree(node, currentPath) {
+        if (node.files) {
+            fs.mkdirSync(currentPath, { recursive: true });
+            for (const name of Object.keys(node.files)) {
+                walkTree(node.files[name], path.join(currentPath, name));
+            }
+        } else if (typeof node.size === 'number' && typeof node.offset !== 'undefined') {
+            const fileOffset = baseOffset + parseInt(node.offset, 10);
+            const data = Buffer.alloc(node.size);
+            fs.readSync(fd, data, 0, node.size, fileOffset);
+            fs.mkdirSync(path.dirname(currentPath), { recursive: true });
+            fs.writeFileSync(currentPath, data);
+        }
+    }
+    walkTree(header, outputDir);
+    fs.closeSync(fd);
+}
+
+// Find existing Antigravity installation (handles unpacked app & packed app.asar)
 function detectAntigravity(customPath = null) {
     if (customPath) {
         const resolved = path.resolve(customPath);
-        // User could have pointed to root app or to resources/app
-        const target = fs.existsSync(path.join(resolved, 'dist', 'main.js')) ? resolved
-            : fs.existsSync(path.join(resolved, 'resources', 'app', 'dist', 'main.js')) ? path.join(resolved, 'resources', 'app')
-            : resolved;
-        if (fs.existsSync(path.join(target, 'dist', 'main.js'))) {
-            return target;
+        const checkList = [
+            resolved,
+            path.join(resolved, 'resources', 'app'),
+            path.join(resolved, 'app')
+        ];
+        for (const target of checkList) {
+            if (fs.existsSync(path.join(target, 'dist', 'main.js'))) {
+                return target;
+            }
+            const asarPath = path.join(path.dirname(target), 'app.asar');
+            if (fs.existsSync(asarPath)) {
+                console.log(`${c.cyan}📦 Bilgi:${c.reset} 'app.asar' paketi tespit edildi, ayıklanıyor (${target})...`);
+                try {
+                    extractAsar(asarPath, target);
+                    if (fs.existsSync(path.join(target, 'dist', 'main.js'))) {
+                        return target;
+                    }
+                } catch(e) {}
+            }
         }
         console.error(`${c.red}✕ Hata:${c.reset} Belirtilen konumda geçerli bir Antigravity kurulumu bulunamadı: ${customPath}`);
         process.exit(1);
@@ -111,6 +173,22 @@ function detectAntigravity(customPath = null) {
         const mainJs = path.join(p, 'dist', 'main.js');
         if (fs.existsSync(mainJs)) {
             return p;
+        }
+        // If directory doesn't have dist/main.js, check if sibling app.asar exists
+        const parentDir = p.endsWith('app') ? path.dirname(p) : p;
+        const asarPath = path.join(parentDir, 'app.asar');
+        const targetApp = path.join(parentDir, 'app');
+        if (fs.existsSync(asarPath)) {
+            console.log(`${c.cyan}📦 Bilgi:${c.reset} 'app.asar' paketi tespit edildi, ayıklanıyor (${targetApp})...`);
+            try {
+                extractAsar(asarPath, targetApp);
+                if (fs.existsSync(path.join(targetApp, 'dist', 'main.js'))) {
+                    console.log(`${c.green}✓${c.reset} 'app.asar' başarıyla ayıklandı.`);
+                    return targetApp;
+                }
+            } catch(e) {
+                console.error(`${c.yellow}⚠️ Uyarı:${c.reset} asar ayıklanamadı:`, e.message);
+            }
         }
     }
 
@@ -264,6 +342,20 @@ function install(targetAppDir) {
     if (!fs.existsSync(mainJsPath) || !fs.existsSync(preloadJsPath)) {
         console.error(`${c.red}✕ Hata:${c.reset} 'main.js' veya 'preload.js' bulunamadı: ${targetDist}`);
         process.exit(1);
+    }
+
+    // Permission check for Linux root/opt directory writes
+    try {
+        fs.accessSync(targetAppDir, fs.constants.W_OK);
+        fs.accessSync(targetDist, fs.constants.W_OK);
+        fs.accessSync(mainJsPath, fs.constants.W_OK);
+    } catch(e) {
+        if (IS_LINUX && process.getuid && process.getuid() !== 0) {
+            console.error(`\n${c.yellow}🔒 Yetki Hatası:${c.reset} '${targetAppDir}' dizinine yazma izniniz yok.`);
+            console.log(`Lütfen kurulum komutunu ${c.bold}sudo${c.reset} ile çalıştırın:`);
+            console.log(`  ${c.cyan}sudo ./install.sh${c.reset}\n`);
+            process.exit(13);
+        }
     }
 
     // 1. Backups
