@@ -250,7 +250,11 @@ function registerIpcHandlers(storageManager) {
     electron_1.ipcMain.handle('window:toggle-devtools', async () => {
         const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
         if (win) {
-            win.webContents.toggleDevTools();
+            if (win.webContents.isDevToolsOpened()) {
+                win.webContents.closeDevTools();
+            } else {
+                win.webContents.openDevTools({ mode: 'detach' });
+            }
         }
     });
     // Zoom — main-process source of truth so the level is reliably persisted

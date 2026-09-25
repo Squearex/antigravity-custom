@@ -189,11 +189,23 @@ electron_1.app
     try {
         electron_1.globalShortcut.register('F12', () => {
             const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
-            if (win) win.webContents.toggleDevTools();
+            if (win) {
+                if (win.webContents.isDevToolsOpened()) {
+                    win.webContents.closeDevTools();
+                } else {
+                    win.webContents.openDevTools({ mode: 'detach' });
+                }
+            }
         });
         electron_1.globalShortcut.register('CommandOrControl+Shift+I', () => {
             const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
-            if (win) win.webContents.toggleDevTools();
+            if (win) {
+                if (win.webContents.isDevToolsOpened()) {
+                    win.webContents.closeDevTools();
+                } else {
+                    win.webContents.openDevTools({ mode: 'detach' });
+                }
+            }
         });
     } catch(e) {
         console.error('[SX DevTools Shortcut Error]', e);

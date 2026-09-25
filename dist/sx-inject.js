@@ -4899,16 +4899,15 @@
       this.logger = logger;
       this.isRecording = false;
       this.activeBtn = null;
-      this.recognition = null;
       this.audioContext = null;
       this.mediaStream = null;
       this.scriptProcessor = null;
       this.sourceNode = null;
+      this.muteGain = null;
       this.recordedChunks = [];
-      this.totalRecognized = "";
-      this.lastInterim = "";
     }
     init() {
+      window.__SX_VOICE_RECORDER__ = this;
       document.addEventListener("click", (e) => {
         const btn = e.target.closest(
           'button[data-tooltip-id*="record-tooltip"], ' +
@@ -4931,23 +4930,44 @@
         st.id = "sx-voice-recorder-styles";
         st.textContent = `
           @keyframes sx-mic-pulse {
-            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-            70% { box-shadow: 0 0 0 9px rgba(239, 68, 68, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+            0% {
+              box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+              transform: scale(1);
+            }
+            50% {
+              box-shadow: 0 0 0 9px rgba(239, 68, 68, 0);
+              transform: scale(1.08);
+            }
+            100% {
+              box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+              transform: scale(1);
+            }
           }
           button.sx-recording {
             background-color: #ef4444 !important;
             color: #ffffff !important;
             animation: sx-mic-pulse 1.3s infinite !important;
+            border-radius: 9999px !important;
           }
           button.sx-recording svg {
+            color: #ffffff !important;
+            fill: #ffffff !important;
+          }
+          button.sx-transcribing {
+            background-color: #f59e0b !important;
+            color: #ffffff !important;
+            border-radius: 9999px !important;
+            opacity: 0.8 !important;
+            cursor: wait !important;
+          }
+          button.sx-transcribing svg {
             color: #ffffff !important;
             fill: #ffffff !important;
           }
         `;
         (document.head || document.documentElement)?.appendChild(st);
       }
-      this.logger.info("VoiceRecorder", "Voice recorder initialized with Google SpeechRecognition.");
+      this.logger.info("VoiceRecorder", "Voice recorder initialized with Web Audio & Google Speech API.");
     }
     async toggleRecording(btn) {
       if (this.isRecording) {
@@ -4959,66 +4979,21 @@
     async startRecording(btn) {
       this.isRecording = true;
       this.activeBtn = btn;
-      this.totalRecognized = "";
-      this.lastInterim = "";
       this.recordedChunks = [];
 
       if (btn) {
+        btn.classList.remove("sx-transcribing");
         btn.classList.add("sx-recording");
         btn.setAttribute("aria-label", "Stop recording");
         btn.title = "Kayd\u0131 bitirmek i\xE7in tekrar t\u0131klay\u0131n";
       }
 
-      const editor = document.querySelector('[contenteditable="true"]') ||
+      const editor = document.querySelector('div[contenteditable="true"]') ||
+                     document.querySelector('[contenteditable="true"]') ||
                      document.querySelector('textarea.antigravity-prompt-input') ||
                      document.querySelector('textarea');
       if (editor) editor.focus();
 
-      // 1. Google SpeechRecognition (Chromium Web Speech API)
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SR) {
-        try {
-          this.recognition = new SR();
-          this.recognition.continuous = true;
-          this.recognition.interimResults = true;
-          this.recognition.lang = navigator.language || "tr-TR";
-
-          this.recognition.onresult = (event) => {
-            let interimStr = "";
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-              const transcript = event.results[i][0].transcript;
-              if (event.results[i].isFinal) {
-                const trimmed = transcript.trim();
-                if (trimmed) {
-                  this.insertTextIntoPrompt(trimmed + " ");
-                  this.totalRecognized += trimmed + " ";
-                  this.lastInterim = "";
-                }
-              } else {
-                interimStr += transcript;
-              }
-            }
-            this.lastInterim = interimStr.trim();
-          };
-
-          this.recognition.onerror = (e) => {
-            this.logger.warn("VoiceRecorder", "SpeechRecognition event:", e.error);
-          };
-
-          this.recognition.onend = () => {
-            if (this.isRecording && this.recognition) {
-              try { this.recognition.start(); } catch(err) {}
-            }
-          };
-
-          this.recognition.start();
-          this.logger.info("VoiceRecorder", "Live SpeechRecognition active.");
-        } catch(e) {
-          this.logger.warn("VoiceRecorder", "SpeechRecognition start error:", e);
-        }
-      }
-
-      // 2. Parallel Web Audio capture for backup transcription
       try {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
           const stream = await navigator.mediaDevices.getUserMedia({
@@ -5041,11 +5016,18 @@
               this.recordedChunks.push(new Float32Array(data));
             };
             this.sourceNode.connect(this.scriptProcessor);
-            this.scriptProcessor.connect(this.audioContext.destination);
+
+            this.muteGain = this.audioContext.createGain();
+            this.muteGain.gain.value = 0;
+            this.scriptProcessor.connect(this.muteGain);
+            this.muteGain.connect(this.audioContext.destination);
           }
+          this.logger.info("VoiceRecorder", "Microphone capture active.");
         }
-      } catch(e) {
-        this.logger.warn("VoiceRecorder", "Audio capture notice:", e);
+      } catch (e) {
+        this.logger.error("VoiceRecorder", "Audio capture failed:", e);
+        if (btn) btn.classList.remove("sx-recording");
+        this.isRecording = false;
       }
     }
     async stopRecording(btn = null) {
@@ -5053,35 +5035,20 @@
       const targetBtn = btn || this.activeBtn;
       if (targetBtn) {
         targetBtn.classList.remove("sx-recording");
-        targetBtn.setAttribute("aria-label", "Record voice memo");
-        targetBtn.title = "Ses kayd\u0131 ba\u015Flat";
-      }
-      this.activeBtn = null;
-
-      if (this.lastInterim) {
-        this.insertTextIntoPrompt(this.lastInterim + " ");
-        this.totalRecognized += this.lastInterim + " ";
-        this.lastInterim = "";
-      }
-
-      if (this.recognition) {
-        try { this.recognition.stop(); } catch(e) {}
-        this.recognition = null;
+        targetBtn.classList.add("sx-transcribing");
+        targetBtn.setAttribute("aria-label", "Transcribing...");
+        targetBtn.title = "Ses \xE7\xF6z\xFCmleniyor...";
       }
 
       const sampleRate = this.audioContext ? this.audioContext.sampleRate : 44100;
-      const chunks = this.recordedChunks;
+      const chunks = [...this.recordedChunks];
       this.cleanupAudio();
-
-      if (this.totalRecognized.trim().length > 0) {
-        return;
-      }
 
       if (chunks && chunks.length > 0) {
         try {
           let totalLen = 0;
           for (let i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
-          if (totalLen > 1000) {
+          if (totalLen > 3000) {
             const merged = new Float32Array(totalLen);
             let off = 0;
             for (let i = 0; i < chunks.length; i++) {
@@ -5098,13 +5065,23 @@
             });
             const res = await resp.json();
             if (res && res.ok && res.text) {
-              this.insertTextIntoPrompt(res.text.trim() + " ");
+              const recognized = res.text.trim();
+              if (recognized) {
+                this.insertTextIntoPrompt(recognized + " ");
+              }
             }
           }
-        } catch(e) {
+        } catch (e) {
           this.logger.error("VoiceRecorder", "Backend transcription error", e);
         }
       }
+
+      if (targetBtn) {
+        targetBtn.classList.remove("sx-transcribing");
+        targetBtn.setAttribute("aria-label", "Record voice memo");
+        targetBtn.title = "Ses kayd\u0131 ba\u015Flat";
+      }
+      this.activeBtn = null;
     }
     resampleAudio(samples, oldRate, newRate) {
       if (oldRate === newRate) return samples;
@@ -5158,6 +5135,10 @@
         try { this.scriptProcessor.disconnect(); } catch (e) {}
         this.scriptProcessor = null;
       }
+      if (this.muteGain) {
+        try { this.muteGain.disconnect(); } catch (e) {}
+        this.muteGain = null;
+      }
       if (this.mediaStream) {
         try {
           this.mediaStream.getTracks().forEach((t) => t.stop());
@@ -5171,21 +5152,45 @@
     }
     insertTextIntoPrompt(text) {
       try {
-        const editor = document.querySelector('[contenteditable="true"]') ||
+        const editor = document.querySelector('div[contenteditable="true"]') ||
+                       document.querySelector('[contenteditable="true"]') ||
                        document.querySelector('textarea.antigravity-prompt-input') ||
                        document.querySelector('textarea');
-        if (editor) {
-          editor.focus();
-          if (editor.isContentEditable) {
-            document.execCommand("insertText", false, text);
-          } else {
-            const start = editor.selectionStart || 0;
-            const end = editor.selectionEnd || 0;
-            const val = editor.value || "";
-            editor.value = val.substring(0, start) + text + val.substring(end);
-            editor.selectionStart = editor.selectionEnd = start + text.length;
-            editor.dispatchEvent(new Event("input", { bubbles: true }));
+        if (!editor) return;
+
+        editor.focus();
+
+        if (editor.isContentEditable) {
+          const sel = window.getSelection();
+          if (sel) {
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
           }
+
+          let dispatched = false;
+          try {
+            const ev = new InputEvent("beforeinput", {
+              bubbles: true,
+              cancelable: true,
+              inputType: "insertText",
+              data: text
+            });
+            dispatched = editor.dispatchEvent(ev);
+          } catch (e) {}
+
+          if (!dispatched || !editor.innerText.includes(text.trim())) {
+            document.execCommand("insertText", false, text);
+          }
+        } else {
+          const start = editor.selectionStart || 0;
+          const end = editor.selectionEnd || 0;
+          const val = editor.value || "";
+          editor.value = val.substring(0, start) + text + val.substring(end);
+          editor.selectionStart = editor.selectionEnd = start + text.length;
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
         }
       } catch (e) {
         this.logger.error("VoiceRecorder", "Error inserting recognized text", e);
