@@ -1,11 +1,12 @@
 /**
  * SX Core SDK - VoiceRecorder
- * Real-time Streaming Speech-to-Text with native Google Antigravity UI:
- * - Live real-time transcription: Transcribes as you speak via Voice Activity Detection (VAD)
- * - Automatic speech pause detection (~480ms) + continuous speech slicing (3.8s max)
+ * Real-time Streaming Speech-to-Text with Google Antigravity UI & Google Speech API:
+ * - Live real-time transcription: Transcribes as you speak via natural phrase pause detection
+ * - Flushes every ~300ms pause after speech (or 2.6s max continuous speech)
+ * - Ultra-fast ~300ms Google Speech Recognition response via persistent proxy worker
  * - Exact Antigravity 3-bar animated waveform visualizer (cEa)
- * - Sequential queue to preserve word order
- * - Facebook Lexical beforeinput event insertion
+ * - 120ms overlap preservation to prevent clipped phonemes
+ * - Facebook Lexical beforeinput + execCommand text insertion
  */
 export class VoiceRecorder {
     constructor(logger) {
@@ -14,20 +15,21 @@ export class VoiceRecorder {
         this.activeBtn = null;
         this.audioContext = null;
         this.mediaStream = null;
-        this.scriptProcessor = null;
         this.workletNode = null;
+        this.scriptProcessor = null;
         this.sourceNode = null;
         this.analyserNode = null;
         this.muteGain = null;
         this.visualizerBars = null;
         this.animFrameId = null;
 
-        // Streaming VAD state
+        // Continuous streaming dictation state
         this.segmentChunks = [];
-        this.hasSpeech = false;
-        this.speechStartTime = 0;
-        this.lastSpeechTime = 0;
+        this.accumulatedSamples = 0;
+        this.hadVoiceInSegment = false;
+        this.lastVoiceTime = 0;
         this.noiseFloor = 0.015;
+        this.checkIntervalId = null;
         this.transcriptionQueue = [];
         this.isProcessingQueue = false;
     }
@@ -40,6 +42,7 @@ export class VoiceRecorder {
                 'button[data-tooltip-id*="record-tooltip"], ' +
                 'button[data-tooltip-id*="input-send-button-record-tooltip"], ' +
                 'button[aria-label*="Record voice" i], ' +
+                'button[aria-label*="Stop recording" i], ' +
                 'button.sx-voice-btn, ' +
                 'button[aria-label*="ses" i], ' +
                 'button[aria-label*="voice" i]'
@@ -52,7 +55,7 @@ export class VoiceRecorder {
             }
         }, true);
 
-        this.logger.info('VoiceRecorder', 'Live streaming voice recorder initialized.');
+        this.logger.info('VoiceRecorder', 'Live streaming voice recorder initialized with Google Speech API.');
     }
 
     async toggleRecording(btn) {
@@ -67,11 +70,11 @@ export class VoiceRecorder {
         this.isRecording = true;
         this.activeBtn = btn;
         this.segmentChunks = [];
-        this.transcriptionQueue = [];
-        this.hasSpeech = false;
-        this.speechStartTime = 0;
-        this.lastSpeechTime = 0;
+        this.accumulatedSamples = 0;
+        this.hadVoiceInSegment = false;
+        this.lastVoiceTime = 0;
         this.noiseFloor = 0.015;
+        this.transcriptionQueue = [];
 
         if (btn) {
             if (!btn._origHtml) {
@@ -144,6 +147,11 @@ export class VoiceRecorder {
                                 this.onAudioChunk(e.data);
                             };
                             this.sourceNode.connect(workletNode);
+                            // Route worklet to destination through gain 0 so browser audio graph pulls from it
+                            const workletMute = this.audioContext.createGain();
+                            workletMute.gain.value = 0;
+                            workletNode.connect(workletMute);
+                            workletMute.connect(this.audioContext.destination);
                             this.workletNode = workletNode;
                             workletReady = true;
                         } catch(err) {}
@@ -163,7 +171,7 @@ export class VoiceRecorder {
                         this.muteGain.connect(this.audioContext.destination);
                     }
 
-                    // 2. Native Antigravity cEa 3-bar Audio Visualizer FFT + VAD
+                    // 2. Native Antigravity cEa 3-bar Audio Visualizer FFT
                     this.analyserNode = this.audioContext.createAnalyser();
                     this.analyserNode.fftSize = 64;
                     this.analyserNode.smoothingTimeConstant = 0.8;
@@ -200,14 +208,14 @@ export class VoiceRecorder {
                             }
                         }
 
-                        // VAD check on every frame
-                        this.checkVoiceActivity(rms);
-
                         this.animFrameId = requestAnimationFrame(updateVisualizer);
                     };
                     this.animFrameId = requestAnimationFrame(updateVisualizer);
+
+                    // 3. Start streaming interval loop to flush on pauses or timeout
+                    this.startStreamingLoop();
                 }
-                this.logger.info('VoiceRecorder', 'Live streaming microphone active with real-time transcription.');
+                this.logger.info('VoiceRecorder', 'Live streaming microphone active with real-time Google Speech transcription.');
             }
         } catch(e) {
             this.logger.error('VoiceRecorder', 'Audio capture failed:', e);
@@ -218,61 +226,80 @@ export class VoiceRecorder {
 
     onAudioChunk(data) {
         if (!this.isRecording) return;
-        this.segmentChunks.push(new Float32Array(data));
+        const chunk = new Float32Array(data);
+        this.segmentChunks.push(chunk);
+        this.accumulatedSamples += chunk.length;
+
+        // Calculate chunk RMS directly for voice detection
+        let sum = 0;
+        for (let i = 0; i < chunk.length; i++) {
+            sum += chunk[i] * chunk[i];
+        }
+        const rms = Math.sqrt(sum / chunk.length);
+
+        // Update noise floor and track voice
+        if (rms < this.noiseFloor * 1.5) {
+            this.noiseFloor = this.noiseFloor * 0.96 + rms * 0.04;
+        }
+
+        const isVoice = rms > Math.max(0.018, this.noiseFloor * 2.0);
+        if (isVoice) {
+            this.hadVoiceInSegment = true;
+            this.lastVoiceTime = performance.now();
+        }
     }
 
-    checkVoiceActivity(rms) {
-        const now = performance.now();
-        const threshold = Math.max(0.025, this.noiseFloor * 2.2);
+    startStreamingLoop() {
+        const sampleRate = this.audioContext ? this.audioContext.sampleRate : 48000;
+        const minSpeechSamples = Math.floor(sampleRate * 0.35); // 0.35s minimum speech
+        const maxBufferSamples = Math.floor(sampleRate * 2.6);  // 2.6s maximum continuous
 
-        if (rms > threshold) {
-            if (!this.hasSpeech) {
-                this.hasSpeech = true;
-                this.speechStartTime = now;
-            }
-            this.lastSpeechTime = now;
-        } else {
-            // Adapt noise floor slowly during silence
-            this.noiseFloor = this.noiseFloor * 0.98 + rms * 0.02;
+        this.checkIntervalId = setInterval(() => {
+            if (!this.isRecording) return;
 
-            if (this.hasSpeech) {
-                const pauseDuration = now - this.lastSpeechTime;
-                const speechDuration = this.lastSpeechTime - this.speechStartTime;
+            const now = performance.now();
 
-                // Natural pause (~480ms after >= 320ms speech) triggers live transcription
-                if (pauseDuration >= 480 && speechDuration >= 320) {
+            if (this.hadVoiceInSegment) {
+                // If the user spoke and has now paused for >= 320ms:
+                const isPause = (now - this.lastVoiceTime) >= 320 && this.accumulatedSamples >= minSpeechSamples;
+                const isMaxBuffer = this.accumulatedSamples >= maxBufferSamples;
+
+                if (isPause || isMaxBuffer) {
                     this.flushSegment();
                 }
             }
-        }
-
-        // Long continuous speech (> 3800ms) without pause is sliced automatically
-        if (this.hasSpeech && (now - this.speechStartTime >= 3800)) {
-            this.flushSegment();
-            this.hasSpeech = true;
-            this.speechStartTime = now;
-            this.lastSpeechTime = now;
-        }
+        }, 80);
     }
 
     flushSegment() {
-        if (!this.segmentChunks.length) return;
+        if (!this.segmentChunks.length || this.accumulatedSamples < 1000) return;
+
         const chunks = this.segmentChunks;
         this.segmentChunks = [];
-        this.hasSpeech = false;
+        this.accumulatedSamples = 0;
+        this.hadVoiceInSegment = false;
+        this.lastVoiceTime = 0;
 
         let totalLen = 0;
         for (let i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
 
         const sampleRate = this.audioContext ? this.audioContext.sampleRate : 44100;
-        // Require at least ~0.25 seconds of audio
-        if (totalLen >= sampleRate * 0.25) {
+        if (totalLen >= sampleRate * 0.2) {
             const merged = new Float32Array(totalLen);
             let off = 0;
             for (let i = 0; i < chunks.length; i++) {
                 merged.set(chunks[i], off);
                 off += chunks[i].length;
             }
+
+            // Keep a tiny 120ms overlap at the beginning of the next segment to avoid cut syllables
+            const overlapCount = Math.floor(sampleRate * 0.12);
+            if (merged.length > overlapCount) {
+                const overlap = merged.slice(merged.length - overlapCount);
+                this.segmentChunks.push(overlap);
+                this.accumulatedSamples = overlap.length;
+            }
+
             const resampled = this.resampleAudio(merged, sampleRate, 16000);
             const wavBlob = this.encodeWAV(resampled, 16000);
             this.enqueueTranscription(wavBlob);
@@ -314,6 +341,11 @@ export class VoiceRecorder {
     async stopRecording(btn = null) {
         this.isRecording = false;
         const targetBtn = btn || this.activeBtn;
+
+        if (this.checkIntervalId) {
+            clearInterval(this.checkIntervalId);
+            this.checkIntervalId = null;
+        }
 
         if (this.animFrameId) {
             cancelAnimationFrame(this.animFrameId);
@@ -456,7 +488,7 @@ export class VoiceRecorder {
                     sel.addRange(range);
                 }
 
-                let dispatched = false;
+                let inserted = false;
                 try {
                     const ev = new InputEvent('beforeinput', {
                         bubbles: true,
@@ -464,11 +496,14 @@ export class VoiceRecorder {
                         inputType: 'insertText',
                         data: text
                     });
-                    dispatched = editor.dispatchEvent(ev);
+                    editor.dispatchEvent(ev);
+                    inserted = editor.innerText && editor.innerText.includes(text.trim());
                 } catch(e) {}
 
-                if (!dispatched || !editor.innerText.includes(text.trim())) {
-                    document.execCommand('insertText', false, text);
+                if (!inserted) {
+                    try {
+                        document.execCommand('insertText', false, text);
+                    } catch(e) {}
                 }
             } else {
                 const start = editor.selectionStart || 0;

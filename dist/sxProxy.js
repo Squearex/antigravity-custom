@@ -2175,7 +2175,7 @@ function startInternalProxy() {
                 return;
             }
 
-            // Voice transcription endpoint
+            // Voice transcription endpoint (Google Speech API via high-speed worker)
             // POST /sx/transcribe-audio?lang=tr-TR (receives WAV audio binary)
             if (url.startsWith('/sx/transcribe-audio') && req.method === 'POST') {
                 const u = new URL('http://localhost' + url);
@@ -2183,7 +2183,7 @@ function startInternalProxy() {
 
                 let bodyChunks = [];
                 req.on('data', chunk => bodyChunks.push(chunk));
-                req.on('end', () => {
+                req.on('end', async () => {
                     try {
                         const audioBuffer = Buffer.concat(bodyChunks);
                         if (audioBuffer.length < 100) {
@@ -2195,39 +2195,101 @@ function startInternalProxy() {
                         const tempWav = path.join(require('os').tmpdir(), `sx_rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.wav`);
                         fs.writeFileSync(tempWav, audioBuffer);
 
-                        const pyCandidates = [
-                            'C:\\Users\\squea\\AppData\\Local\\Programs\\Python\\Python312\\python.exe',
-                            'C:\\Users\\squea\\AppData\\Local\\Programs\\Python\\Python313\\python.exe',
-                            'python.exe',
-                            'python'
-                        ];
-                        let pythonBin = pyCandidates.find(p => {
-                            try { return fs.existsSync(p); } catch(e) { return false; }
-                        }) || 'python';
+                        // Try persistent worker for instant (~300ms) Google transcription
+                        let transcribedText = '';
+                        let success = false;
 
-                        const scriptPath = path.join(__dirname, 'transcribe.py');
-                        const { execFile } = require('child_process');
+                        try {
+                            if (!global.__SX_TRANSCRIBE_WORKER__) {
+                                const pyCandidates = [
+                                    'C:\\Users\\squea\\AppData\\Local\\Programs\\Python\\Python312\\python.exe',
+                                    'C:\\Users\\squea\\AppData\\Local\\Programs\\Python\\Python313\\python.exe',
+                                    'python.exe',
+                                    'python'
+                                ];
+                                const pythonBin = pyCandidates.find(p => {
+                                    try { return fs.existsSync(p); } catch(e) { return false; }
+                                }) || 'python';
 
-                        execFile(pythonBin, [scriptPath, tempWav, lang], { timeout: 35000 }, (error, stdout, stderr) => {
-                            try { if (fs.existsSync(tempWav)) fs.unlinkSync(tempWav); } catch(e) {}
+                                const workerScript = path.join(__dirname, 'transcribe_worker.py');
+                                const { spawn } = require('child_process');
+                                const readline = require('readline');
+                                const worker = spawn(pythonBin, [workerScript], { stdio: ['pipe', 'pipe', 'pipe'] });
+                                const rl = readline.createInterface({ input: worker.stdout });
+                                const queue = [];
 
-                            if (error) {
-                                console.error('[SX PROXY Voice] Transcription exec error:', error, stderr);
-                                res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-                                res.end(JSON.stringify({ ok: false, error: error.message }));
-                                return;
+                                rl.on('line', (line) => {
+                                    try {
+                                        const d = JSON.parse(line.trim());
+                                        if (d.ready) return;
+                                        const job = queue.shift();
+                                        if (job) job.resolve(d);
+                                    } catch(err) {
+                                        const job = queue.shift();
+                                        if (job) job.reject(err);
+                                    }
+                                });
+
+                                worker.on('error', () => { global.__SX_TRANSCRIBE_WORKER__ = null; });
+                                worker.on('exit', () => { global.__SX_TRANSCRIBE_WORKER__ = null; });
+
+                                global.__SX_TRANSCRIBE_WORKER__ = {
+                                    transcribe: (file, l) => new Promise((resolve, reject) => {
+                                        const timer = setTimeout(() => reject(new Error('Worker timeout')), 10000);
+                                        queue.push({
+                                            resolve: (val) => { clearTimeout(timer); resolve(val); },
+                                            reject: (err) => { clearTimeout(timer); reject(err); }
+                                        });
+                                        worker.stdin.write(JSON.stringify({ file, lang: l }) + '\n');
+                                    })
+                                };
                             }
 
-                            try {
-                                const parsed = JSON.parse(stdout.trim());
-                                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-                                res.end(JSON.stringify(parsed));
-                            } catch(e) {
-                                console.error('[SX PROXY Voice] Failed to parse Python output:', stdout);
-                                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-                                res.end(JSON.stringify({ ok: true, text: stdout.trim() }));
+                            const result = await global.__SX_TRANSCRIBE_WORKER__.transcribe(tempWav, lang);
+                            if (result && result.ok) {
+                                transcribedText = result.text || '';
+                                success = true;
                             }
-                        });
+                        } catch(workerErr) {
+                            console.warn('[SX PROXY Voice] Worker failed, falling back to execFile:', workerErr.message);
+                            global.__SX_TRANSCRIBE_WORKER__ = null;
+                        }
+
+                        // Fallback to standalone transcribe.py if worker failed
+                        if (!success) {
+                            const pyCandidates = [
+                                'C:\\Users\\squea\\AppData\\Local\\Programs\\Python\\Python312\\python.exe',
+                                'C:\\Users\\squea\\AppData\\Local\\Programs\\Python\\Python313\\python.exe',
+                                'python.exe',
+                                'python'
+                            ];
+                            const pythonBin = pyCandidates.find(p => {
+                                try { return fs.existsSync(p); } catch(e) { return false; }
+                            }) || 'python';
+                            const scriptPath = path.join(__dirname, 'transcribe.py');
+                            const { execFile } = require('child_process');
+
+                            await new Promise((resolve) => {
+                                execFile(pythonBin, [scriptPath, tempWav, lang], { timeout: 25000 }, (error, stdout) => {
+                                    if (!error && stdout) {
+                                        try {
+                                            const parsed = JSON.parse(stdout.trim());
+                                            transcribedText = parsed.text || '';
+                                            success = true;
+                                        } catch(e) {
+                                            transcribedText = stdout.trim();
+                                            success = true;
+                                        }
+                                    }
+                                    resolve();
+                                });
+                            });
+                        }
+
+                        try { if (fs.existsSync(tempWav)) fs.unlinkSync(tempWav); } catch(e) {}
+
+                        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                        res.end(JSON.stringify({ ok: true, text: transcribedText }));
                     } catch(err) {
                         console.error('[SX PROXY Voice] Request error:', err);
                         res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });

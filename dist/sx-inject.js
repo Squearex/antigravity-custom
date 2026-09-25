@@ -4901,20 +4901,19 @@
       this.activeBtn = null;
       this.audioContext = null;
       this.mediaStream = null;
-      this.scriptProcessor = null;
       this.workletNode = null;
+      this.scriptProcessor = null;
       this.sourceNode = null;
       this.analyserNode = null;
       this.muteGain = null;
       this.visualizerBars = null;
       this.animFrameId = null;
-
-      // Streaming VAD state
       this.segmentChunks = [];
-      this.hasSpeech = false;
-      this.speechStartTime = 0;
-      this.lastSpeechTime = 0;
+      this.accumulatedSamples = 0;
+      this.hadVoiceInSegment = false;
+      this.lastVoiceTime = 0;
       this.noiseFloor = 0.015;
+      this.checkIntervalId = null;
       this.transcriptionQueue = [];
       this.isProcessingQueue = false;
     }
@@ -4922,12 +4921,7 @@
       window.__SX_VOICE_RECORDER__ = this;
       document.addEventListener("click", (e) => {
         const btn = e.target.closest(
-          'button[data-tooltip-id*="record-tooltip"], ' +
-          'button[data-tooltip-id*="input-send-button-record-tooltip"], ' +
-          'button[aria-label*="Record voice" i], ' +
-          'button.sx-voice-btn, ' +
-          'button[aria-label*="ses" i], ' +
-          'button[aria-label*="voice" i]'
+          'button[data-tooltip-id*="record-tooltip"], button[data-tooltip-id*="input-send-button-record-tooltip"], button[aria-label*="Record voice" i], button[aria-label*="Stop recording" i], button.sx-voice-btn, button[aria-label*="ses" i], button[aria-label*="voice" i]'
         );
         if (btn) {
           e.preventDefault();
@@ -4936,8 +4930,7 @@
           this.toggleRecording(btn);
         }
       }, true);
-
-      this.logger.info("VoiceRecorder", "Live streaming voice recorder initialized.");
+      this.logger.info("VoiceRecorder", "Live streaming voice recorder initialized with Google Speech API.");
     }
     async toggleRecording(btn) {
       if (this.isRecording) {
@@ -4950,12 +4943,11 @@
       this.isRecording = true;
       this.activeBtn = btn;
       this.segmentChunks = [];
-      this.transcriptionQueue = [];
-      this.hasSpeech = false;
-      this.speechStartTime = 0;
-      this.lastSpeechTime = 0;
+      this.accumulatedSamples = 0;
+      this.hadVoiceInSegment = false;
+      this.lastVoiceTime = 0;
       this.noiseFloor = 0.015;
-
+      this.transcriptionQueue = [];
       if (btn) {
         if (!btn._origHtml) {
           btn._origHtml = btn.innerHTML;
@@ -4964,24 +4956,17 @@
         btn.classList.add("bg-red-500", "text-white");
         btn.setAttribute("aria-label", "Stop recording");
         btn.title = "Stop Recording";
-
-        // Native Antigravity 3-bar waveform structure
         btn.innerHTML = `
-          <div class="flex items-center justify-center gap-[2px] w-4 h-4 pointer-events-none" aria-hidden="true">
-            <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 4px;"></div>
-            <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 5px;"></div>
-            <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 4px;"></div>
-          </div>
-        `;
+                <div class="flex items-center justify-center gap-[2px] w-4 h-4 pointer-events-none" aria-hidden="true">
+                    <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 4px;"></div>
+                    <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 5px;"></div>
+                    <div class="sx-wave-bar w-[2px] rounded-full bg-white transition-[height] duration-75" style="height: 4px;"></div>
+                </div>
+            `;
         this.visualizerBars = Array.from(btn.querySelectorAll(".sx-wave-bar"));
       }
-
-      const editor = document.querySelector('div[contenteditable="true"]') ||
-                     document.querySelector('[contenteditable="true"]') ||
-                     document.querySelector('textarea.antigravity-prompt-input') ||
-                     document.querySelector('textarea');
+      const editor = document.querySelector('div[contenteditable="true"]') || document.querySelector('[contenteditable="true"]') || document.querySelector("textarea.antigravity-prompt-input") || document.querySelector("textarea");
       if (editor) editor.focus();
-
       try {
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
           const stream = await navigator.mediaDevices.getUserMedia({
@@ -4997,26 +4982,25 @@
           if (AudioCtx) {
             this.audioContext = new AudioCtx();
             if (this.audioContext.state === "suspended") {
-              this.audioContext.resume().catch(() => {});
+              this.audioContext.resume().catch(() => {
+              });
             }
             this.sourceNode = this.audioContext.createMediaStreamSource(stream);
-
-            // 1. Audio Recording Pipeline (AudioWorklet with ScriptProcessor fallback)
             let workletReady = false;
             if (this.audioContext.audioWorklet) {
               try {
                 const workletCode = `
-                  class SXStreamRecorderProcessor extends AudioWorkletProcessor {
-                    process(inputs) {
-                      const input = inputs[0];
-                      if (input && input[0]) {
-                        this.port.postMessage(input[0]);
-                      }
-                      return true;
-                    }
-                  }
-                  registerProcessor('sx-stream-recorder-processor', SXStreamRecorderProcessor);
-                `;
+                                class SXStreamRecorderProcessor extends AudioWorkletProcessor {
+                                    process(inputs) {
+                                        const input = inputs[0];
+                                        if (input && input[0]) {
+                                            this.port.postMessage(input[0]);
+                                        }
+                                        return true;
+                                    }
+                                }
+                                registerProcessor('sx-stream-recorder-processor', SXStreamRecorderProcessor);
+                            `;
                 const blob = new Blob([workletCode], { type: "application/javascript" });
                 const url = URL.createObjectURL(blob);
                 await this.audioContext.audioWorklet.addModule(url);
@@ -5027,11 +5011,15 @@
                   this.onAudioChunk(e.data);
                 };
                 this.sourceNode.connect(workletNode);
+                const workletMute = this.audioContext.createGain();
+                workletMute.gain.value = 0;
+                workletNode.connect(workletMute);
+                workletMute.connect(this.audioContext.destination);
                 this.workletNode = workletNode;
                 workletReady = true;
-              } catch(err) {}
+              } catch (err) {
+              }
             }
-
             if (!workletReady) {
               this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
               this.scriptProcessor.onaudioprocess = (e) => {
@@ -5045,19 +5033,15 @@
               this.scriptProcessor.connect(this.muteGain);
               this.muteGain.connect(this.audioContext.destination);
             }
-
-            // 2. Native Antigravity cEa 3-bar Audio Visualizer FFT + VAD
             this.analyserNode = this.audioContext.createAnalyser();
             this.analyserNode.fftSize = 64;
             this.analyserNode.smoothingTimeConstant = 0.8;
             this.analyserNode.minDecibels = -60;
             this.analyserNode.maxDecibels = -25;
             this.sourceNode.connect(this.analyserNode);
-
             const freqData = new Uint8Array(this.analyserNode.frequencyBinCount);
             let smoothedVol = 0;
             let maxSeen = 0.25;
-
             const updateVisualizer = () => {
               if (!this.isRecording || !this.analyserNode) return;
               this.analyserNode.getByteFrequencyData(freqData);
@@ -5067,10 +5051,7 @@
               maxSeen = Math.max(0.25, maxSeen * 0.995, rms);
               let normalized = Math.min(1, rms / maxSeen);
               normalized *= normalized;
-              smoothedVol = normalized > smoothedVol
-                ? smoothedVol + (normalized - smoothedVol) * 0.6
-                : smoothedVol + (normalized - smoothedVol) * 0.15;
-
+              smoothedVol = normalized > smoothedVol ? smoothedVol + (normalized - smoothedVol) * 0.6 : smoothedVol + (normalized - smoothedVol) * 0.15;
               const heights = [
                 Math.max(3, Math.min(14, 4 + smoothedVol * 8)),
                 Math.max(4, Math.min(16, 5 + smoothedVol * 12)),
@@ -5082,15 +5063,12 @@
                   if (bar) bar.style.height = `${heights[i]}px`;
                 }
               }
-
-              // VAD check on every frame
-              this.checkVoiceActivity(rms);
-
               this.animFrameId = requestAnimationFrame(updateVisualizer);
             };
             this.animFrameId = requestAnimationFrame(updateVisualizer);
+            this.startStreamingLoop();
           }
-          this.logger.info("VoiceRecorder", "Live streaming microphone active with real-time transcription.");
+          this.logger.info("VoiceRecorder", "Live streaming microphone active with real-time Google Speech transcription.");
         }
       } catch (e) {
         this.logger.error("VoiceRecorder", "Audio capture failed:", e);
@@ -5100,59 +5078,64 @@
     }
     onAudioChunk(data) {
       if (!this.isRecording) return;
-      this.segmentChunks.push(new Float32Array(data));
+      const chunk = new Float32Array(data);
+      this.segmentChunks.push(chunk);
+      this.accumulatedSamples += chunk.length;
+      let sum = 0;
+      for (let i = 0; i < chunk.length; i++) {
+        sum += chunk[i] * chunk[i];
+      }
+      const rms = Math.sqrt(sum / chunk.length);
+      if (rms < this.noiseFloor * 1.5) {
+        this.noiseFloor = this.noiseFloor * 0.96 + rms * 0.04;
+      }
+      const isVoice = rms > Math.max(0.018, this.noiseFloor * 2);
+      if (isVoice) {
+        this.hadVoiceInSegment = true;
+        this.lastVoiceTime = performance.now();
+      }
     }
-    checkVoiceActivity(rms) {
-      const now = performance.now();
-      const threshold = Math.max(0.025, this.noiseFloor * 2.2);
-
-      if (rms > threshold) {
-        if (!this.hasSpeech) {
-          this.hasSpeech = true;
-          this.speechStartTime = now;
-        }
-        this.lastSpeechTime = now;
-      } else {
-        this.noiseFloor = this.noiseFloor * 0.98 + rms * 0.02;
-
-        if (this.hasSpeech) {
-          const pauseDuration = now - this.lastSpeechTime;
-          const speechDuration = this.lastSpeechTime - this.speechStartTime;
-
-          // Natural pause (~480ms after >= 320ms speech) triggers live transcription
-          if (pauseDuration >= 480 && speechDuration >= 320) {
+    startStreamingLoop() {
+      const sampleRate = this.audioContext ? this.audioContext.sampleRate : 48e3;
+      const minSpeechSamples = Math.floor(sampleRate * 0.35);
+      const maxBufferSamples = Math.floor(sampleRate * 2.6);
+      this.checkIntervalId = setInterval(() => {
+        if (!this.isRecording) return;
+        const now = performance.now();
+        if (this.hadVoiceInSegment) {
+          const isPause = now - this.lastVoiceTime >= 320 && this.accumulatedSamples >= minSpeechSamples;
+          const isMaxBuffer = this.accumulatedSamples >= maxBufferSamples;
+          if (isPause || isMaxBuffer) {
             this.flushSegment();
           }
         }
-      }
-
-      // Long continuous speech (> 3800ms) without pause is sliced automatically
-      if (this.hasSpeech && (now - this.speechStartTime >= 3800)) {
-        this.flushSegment();
-        this.hasSpeech = true;
-        this.speechStartTime = now;
-        this.lastSpeechTime = now;
-      }
+      }, 80);
     }
     flushSegment() {
-      if (!this.segmentChunks.length) return;
+      if (!this.segmentChunks.length || this.accumulatedSamples < 1e3) return;
       const chunks = this.segmentChunks;
       this.segmentChunks = [];
-      this.hasSpeech = false;
-
+      this.accumulatedSamples = 0;
+      this.hadVoiceInSegment = false;
+      this.lastVoiceTime = 0;
       let totalLen = 0;
       for (let i = 0; i < chunks.length; i++) totalLen += chunks[i].length;
-
       const sampleRate = this.audioContext ? this.audioContext.sampleRate : 44100;
-      if (totalLen >= sampleRate * 0.25) {
+      if (totalLen >= sampleRate * 0.2) {
         const merged = new Float32Array(totalLen);
         let off = 0;
         for (let i = 0; i < chunks.length; i++) {
           merged.set(chunks[i], off);
           off += chunks[i].length;
         }
-        const resampled = this.resampleAudio(merged, sampleRate, 16000);
-        const wavBlob = this.encodeWAV(resampled, 16000);
+        const overlapCount = Math.floor(sampleRate * 0.12);
+        if (merged.length > overlapCount) {
+          const overlap = merged.slice(merged.length - overlapCount);
+          this.segmentChunks.push(overlap);
+          this.accumulatedSamples = overlap.length;
+        }
+        const resampled = this.resampleAudio(merged, sampleRate, 16e3);
+        const wavBlob = this.encodeWAV(resampled, 16e3);
         this.enqueueTranscription(wavBlob);
       }
     }
@@ -5163,7 +5146,6 @@
     async processQueue() {
       if (this.isProcessingQueue || !this.transcriptionQueue.length) return;
       this.isProcessingQueue = true;
-
       while (this.transcriptionQueue.length > 0) {
         const wavBlob = this.transcriptionQueue.shift();
         try {
@@ -5183,39 +5165,35 @@
           this.logger.error("VoiceRecorder", "Live transcription request failed:", e);
         }
       }
-
       this.isProcessingQueue = false;
     }
     async stopRecording(btn = null) {
       this.isRecording = false;
       const targetBtn = btn || this.activeBtn;
-
+      if (this.checkIntervalId) {
+        clearInterval(this.checkIntervalId);
+        this.checkIntervalId = null;
+      }
       if (this.animFrameId) {
         cancelAnimationFrame(this.animFrameId);
         this.animFrameId = null;
       }
       this.visualizerBars = null;
-
-      // Flush any remaining audio in the buffer
       this.flushSegment();
-
-      // If background transcription queue is still finishing, show brief spinner
       if (targetBtn && (this.isProcessingQueue || this.transcriptionQueue.length > 0)) {
         targetBtn.innerHTML = `
-          <svg class="animate-spin w-3.5 h-3.5 text-white pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-        `;
+                <svg class="animate-spin w-3.5 h-3.5 text-white pointer-events-none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            `;
         let waitCount = 0;
         while ((this.isProcessingQueue || this.transcriptionQueue.length > 0) && waitCount < 30) {
-          await new Promise(r => setTimeout(r, 100));
+          await new Promise((r) => setTimeout(r, 100));
           waitCount++;
         }
       }
-
       this.cleanupAudio();
-
       if (targetBtn) {
         this.resetButton(targetBtn);
       }
@@ -5266,56 +5244,69 @@
       view.setUint16(34, 16, true);
       writeString(view, 36, "data");
       view.setUint32(40, samples.length * 2, true);
-
-      let offset = 44;
-      for (let i = 0; i < samples.length; i++, offset += 2) {
+      let offset3 = 44;
+      for (let i = 0; i < samples.length; i++, offset3 += 2) {
         const s = Math.max(-1, Math.min(1, samples[i]));
-        view.setInt16(offset, s < 0 ? s * 32768 : s * 32767, true);
+        view.setInt16(offset3, s < 0 ? s * 32768 : s * 32767, true);
       }
       return new Blob([view], { type: "audio/wav" });
     }
     cleanupAudio() {
       if (this.sourceNode) {
-        try { this.sourceNode.disconnect(); } catch (e) {}
+        try {
+          this.sourceNode.disconnect();
+        } catch (e) {
+        }
         this.sourceNode = null;
       }
       if (this.analyserNode) {
-        try { this.analyserNode.disconnect(); } catch (e) {}
+        try {
+          this.analyserNode.disconnect();
+        } catch (e) {
+        }
         this.analyserNode = null;
       }
       if (this.workletNode) {
-        try { this.workletNode.disconnect(); } catch (e) {}
+        try {
+          this.workletNode.disconnect();
+        } catch (e) {
+        }
         this.workletNode = null;
       }
       if (this.scriptProcessor) {
-        try { this.scriptProcessor.disconnect(); } catch (e) {}
+        try {
+          this.scriptProcessor.disconnect();
+        } catch (e) {
+        }
         this.scriptProcessor = null;
       }
       if (this.muteGain) {
-        try { this.muteGain.disconnect(); } catch (e) {}
+        try {
+          this.muteGain.disconnect();
+        } catch (e) {
+        }
         this.muteGain = null;
       }
       if (this.mediaStream) {
         try {
           this.mediaStream.getTracks().forEach((t) => t.stop());
-        } catch (e) {}
+        } catch (e) {
+        }
         this.mediaStream = null;
       }
       if (this.audioContext) {
-        try { this.audioContext.close(); } catch (e) {}
+        try {
+          this.audioContext.close();
+        } catch (e) {
+        }
         this.audioContext = null;
       }
     }
     insertTextIntoPrompt(text) {
       try {
-        const editor = document.querySelector('div[contenteditable="true"]') ||
-                       document.querySelector('[contenteditable="true"]') ||
-                       document.querySelector('textarea.antigravity-prompt-input') ||
-                       document.querySelector('textarea');
+        const editor = document.querySelector('div[contenteditable="true"]') || document.querySelector('[contenteditable="true"]') || document.querySelector("textarea.antigravity-prompt-input") || document.querySelector("textarea");
         if (!editor) return;
-
         editor.focus();
-
         if (editor.isContentEditable) {
           const sel = window.getSelection();
           if (sel) {
@@ -5325,8 +5316,7 @@
             sel.removeAllRanges();
             sel.addRange(range);
           }
-
-          let dispatched = false;
+          let inserted = false;
           try {
             const ev = new InputEvent("beforeinput", {
               bubbles: true,
@@ -5334,11 +5324,15 @@
               inputType: "insertText",
               data: text
             });
-            dispatched = editor.dispatchEvent(ev);
-          } catch (e) {}
-
-          if (!dispatched || !editor.innerText.includes(text.trim())) {
-            document.execCommand("insertText", false, text);
+            editor.dispatchEvent(ev);
+            inserted = editor.innerText && editor.innerText.includes(text.trim());
+          } catch (e) {
+          }
+          if (!inserted) {
+            try {
+              document.execCommand("insertText", false, text);
+            } catch (e) {
+            }
           }
         } else {
           const start = editor.selectionStart || 0;
