@@ -26,7 +26,7 @@ Kurulum aracı sisteminizdeki Antigravity kurulumunu (Windows veya Linux) **otom
 Terminalinizi açın ve aşağıdaki komutu yapıştırın:
 
 ```bash
-mkdir -p sx-installer && cd sx-installer && curl -sSL https://github.com/Squearex/antigravity-custom/releases/latest/download/antigravity-custom-v2.2.0.tar.gz | tar -xz && chmod +x install.sh && ./install.sh
+mkdir -p sx-installer && cd sx-installer && curl -sSL https://github.com/Squearex/antigravity-custom/releases/latest/download/antigravity-custom.tar.gz | tar -xz && chmod +x install.sh && ./install.sh
 ```
 
 > **Not:** Linux üzerinde Antigravity yolu (`which antigravity`, `/opt/Antigravity`, `/usr/lib/antigravity`, `~/.local/share/antigravity` veya Flatpak) otomatik olarak taranır ve bulunur.
@@ -35,13 +35,13 @@ mkdir -p sx-installer && cd sx-installer && curl -sSL https://github.com/Squeare
 
 ### 🪟 Windows (Tek Tıkla Kurulum)
 
-1. [**En Son Sürümü İndir (Releases)**](https://github.com/Squearex/antigravity-custom/releases/latest) bağlantısından **`antigravity-custom-v2.2.0.zip`** dosyasını indirin.
+1. [**En Son Sürümü İndir (Releases)**](https://github.com/Squearex/antigravity-custom/releases/latest) bağlantısından **`antigravity-custom.zip`** dosyasını indirin.
 2. Zip arşivini bir klasöre çıkartın.
 3. Klasör içindeki **`install.bat`** dosyasına çift tıklayın.
 
 *Veya PowerShell ile tek satırda kurmak için:*
 ```powershell
-irm https://github.com/Squearex/antigravity-custom/releases/latest/download/antigravity-custom-v2.2.0.zip -OutFile sx.zip; Expand-Archive sx.zip -DestinationPath sx -Force; cd sx; .\install.bat
+irm https://github.com/Squearex/antigravity-custom/releases/latest/download/antigravity-custom.zip -OutFile sx.zip; Expand-Archive sx.zip -DestinationPath sx -Force; cd sx; .\install.bat
 ```
 
 ---
