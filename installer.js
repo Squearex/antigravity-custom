@@ -530,6 +530,59 @@ function install(targetAppDir) {
         }
     }
 
+    // 4c. Patch menu.js to support F12 and debounced DevTools toggle
+    const menuJsPath = path.join(targetDist, 'menu.js');
+    if (fs.existsSync(menuJsPath)) {
+        let menuContent = fs.readFileSync(menuJsPath, 'utf8');
+        if (!menuContent.includes('toggleDevToolsWithDebounce')) {
+            const devToolsAnchor = "label: 'Toggle Developer Tools',";
+            if (menuContent.includes(devToolsAnchor)) {
+                const helperCode = `
+    function toggleDevToolsWithDebounce(win) {
+        if (!win || win.isDestroyed()) return;
+        const now = Date.now();
+        if (win._lastDevToolsToggle && (now - win._lastDevToolsToggle < 600)) return;
+        win._lastDevToolsToggle = now;
+        if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
+        else win.webContents.openDevTools({ mode: 'bottom', activate: true });
+    }
+`;
+                const origBlock = `addItemToSubmenu(menu, 'Help', 1, new electron_1.MenuItem({
+        label: 'Toggle Developer Tools',
+        accelerator: 'CmdOrCtrl+Shift+I',
+        click: () => {
+            const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
+            if (win) {
+                win.webContents.toggleDevTools();
+            }
+        },
+    }));`;
+                const newBlock = `${helperCode}
+    addItemToSubmenu(menu, 'Help', 1, new electron_1.MenuItem({
+        label: 'Toggle Developer Tools',
+        accelerator: 'CmdOrCtrl+Shift+I',
+        click: () => {
+            const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
+            toggleDevToolsWithDebounce(win);
+        },
+    }));
+    addItemToSubmenu(menu, 'Help', 2, new electron_1.MenuItem({
+        label: 'Developer Tools (F12)',
+        accelerator: 'F12',
+        click: () => {
+            const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
+            toggleDevToolsWithDebounce(win);
+        },
+    }));`;
+                if (menuContent.includes(origBlock)) {
+                    menuContent = menuContent.replace(origBlock, newBlock);
+                    fs.writeFileSync(menuJsPath, menuContent, 'utf8');
+                    console.log(`${c.green}✓${c.reset} menu.js başarıyla yamalandı (F12 & DevTools Debounce).`);
+                }
+            }
+        }
+    }
+
     // 5. Python Speech Setup & Bytecode Compilation
     const pyBin = detectPython();
     setupPythonSpeech(pyBin);

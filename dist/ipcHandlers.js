@@ -256,6 +256,11 @@ function registerIpcHandlers(storageManager) {
             win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
         }
         if (win && !win.isDestroyed()) {
+            const now = Date.now();
+            if (win._lastDevToolsToggle && (now - win._lastDevToolsToggle < 600)) {
+                return;
+            }
+            win._lastDevToolsToggle = now;
             if (win.webContents.isDevToolsOpened()) {
                 win.webContents.closeDevTools();
             } else {

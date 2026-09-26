@@ -79,14 +79,33 @@ function setupApplicationMenu(url) {
             await electron_1.shell.openExternal('https://antigravity.google/docs');
         },
     }));
+    function toggleDevToolsWithDebounce(win) {
+        if (!win || win.isDestroyed()) return;
+        const now = Date.now();
+        if (win._lastDevToolsToggle && (now - win._lastDevToolsToggle < 600)) {
+            return;
+        }
+        win._lastDevToolsToggle = now;
+        if (win.webContents.isDevToolsOpened()) {
+            win.webContents.closeDevTools();
+        } else {
+            win.webContents.openDevTools({ mode: 'bottom', activate: true });
+        }
+    }
     addItemToSubmenu(menu, 'Help', 1, new electron_1.MenuItem({
         label: 'Toggle Developer Tools',
         accelerator: 'CmdOrCtrl+Shift+I',
         click: () => {
             const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
-            if (win) {
-                win.webContents.toggleDevTools();
-            }
+            toggleDevToolsWithDebounce(win);
+        },
+    }));
+    addItemToSubmenu(menu, 'Help', 2, new electron_1.MenuItem({
+        label: 'Developer Tools (F12)',
+        accelerator: 'F12',
+        click: () => {
+            const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
+            toggleDevToolsWithDebounce(win);
         },
     }));
     // Re-apply the menu so the change takes effect.

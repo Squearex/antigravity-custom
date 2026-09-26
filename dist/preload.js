@@ -113,21 +113,7 @@ electron_1.contextBridge.exposeInMainWorld('electronNative', electronNativeAPI);
 electron_1.contextBridge.exposeInMainWorld('ide', ideAPI);
 electron_1.contextBridge.exposeInMainWorld('wsl', wslAPI);
 
-// DevTools shortcut listeners in renderer
-try {
-    let lastDevToolsCall = 0;
-    window.addEventListener('keydown', (e) => {
-        const isI = e.code === 'KeyI' || e.key === 'i' || e.key === 'I' || e.key === 'ı' || e.key === 'İ';
-        if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && isI)) {
-            e.preventDefault();
-            const now = Date.now();
-            if (now - lastDevToolsCall > 400) {
-                lastDevToolsCall = now;
-                electron_1.ipcRenderer.invoke('window:toggle-devtools').catch(() => {});
-            }
-        }
-    }, true);
-} catch(e) {}
+
 
 // ============================================================================
 // ANTIGRAVITY CUSTOM - DIRECT MODE INJECTION

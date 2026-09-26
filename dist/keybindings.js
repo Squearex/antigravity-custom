@@ -18,6 +18,11 @@ function registerKeybindings(win, actions) {
             const isKeyI = input.code === 'KeyI' || keyLower === 'i' || keyLower === 'ı';
             if ((isCmdOrCtrl && input.shift && isKeyI) || input.key === 'F12' || input.code === 'F12') {
                 event.preventDefault();
+                const now = Date.now();
+                if (win._lastDevToolsToggle && (now - win._lastDevToolsToggle < 600)) {
+                    return;
+                }
+                win._lastDevToolsToggle = now;
                 if (win.webContents.isDevToolsOpened()) {
                     win.webContents.closeDevTools();
                 } else {
