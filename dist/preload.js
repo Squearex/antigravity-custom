@@ -115,11 +115,16 @@ electron_1.contextBridge.exposeInMainWorld('wsl', wslAPI);
 
 // DevTools shortcut listeners in renderer
 try {
+    let lastDevToolsCall = 0;
     window.addEventListener('keydown', (e) => {
         const isI = e.code === 'KeyI' || e.key === 'i' || e.key === 'I' || e.key === 'ı' || e.key === 'İ';
         if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && isI)) {
             e.preventDefault();
-            electron_1.ipcRenderer.invoke('window:toggle-devtools').catch(() => {});
+            const now = Date.now();
+            if (now - lastDevToolsCall > 400) {
+                lastDevToolsCall = now;
+                electron_1.ipcRenderer.invoke('window:toggle-devtools').catch(() => {});
+            }
         }
     }, true);
 } catch(e) {}

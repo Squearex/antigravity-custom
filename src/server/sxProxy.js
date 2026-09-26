@@ -2520,20 +2520,25 @@ function startInternalProxy() {
                 return;
             }
 
+            // Helper to get active version information safely
+            function readCurrentVersionInfo() {
+                let vInfo = { version: '2.2.0', build: '2026.09.25-r21', commit: '84357a2' };
+                try {
+                    const vFile = path.join(__dirname, 'version.json');
+                    if (fs.existsSync(vFile)) {
+                        vInfo = Object.assign({}, vInfo, JSON.parse(fs.readFileSync(vFile, 'utf8')));
+                    }
+                } catch(e) {}
+                return vInfo;
+            }
+
             // Check for SX Core SDK Updates
             if (url.startsWith('/sx/check-update') && req.method === 'GET') {
                 try {
-                    let versionInfo = { version: '2.2.0', build: '2026.09.25-r20', commit: '74bead2' };
-                    try {
-                        const vFile = path.join(__dirname, 'version.json');
-                        if (fs.existsSync(vFile)) {
-                            versionInfo = JSON.parse(fs.readFileSync(vFile, 'utf8'));
-                        }
-                    } catch(e) {}
-
+                    const versionInfo = readCurrentVersionInfo();
                     const { execSync } = require('child_process');
                     let updateAvailable = false;
-                    let latestCommit = versionInfo.commit || '74bead2';
+                    let latestCommit = versionInfo.commit || '84357a2';
                     let latestMessage = '';
                     let checkSource = 'version_file';
 
@@ -2543,7 +2548,11 @@ function startInternalProxy() {
                             : path.resolve(__dirname, '..');
                         const hasGit = fs.existsSync(path.join(sourceRepo, '.git'));
                         if (hasGit) {
-                            const remoteOut = execSync('git ls-remote origin main', { cwd: sourceRepo, timeout: 6000, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+                            let currentBranch = 'main';
+                            try {
+                                currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: sourceRepo, timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || 'main';
+                            } catch(e) {}
+                            const remoteOut = execSync(`git ls-remote origin ${currentBranch}`, { cwd: sourceRepo, timeout: 6000, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
                             const match = remoteOut.match(/^([a-f0-9]{7,40})/);
                             if (match) {
                                 latestCommit = match[1].slice(0, 7);
@@ -2552,8 +2561,8 @@ function startInternalProxy() {
                                 if (localCommit && latestCommit && !localCommit.startsWith(latestCommit) && !latestCommit.startsWith(localCommit)) {
                                     updateAvailable = true;
                                     try {
-                                        execSync('git fetch origin main --quiet', { cwd: sourceRepo, timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] });
-                                        latestMessage = execSync('git log -1 --format="%s" origin/main', { cwd: sourceRepo, timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+                                        execSync(`git fetch origin ${currentBranch} --quiet`, { cwd: sourceRepo, timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] });
+                                        latestMessage = execSync(`git log -1 --format="%s" origin/${currentBranch}`, { cwd: sourceRepo, timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
                                     } catch(e) {}
                                 }
                             }
@@ -2584,9 +2593,9 @@ function startInternalProxy() {
                     res.end(JSON.stringify({
                         ok: true,
                         updateAvailable,
-                        currentCommit: versionInfo.commit || '74bead2',
+                        currentCommit: versionInfo.commit || '84357a2',
                         currentVersion: versionInfo.version || '2.2.0',
-                        currentBuild: versionInfo.build || '2026.09.25-r20',
+                        currentBuild: versionInfo.build || '2026.09.25-r21',
                         latestCommit,
                         latestMessage: latestMessage || (updateAvailable ? 'Yeni Antigravity Custom güncellemesi yayınlandı.' : 'Sürüm güncel.'),
                         checkSource
@@ -2601,6 +2610,7 @@ function startInternalProxy() {
             // Apply SX Core SDK Update
             if (url === '/sx/apply-update' && req.method === 'POST') {
                 try {
+                    const versionInfo = readCurrentVersionInfo();
                     const { execSync } = require('child_process');
                     const sourceRepo = (versionInfo && versionInfo.sourceRepo && fs.existsSync(path.join(versionInfo.sourceRepo, '.git')))
                         ? versionInfo.sourceRepo
@@ -2610,7 +2620,11 @@ function startInternalProxy() {
 
                     try {
                         if (fs.existsSync(path.join(sourceRepo, '.git'))) {
-                            output = execSync('git pull origin main', { cwd: sourceRepo, timeout: 25000 }).toString();
+                            let currentBranch = 'main';
+                            try {
+                                currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: sourceRepo, timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || 'main';
+                            } catch(e) {}
+                            output = execSync(`git pull origin ${currentBranch}`, { cwd: sourceRepo, timeout: 25000 }).toString();
                             try {
                                 execSync('node scripts/build.js', { cwd: sourceRepo, timeout: 35000 });
                             } catch(buildErr) {}
@@ -2621,20 +2635,22 @@ function startInternalProxy() {
                                     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(__dirname, f));
                                 }
                             }
+                            // Update version.json with latest commit if git succeeded
+                            try {
+                                const newCommit = execSync('git rev-parse --short HEAD', { cwd: sourceRepo, timeout: 3000 }).toString().trim();
+                                const vFile = path.join(__dirname, 'version.json');
+                                const vData = fs.existsSync(vFile) ? JSON.parse(fs.readFileSync(vFile, 'utf8')) : {};
+                                vData.commit = newCommit;
+                                vData.updatedAt = new Date().toISOString();
+                                fs.writeFileSync(vFile, JSON.stringify(vData, null, 2), 'utf8');
+                            } catch(e) {}
+                        } else {
+                            updateMethod = 'installer_script';
                         }
                     } catch(pullErr) {
                         updateMethod = 'installer_script';
+                        output = pullErr.message;
                     }
-
-                    // Update version.json with latest commit if git succeeded
-                    try {
-                        const newCommit = execSync('git rev-parse --short HEAD', { cwd: sourceRepo, timeout: 3000 }).toString().trim();
-                        const vFile = path.join(__dirname, 'version.json');
-                        const vData = fs.existsSync(vFile) ? JSON.parse(fs.readFileSync(vFile, 'utf8')) : {};
-                        vData.commit = newCommit;
-                        vData.updatedAt = new Date().toISOString();
-                        fs.writeFileSync(vFile, JSON.stringify(vData, null, 2), 'utf8');
-                    } catch(e) {}
 
                     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                     res.end(JSON.stringify({
@@ -2644,7 +2660,7 @@ function startInternalProxy() {
                         output
                     }));
                 } catch(err) {
-                    res.writeHead(500, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
                     res.end(JSON.stringify({ ok: false, error: err.message }));
                 }
                 return;

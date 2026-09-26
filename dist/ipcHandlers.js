@@ -247,13 +247,19 @@ function registerIpcHandlers(storageManager) {
             win.close();
         }
     });
-    electron_1.ipcMain.handle('window:toggle-devtools', async () => {
-        const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
-        if (win) {
+    electron_1.ipcMain.handle('window:toggle-devtools', async (event) => {
+        let win = null;
+        if (event && event.sender) {
+            win = electron_1.BrowserWindow.fromWebContents(event.sender);
+        }
+        if (!win) {
+            win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
+        }
+        if (win && !win.isDestroyed()) {
             if (win.webContents.isDevToolsOpened()) {
                 win.webContents.closeDevTools();
             } else {
-                win.webContents.openDevTools({ mode: 'detach' });
+                win.webContents.openDevTools({ mode: 'bottom', activate: true });
             }
         }
     });

@@ -332,11 +332,16 @@ export class UIInjector {
 
             <div id="sx-update-status" style="display:none;font-size:12px;padding:8px 12px;border-radius:6px;text-align:center;"></div>
 
-            <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:10px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08);">
-                <button id="sx-cancel-update-btn" class="sx-btn" style="padding:7px 16px;font-size:12px;">Daha Sonra</button>
-                <button id="sx-exec-update-btn" class="sx-btn sx-btn-primary" style="padding:7px 18px;font-size:12px;background:linear-gradient(135deg,#10b981,#06b6d4);color:#ffffff;border:none;font-weight:600;box-shadow:0 0 16px rgba(16,185,129,0.35);">
-                    🚀 Şimdi Güncelle ve Yeniden Başlat
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08);">
+                <button id="sx-open-devtools-btn" class="sx-btn" style="padding:7px 12px;font-size:11.5px;color:#94a3b8;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);display:flex;align-items:center;gap:5px;cursor:pointer;">
+                    🛠️ Konsolu Aç (F12)
                 </button>
+                <div style="display:flex;gap:10px;">
+                    <button id="sx-cancel-update-btn" class="sx-btn" style="padding:7px 16px;font-size:12px;">Daha Sonra</button>
+                    <button id="sx-exec-update-btn" class="sx-btn sx-btn-primary" style="padding:7px 18px;font-size:12px;background:linear-gradient(135deg,#10b981,#06b6d4);color:#ffffff;border:none;font-weight:600;box-shadow:0 0 16px rgba(16,185,129,0.35);">
+                        🚀 Şimdi Güncelle ve Yeniden Başlat
+                    </button>
+                </div>
             </div>
         `;
 
@@ -346,6 +351,15 @@ export class UIInjector {
         const close = () => overlay.remove();
         dialog.querySelector('.sx-close-btn')?.addEventListener('click', close);
         dialog.querySelector('#sx-cancel-update-btn')?.addEventListener('click', close);
+        dialog.querySelector('#sx-open-devtools-btn')?.addEventListener('click', () => {
+            try {
+                if (window.electronNative && typeof window.electronNative.toggleDevTools === 'function') {
+                    window.electronNative.toggleDevTools();
+                } else if (window.ipcRenderer) {
+                    window.ipcRenderer.invoke('window:toggle-devtools');
+                }
+            } catch(e) {}
+        });
         overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
 
         const execBtn = dialog.querySelector('#sx-exec-update-btn');
@@ -369,7 +383,7 @@ export class UIInjector {
             }
 
             try {
-                const resp = await fetch('http://localhost:15725/sx/apply-update', { method: 'POST' });
+                const resp = await fetch('http://127.0.0.1:15725/sx/apply-update', { method: 'POST' });
                 const res = await resp.json();
                 if (res && res.ok) {
                     if (statusBox) {

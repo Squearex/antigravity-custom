@@ -185,31 +185,6 @@ electron_1.app
     // Register IPC handlers
     (0, ipcHandlers_1.registerIpcHandlers)(storageManager);
 
-    // Global DevTools shortcuts (F12 and Ctrl+Shift+I)
-    try {
-        electron_1.globalShortcut.register('F12', () => {
-            const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
-            if (win) {
-                if (win.webContents.isDevToolsOpened()) {
-                    win.webContents.closeDevTools();
-                } else {
-                    win.webContents.openDevTools({ mode: 'detach' });
-                }
-            }
-        });
-        electron_1.globalShortcut.register('CommandOrControl+Shift+I', () => {
-            const win = electron_1.BrowserWindow.getFocusedWindow() || electron_1.BrowserWindow.getAllWindows()[0];
-            if (win) {
-                if (win.webContents.isDevToolsOpened()) {
-                    win.webContents.closeDevTools();
-                } else {
-                    win.webContents.openDevTools({ mode: 'detach' });
-                }
-            }
-        });
-    } catch(e) {
-        console.error('[SX DevTools Shortcut Error]', e);
-    }
 
     // Explicitly allow microphone/media access for voice recording
     try {
